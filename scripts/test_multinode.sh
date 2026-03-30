@@ -1,7 +1,7 @@
 #!/bin/bash
 # 多机测试 Qwen3-30B-A3B MoE 模型
 # Attention 节点在本地 (GPU 0,1), FFN 节点在远程机器 (GPU 0,1)
-# Usage: ./skills/test_qwen3_moe_multinode.sh [max_tokens] [batch_size]
+# Usage: ./scripts/test_qwen3_moe_multinode.sh [max_tokens] [batch_size]
 
 set -e
 cd "$(dirname "$0")/.."

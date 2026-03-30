@@ -20,7 +20,7 @@
 
 - ✅ Phase 1: DBO 流水线 (Prefill)
 - ✅ Phase 2: KV Cache + 文本生成
-- ⏳ Phase 3: MoE 支持
+- ✅ Phase 3: MoE 支持 (Qwen3-30B-A3B)
 
 ---
 
@@ -167,6 +167,6 @@ src/
 
 ## 8. 后续计划
 
-- Phase 3: MoE 支持 (Qwen3-30B-A3B)
-- Decode 阶段 DBO
+- Decode 阶段 DBO 优化
 - Continuous batching
+- 性能调优和更大规模测试

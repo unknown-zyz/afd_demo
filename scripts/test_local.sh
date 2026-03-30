@@ -1,8 +1,8 @@
 #!/bin/bash
 # 测试 Qwen3-30B-A3B MoE 模型 (需要 4 GPU, 单机)
-# Usage: ./skills/test_qwen3_moe.sh [max_tokens] [batch_size]
-#   ./skills/test_qwen3_moe.sh           # 默认: max_tokens=5, batch_size=1
-#   ./skills/test_qwen3_moe.sh 10 2      # 自定义
+# Usage: ./scripts/test_qwen3_moe.sh [max_tokens] [batch_size]
+#   ./scripts/test_qwen3_moe.sh           # 默认: max_tokens=5, batch_size=1
+#   ./scripts/test_qwen3_moe.sh 10 2      # 自定义
 
 set -e
 cd "$(dirname "$0")/.."
