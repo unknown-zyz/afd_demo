@@ -77,14 +77,17 @@ class DisaggregatedQwenModel(nn.Module):
         Args:
             model_name: HuggingFace model name or path
         """
+        import gc
         logger.info(f"Loading weights for role: {self.ctx.role}")
         
-        # Load full model first (will be optimized in production)
+        # Load full model first with memory optimization
+        # For large MoE models, we need low_cpu_mem_usage to avoid OOM
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=self.dtype,
             device_map="cpu",
             trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
         
         self.has_router = any(hasattr(layer.mlp, "gate") for layer in model.model.layers)
@@ -96,8 +99,9 @@ class DisaggregatedQwenModel(nn.Module):
             self.ffn_worker = FFNWorker(model, self.device, self.dtype)
             self.supports_moe_timing = self.ffn_worker.supports_moe_timing
         
-        # Free the full model
+        # Free the full model and cleanup
         del model
+        gc.collect()
         torch.cuda.empty_cache()
         
         logger.info(
