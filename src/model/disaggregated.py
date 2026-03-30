@@ -548,9 +548,11 @@ class DisaggregatedQwenModel(nn.Module):
         do_sample: bool = True,
         eos_token_id: Optional[int] = None,
         pad_token_id: Optional[int] = None,
+        use_decode_dbo: bool = True,
+        num_decode_micro_batches: int = 2,
     ) -> torch.Tensor:
         """
-        Generate text autoregressively.
+        Generate text autoregressively with optional Decode DBO.
         
         Args:
             input_ids: Input prompt [batch_size, seq_len]
@@ -561,13 +563,15 @@ class DisaggregatedQwenModel(nn.Module):
             do_sample: If False, use greedy decoding
             eos_token_id: Token ID to stop at
             pad_token_id: Padding token ID
+            use_decode_dbo: Whether to use DBO for decode phase
+            num_decode_micro_batches: Number of micro-batches for decode DBO
         
         Returns:
             Generated token IDs [batch_size, seq_len + num_generated]
         """
         if not self.ctx.is_attention_node:
             # FFN node: just participate in forward passes
-            return self._generate_ffn_node(input_ids, max_new_tokens)
+            return self._generate_ffn_node(input_ids, max_new_tokens, use_decode_dbo, num_decode_micro_batches)
         
         # Initialize KV cache if needed
         batch_size, prompt_len = input_ids.shape
@@ -583,7 +587,7 @@ class DisaggregatedQwenModel(nn.Module):
             pad_token_id=pad_token_id,
         )
         
-        # Prefill phase
+        # Prefill phase (uses existing DBO scheduler)
         logits = self.forward_prefill(input_ids)
         
         # Sample first token
@@ -600,10 +604,35 @@ class DisaggregatedQwenModel(nn.Module):
         generated_ids = input_ids.clone()
         generated_ids = torch.cat([generated_ids, next_token], dim=1)
         
+        # Initialize Decode DBO scheduler if enabled
+        decode_scheduler = None
+        if use_decode_dbo and batch_size >= num_decode_micro_batches:
+            from ..pipeline import DecodeDBOScheduler
+            decode_scheduler = DecodeDBOScheduler(
+                model=self,
+                num_micro_batches=num_decode_micro_batches,
+            )
+            logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
+        
         # Decode loop
         for step in range(max_new_tokens - 1):
-            # Forward decode
-            logits = self.forward_decode(next_token)
+            # Current position in sequence
+            cur_pos = prompt_len + step + 1  # +1 because we already generated one token
+            position_ids = torch.full(
+                (batch_size, 1), cur_pos,
+                device=self.device, dtype=torch.long
+            )
+            
+            if decode_scheduler is not None:
+                # Use Decode DBO
+                logits = decode_scheduler.forward_decode_dbo(
+                    input_ids=next_token,
+                    position_ids=position_ids,
+                    kv_cache=self.kv_cache,
+                )
+            else:
+                # Standard decode (no DBO)
+                logits = self.forward_decode(next_token)
             
             # Sample next token
             next_token_logits = logits[:, -1, :]
@@ -624,12 +653,18 @@ class DisaggregatedQwenModel(nn.Module):
                 # In future: add proper sync mechanism
                 pass
         
+        # Log Decode DBO stats
+        if decode_scheduler is not None:
+            logger.info(f"Decode DBO stats: {decode_scheduler.get_stats()}")
+        
         return generated_ids
     
     def _generate_ffn_node(
         self,
         input_ids: torch.Tensor,
         max_new_tokens: int,
+        use_decode_dbo: bool = True,
+        num_decode_micro_batches: int = 2,
     ) -> torch.Tensor:
         """
         FFN node participation in generation.
@@ -643,6 +678,15 @@ class DisaggregatedQwenModel(nn.Module):
         # Prefill (attention node samples first token after this)
         self.forward_prefill(input_ids)
         
+        # Initialize Decode DBO scheduler if enabled
+        decode_scheduler = None
+        if use_decode_dbo and batch_size >= num_decode_micro_batches:
+            from ..pipeline import DecodeDBOScheduler
+            decode_scheduler = DecodeDBOScheduler(
+                model=self,
+                num_micro_batches=num_decode_micro_batches,
+            )
+        
         # Decode loop: max_new_tokens - 1 iterations
         # (first token is sampled after prefill on attention node)
         for step in range(max_new_tokens - 1):
@@ -650,7 +694,19 @@ class DisaggregatedQwenModel(nn.Module):
             dummy_token = torch.zeros(
                 batch_size, 1, dtype=torch.long, device=self.device
             )
-            self.forward_decode(dummy_token)
+            dummy_position = torch.zeros(
+                batch_size, 1, dtype=torch.long, device=self.device
+            )
+            
+            if decode_scheduler is not None:
+                # Use Decode DBO
+                decode_scheduler.forward_decode_dbo(
+                    input_ids=dummy_token,
+                    position_ids=dummy_position,
+                    kv_cache=None,  # FFN doesn't have kv_cache
+                )
+            else:
+                self.forward_decode(dummy_token)
         
         # FFN node doesn't return meaningful output
         return input_ids

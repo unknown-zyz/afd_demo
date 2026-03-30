@@ -113,9 +113,9 @@ def parse_args():
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable verbose output")
     
-    # Generation options
-    parser.add_argument("--generate", action="store_true",
-                        help="Enable autoregressive generation (requires KV cache)")
+    # Generation options (enabled by default)
+    parser.add_argument("--no-generate", action="store_true",
+                        help="Disable autoregressive generation, run prefill benchmark only")
     parser.add_argument("--max-new-tokens", type=int, default=50,
                         help="Maximum new tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.7,
@@ -126,6 +126,12 @@ def parse_args():
                         help="Top-p (nucleus) sampling")
     parser.add_argument("--greedy", action="store_true",
                         help="Use greedy decoding instead of sampling")
+    
+    # Decode DBO options
+    parser.add_argument("--no-decode-dbo", action="store_true",
+                        help="Disable DBO for decode phase")
+    parser.add_argument("--decode-micro-batches", type=int, default=2,
+                        help="Number of micro-batches for decode DBO")
     
     return parser.parse_args()
 
@@ -365,7 +371,8 @@ def run_generation_demo(args):
     ctx.barrier()
     
     # Generate
-    logger.info("Starting generation...")
+    use_decode_dbo = not args.no_decode_dbo
+    logger.info(f"Starting generation... (Decode DBO: {use_decode_dbo})")
     start_time = time.perf_counter()
     
     output_ids = model.generate(
@@ -377,6 +384,8 @@ def run_generation_demo(args):
         do_sample=not args.greedy,
         eos_token_id=tokenizer.eos_token_id if tokenizer else None,
         pad_token_id=tokenizer.pad_token_id if tokenizer else None,
+        use_decode_dbo=use_decode_dbo,
+        num_decode_micro_batches=args.decode_micro_batches,
     )
     
     if torch.cuda.is_available():
@@ -401,10 +410,12 @@ def run_generation_demo(args):
 def main():
     args = parse_args()
     try:
-        if args.generate:
-            run_generation_demo(args)
-        else:
+        if args.no_generate:
+            # Prefill benchmark only (no generation)
             run_inference_demo(args)
+        else:
+            # Default: autoregressive generation with DBO
+            run_generation_demo(args)
     except Exception as e:
         logging.error(f"Error: {e}", exc_info=True)
         sys.exit(1)
