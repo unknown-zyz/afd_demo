@@ -1,0 +1,44 @@
+# Qwen3-30B-A3B AFD Configuration
+
+model:
+  name: "Qwen/Qwen3-30B-A3B"
+  # For testing, use smaller model first
+  test_model: "Qwen/Qwen2-1.5B"
+  dtype: "bfloat16"  # or float16 for V100
+  
+distributed:
+  # Node configuration
+  attn_node_rank: 0
+  ffn_node_rank: 1
+  
+  # Communication backend
+  backend: "nccl"
+  init_method: "env://"  # or "tcp://master_ip:port"
+  
+  # World size (total number of processes)
+  world_size: 2
+  
+pipeline:
+  # Number of micro-batches (2 for ping-pong)
+  num_micro_batches: 2
+  
+  # Buffer size for communication
+  buffer_size: 2  # Double buffering
+  
+  # Synchronization mode
+  sync_mode: "async"  # async or sync
+
+inference:
+  # Batch size (will be split into micro-batches)
+  batch_size: 4
+  max_seq_len: 2048
+  
+  # Generation config
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.9
+
+profiling:
+  enabled: true
+  trace_file: "trace.json"
+  use_tensorboard: false
