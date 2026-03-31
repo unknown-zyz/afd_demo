@@ -1,8 +1,10 @@
 #!/bin/bash
-# 测试 Qwen3-30B-A3B MoE 模型 (需要 4 GPU, 单机)
-# Usage: ./scripts/test_qwen3_moe.sh [max_tokens] [batch_size]
-#   ./scripts/test_qwen3_moe.sh           # 默认: max_tokens=5, batch_size=1
-#   ./scripts/test_qwen3_moe.sh 10 2      # 自定义
+# 单机测试 Qwen3-30B-A3B MoE 模型 (需要 4 GPU)
+# Usage: ./scripts/test_local.sh [max_tokens] [batch_size]
+#
+# Examples:
+#   ./scripts/test_local.sh           # 默认: 5 tokens, batch_size=1, DBO 开启
+#   ./scripts/test_local.sh 10 2      # 自定义: 10 tokens, batch_size=2
 
 set -e
 cd "$(dirname "$0")/.."
@@ -14,7 +16,7 @@ MODEL_PATH="/data/Qwen/Qwen3-30B-A3B/"
 MASTER_ADDR="127.0.0.1"
 MASTER_PORT="${MASTER_PORT:-29600}"
 
-echo "=== Qwen3-30B-A3B MoE 测试 ==="
+echo "=== AFD + DBO 单机测试 ==="
 echo "Model: $MODEL_PATH"
 echo "Max tokens: $MAX_TOKENS"
 echo "Batch size: $BATCH_SIZE"
@@ -43,7 +45,6 @@ CUDA_VISIBLE_DEVICES=2,3 python -m src.main \
     --ffn-node-rank 1 \
     --batch-size "$BATCH_SIZE" \
     --max-new-tokens "$MAX_TOKENS" \
-    --no-decode-dbo \
     2>&1 | sed 's/^/[FFN] /' &
 FFN_PID=$!
 echo "FFN node started (PID: $FFN_PID)"
@@ -66,7 +67,6 @@ CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
     --max-new-tokens "$MAX_TOKENS" \
     --prompt "Hello" \
     --greedy \
-    --no-decode-dbo \
     2>&1 | sed 's/^/[ATTN] /'
 
 # 等待 FFN 节点完成

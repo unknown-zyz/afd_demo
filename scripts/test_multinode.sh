@@ -1,7 +1,11 @@
 #!/bin/bash
 # 多机测试 Qwen3-30B-A3B MoE 模型
 # Attention 节点在本地 (GPU 0,1), FFN 节点在远程机器 (GPU 0,1)
-# Usage: ./scripts/test_qwen3_moe_multinode.sh [max_tokens] [batch_size]
+# Usage: ./scripts/test_multinode.sh [max_tokens] [batch_size]
+#
+# Examples:
+#   ./scripts/test_multinode.sh         # 默认: 3 tokens, batch_size=1, DBO 开启
+#   ./scripts/test_multinode.sh 10 2    # 自定义: 10 tokens, batch_size=2
 
 set -e
 cd "$(dirname "$0")/.."
@@ -19,7 +23,7 @@ REMOTE_PORT="31310"
 REMOTE_KEY="~/.ssh/id_rsa_second"
 REMOTE_USER="zyz"
 
-echo "=== Qwen3-30B-A3B MoE 多机测试 ==="
+echo "=== AFD + DBO 多机测试 ==="
 echo "Model: $MODEL_PATH"
 echo "Max tokens: $MAX_TOKENS"
 echo "Batch size: $BATCH_SIZE"
@@ -41,7 +45,7 @@ ssh -o ConnectTimeout=5 -p $REMOTE_PORT -i $REMOTE_KEY $REMOTE_USER@$REMOTE_HOST
 echo "同步代码到远程..."
 ssh -p $REMOTE_PORT -i $REMOTE_KEY $REMOTE_USER@$REMOTE_HOST "mkdir -p /home/zyz/afd_demo"
 scp -r -P $REMOTE_PORT -i $REMOTE_KEY \
-    /home/zyz/afd_demo/src /home/zyz/afd_demo/skills \
+    /home/zyz/afd_demo/src /home/zyz/afd_demo/scripts \
     $REMOTE_USER@$REMOTE_HOST:/home/zyz/afd_demo/ 2>/dev/null || true
 
 echo ""
@@ -73,7 +77,6 @@ CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
     --ffn-node-rank 1 \
     --batch-size $BATCH_SIZE \
     --max-new-tokens $MAX_TOKENS \
-    --no-decode-dbo \
     2>&1
 " &
 FFN_PID=$!
@@ -98,7 +101,6 @@ CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
     --max-new-tokens $MAX_TOKENS \
     --prompt "Hello" \
     --greedy \
-    --no-decode-dbo \
     2>&1
 
 # 等待远程节点完成

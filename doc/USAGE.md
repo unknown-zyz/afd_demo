@@ -29,7 +29,7 @@ pytest tests/ -v
 ./scripts/test_local.sh [max_tokens] [batch_size]
 
 # 示例
-./scripts/test_local.sh           # 默认: 5 tokens, batch_size=1
+./scripts/test_local.sh           # 默认: 5 tokens, batch_size=1, DBO 开启
 ./scripts/test_local.sh 10 2      # 10 tokens, batch_size=2
 ```
 
@@ -43,7 +43,7 @@ pytest tests/ -v
 ./scripts/test_multinode.sh [max_tokens] [batch_size]
 
 # 示例
-./scripts/test_multinode.sh       # 默认: 3 tokens, batch_size=1
+./scripts/test_multinode.sh       # 默认: 3 tokens, batch_size=1, DBO 开启
 ./scripts/test_multinode.sh 10 1  # 10 tokens, batch_size=1
 ```
 
@@ -71,10 +71,13 @@ ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 **示例**:
 ```bash
 # 远程 (FFN)
-./scripts/run_ffn_node.sh 10.244.64.179 29500 --prompt "Hello"
+./scripts/run_ffn_node.sh 10.244.64.179 29500
 
 # 本地 (Attention)
 ./scripts/run_attn_node.sh 10.244.64.179 29500 --prompt "Hello" --max-new-tokens 10
+
+# 仅 AF 分离,不使用 DBO
+./scripts/run_attn_node.sh 10.244.64.179 29500 --no-dbo --prompt "Hello"
 ```
 
 ---
@@ -87,10 +90,16 @@ ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 | `--prompt` | 输入提示词 | "Hello" |
 | `--max-new-tokens` | 最大生成 token 数 | 5 |
 | `--batch-size` | 批大小 | 1 |
+| `--num-micro-batches` | Micro-batch 数量 (用于 DBO) | 2 |
+| `--no-dbo` | 禁用 DBO (仅 AF 分离) | False |
 | `--greedy` | 使用贪婪解码 | False |
-| `--no-decode-dbo` | 禁用 Decode DBO | False |
 | `--verbose` | 详细输出 | False |
 | `--timing` | 启用计时统计 | False |
+
+### DBO 模式说明
+
+- **默认模式 (DBO 开启)**: Prefill 和 Decode 阶段都使用 Dual Batch Overlap,通过异步通信与计算重叠提高效率
+- **AF 分离模式 (`--no-dbo`)**: 仅使用 Attention-FFN 分离,不使用 DBO 优化,用于对比测试
 
 ---
 

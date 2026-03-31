@@ -96,26 +96,24 @@ def parse_args():
                         help="Total batch size (divided into micro-batches)")
     parser.add_argument("--max-seq-len", type=int, default=128,
                         help="Maximum sequence length")
-    parser.add_argument("--num-micro-batches", type=int, default=2,
-                        help="Number of micro-batches for pipeline")
     parser.add_argument("--dtype", type=str, choices=["float16", "bfloat16", "float32"],
                         default="bfloat16", help="Data type")
     parser.add_argument("--prompt", type=str, default="Hello, how are you today?",
                         help="Test prompt")
-    parser.add_argument("--scheduler", type=str, choices=["sync", "async", "compare"],
-                        default="async", help="sync | async (DBO) | compare")
-    parser.add_argument("--warmup-runs", type=int, default=1,
-                        help="Warmup runs before timing")
-    parser.add_argument("--benchmark-runs", type=int, default=3,
-                        help="Benchmark runs for timing")
     parser.add_argument("--timing", action="store_true",
                         help="Enable detailed per-MB timing (saves to results/)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable verbose output")
     
+    # DBO (Dual Batch Overlap) options
+    parser.add_argument("--no-dbo", action="store_true",
+                        help="Disable DBO for both prefill and decode (AF separation only)")
+    parser.add_argument("--num-micro-batches", type=int, default=2,
+                        help="Number of micro-batches for DBO pipeline")
+    
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
-                        help="Disable autoregressive generation, run prefill benchmark only")
+                        help="Disable autoregressive generation, run prefill only")
     parser.add_argument("--max-new-tokens", type=int, default=50,
                         help="Maximum new tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.7,
@@ -126,12 +124,6 @@ def parse_args():
                         help="Top-p (nucleus) sampling")
     parser.add_argument("--greedy", action="store_true",
                         help="Use greedy decoding instead of sampling")
-    
-    # Decode DBO options
-    parser.add_argument("--no-decode-dbo", action="store_true",
-                        help="Disable DBO for decode phase")
-    parser.add_argument("--decode-micro-batches", type=int, default=2,
-                        help="Number of micro-batches for decode DBO")
     
     return parser.parse_args()
 
@@ -224,82 +216,47 @@ def run_inference_demo(args):
         input_ids = torch.zeros(args.batch_size, args.max_seq_len, dtype=torch.long, device=device)
         attention_mask = None
     
-    # Create schedulers
-    def create_sync_scheduler():
-        return SimplePipelineScheduler(model=model, num_micro_batches=args.num_micro_batches)
+    def run_with_scheduler(scheduler):
+        """Run inference with timing."""
+        ctx.barrier()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        start = time.perf_counter()
+        output = scheduler.run(input_ids, attention_mask)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elapsed = time.perf_counter() - start
+        return output, elapsed
     
-    def create_async_scheduler():
-        return AsyncPipelineScheduler(
+    # Select scheduler based on --no-dbo flag
+    use_dbo = not args.no_dbo
+    if use_dbo:
+        scheduler = AsyncPipelineScheduler(
             model=model, num_micro_batches=args.num_micro_batches,
             use_cuda_streams=True, enable_timing=args.timing,
         )
+        scheduler_name = "DBO"
+    else:
+        scheduler = SimplePipelineScheduler(model=model, num_micro_batches=args.num_micro_batches)
+        scheduler_name = "SYNC"
     
-    def run_with_scheduler(scheduler, warmup=0, runs=1):
-        """Run inference with timing."""
-        for _ in range(warmup):
-            ctx.barrier()
-            scheduler.run(input_ids, attention_mask)
-            ctx.barrier()
-        
-        times = []
-        for _ in range(runs):
-            ctx.barrier()
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            start = time.perf_counter()
-            output = scheduler.run(input_ids, attention_mask)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            times.append(time.perf_counter() - start)
-        
-        return output, sum(times) / len(times), times
+    output, elapsed = run_with_scheduler(scheduler)
     
-    # Run based on mode
-    if args.scheduler == "sync":
-        scheduler = create_sync_scheduler()
-        output, avg_time, _ = run_with_scheduler(scheduler, args.warmup_runs, args.benchmark_runs)
-        if ctx.is_attention_node:
-            logger.info(f"[SYNC] avg_time={avg_time*1000:.2f}ms")
-        
-    elif args.scheduler == "async":
-        scheduler = create_async_scheduler()
-        output, avg_time, _ = run_with_scheduler(scheduler, args.warmup_runs, args.benchmark_runs)
-        if ctx.is_attention_node:
+    if ctx.is_attention_node:
+        logger.info(f"[{scheduler_name}] prefill_time={elapsed*1000:.2f}ms")
+        if use_dbo and hasattr(scheduler, 'get_stats'):
             stats = scheduler.get_stats()
             logger.info(f"[DBO] {stats}")
-        
-        # Save timing data if enabled
-        if args.timing:
-            timing_data = scheduler.get_timing_data()
-            if timing_data:
-                os.makedirs("results", exist_ok=True)
-                timing_file = f"results/timing_{ctx.role}.json"
-                timing_data.save(timing_file)
-                logger.info(f"Timing saved: {timing_file}")
-                logger.info(timing_data.summary())
-        
-    else:  # compare
-        sync_scheduler = create_sync_scheduler()
-        sync_output, sync_time, _ = run_with_scheduler(sync_scheduler, args.warmup_runs, args.benchmark_runs)
-        
-        async_scheduler = create_async_scheduler()
-        output, async_time, _ = run_with_scheduler(async_scheduler, args.warmup_runs, args.benchmark_runs)
-        
-        if ctx.is_attention_node:
-            speedup = sync_time / async_time if async_time > 0 else 1.0
-            logger.info("=" * 40)
-            logger.info("DBO Comparison:")
-            logger.info(f"  Sync:    {sync_time*1000:.2f}ms")
-            logger.info(f"  Async:   {async_time*1000:.2f}ms")
-            logger.info(f"  Speedup: {speedup:.2f}x")
-            logger.info("=" * 40)
-        
-        # Save timing if enabled
-        if args.timing:
-            timing_data = async_scheduler.get_timing_data()
-            if timing_data:
-                os.makedirs("results", exist_ok=True)
-                timing_data.save(f"results/timing_{ctx.role}.json")
+    
+    # Save timing data if enabled
+    if args.timing and use_dbo:
+        timing_data = scheduler.get_timing_data()
+        if timing_data:
+            os.makedirs("results", exist_ok=True)
+            timing_file = f"results/timing_{ctx.role}.json"
+            timing_data.save(timing_file)
+            logger.info(f"Timing saved: {timing_file}")
+            logger.info(timing_data.summary())
     
     # Output results (attention node only)
     if ctx.is_attention_node and output is not None:
@@ -370,9 +327,9 @@ def run_generation_demo(args):
     
     ctx.barrier()
     
-    # Generate
-    use_decode_dbo = not args.no_decode_dbo
-    logger.info(f"Starting generation... (Decode DBO: {use_decode_dbo})")
+    # Generate with DBO setting
+    use_dbo = not args.no_dbo
+    logger.info(f"Starting generation... (DBO: {use_dbo})")
     start_time = time.perf_counter()
     
     output_ids = model.generate(
@@ -384,8 +341,8 @@ def run_generation_demo(args):
         do_sample=not args.greedy,
         eos_token_id=tokenizer.eos_token_id if tokenizer else None,
         pad_token_id=tokenizer.pad_token_id if tokenizer else None,
-        use_decode_dbo=use_decode_dbo,
-        num_decode_micro_batches=args.decode_micro_batches,
+        use_decode_dbo=use_dbo,
+        num_decode_micro_batches=args.num_micro_batches,
     )
     
     if torch.cuda.is_available():
@@ -411,10 +368,10 @@ def main():
     args = parse_args()
     try:
         if args.no_generate:
-            # Prefill benchmark only (no generation)
+            # Prefill only (no generation)
             run_inference_demo(args)
         else:
-            # Default: autoregressive generation with DBO
+            # Default: autoregressive generation
             run_generation_demo(args)
     except Exception as e:
         logging.error(f"Error: {e}", exc_info=True)
