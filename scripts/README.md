@@ -26,6 +26,7 @@
 | 脚本 | 功能 | 用法 |
 |------|------|------|
 | `visualize_dbo.py` | DBO 时间线图 | `python scripts/visualize_dbo.py <results_dir> [opts]` |
+| `visualize_dbo_pipeline.py` | DBO Pipeline 4泳道图 | `python scripts/visualize_dbo_pipeline.py [opts]` |
 | `plot_dbo_summary.py` | 综合总结图 | `python scripts/plot_dbo_summary.py` |
 
 ---
@@ -248,6 +249,53 @@ python scripts/visualize_dbo.py results/prefill_dbo/ \
 - `timing_ffn.json` - FFN 节点计时数据
 
 **输出**: PNG 时间线图
+
+---
+
+### visualize_dbo_pipeline.py
+
+**功能**: 生成 4 泳道 DBO Pipeline 可视化图，清晰展示 Attention、通信、FFN 模块的重叠关系
+
+**语法**:
+```bash
+python scripts/visualize_dbo_pipeline.py [options]
+```
+
+**参数**:
+- `--attn-timing` - Attention 节点 timing JSON 文件路径（默认: `results/prefill_dbo/timing_attention.json`）
+- `--ffn-timing` - FFN 节点 timing JSON 文件路径（默认: `results/prefill_dbo/timing_ffn.json`）
+- `--output` - 输出 PNG 文件路径（默认: `results/prefill_dbo/dbo_pipeline_4lanes.png`）
+- `--max-layers` - 显示层数（默认: 2，推荐 2-4 层）
+
+**示例**:
+```bash
+# 默认用法 - 显示前 2 层
+python scripts/visualize_dbo_pipeline.py
+
+# 显示前 4 层
+python scripts/visualize_dbo_pipeline.py --max-layers 4
+
+# 指定输入和输出
+python scripts/visualize_dbo_pipeline.py \
+  --attn-timing results/prefill_dbo/timing_attention.json \
+  --ffn-timing results/prefill_dbo/timing_ffn.json \
+  --output my_pipeline.png
+```
+
+**输出格式**:
+- 4 个泳道（从上到下）:
+  - **A (Attention)** - Attention 节点计算
+  - **A→F (Comm)** - Attention 发送到 FFN 的通信
+  - **F (FFN)** - FFN 节点计算
+  - **F→A (Comm)** - FFN 发送回 Attention 的通信
+- 不同颜色区分不同的 micro-batch
+- 在时间块上标注层号和持续时间
+- 右上角显示性能统计信息
+
+**优势**: 
+- 相比 `visualize_dbo.py`，不显示空闲等待时间，更直观
+- 清晰展示 DBO 的计算-通信重叠效果
+- 适合理解 pipeline 工作原理
 
 ---
 
