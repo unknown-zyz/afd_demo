@@ -712,6 +712,10 @@ class DisaggregatedQwenModel(nn.Module):
             else:
                 self.forward_decode(dummy_token)
         
+        # Log Decode DBO stats for FFN node
+        if decode_scheduler is not None:
+            logger.info(f"[FFN] Decode DBO stats: {decode_scheduler.get_stats()}")
+        
         # FFN node doesn't return meaningful output
         return input_ids
     

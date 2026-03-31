@@ -305,25 +305,31 @@ def run_generation_demo(args):
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     
-    # Prepare input
+    # Prepare input - support batch prompts (comma-separated or repeat single prompt)
     if ctx.is_attention_node:
-        inputs = tokenizer(args.prompt, return_tensors="pt", padding=True,
+        # Parse prompts: if batch_size > 1 and single prompt, repeat it
+        prompts = [args.prompt] * args.batch_size
+        
+        inputs = tokenizer(prompts, return_tensors="pt", padding=True,
                           truncation=True, max_length=args.max_seq_len)
         input_ids = inputs["input_ids"].to(device)
-        prompt_len = input_ids.shape[1]
-        # Broadcast prompt length to FFN node
-        prompt_len_tensor = torch.tensor([prompt_len], device=device)
+        batch_size, prompt_len = input_ids.shape
+        
+        # Broadcast batch_size and prompt length to FFN node
+        meta_tensor = torch.tensor([batch_size, prompt_len], device=device)
+        logger.info(f"Input: batch_size={batch_size}, prompt_len={prompt_len}")
     else:
-        # Receive prompt length from attention node
-        prompt_len_tensor = torch.zeros(1, dtype=torch.long, device=device)
+        # Receive metadata from attention node
+        meta_tensor = torch.zeros(2, dtype=torch.long, device=device)
     
     import torch.distributed as dist
-    dist.broadcast(prompt_len_tensor, src=0)
-    prompt_len = prompt_len_tensor.item()
+    dist.broadcast(meta_tensor, src=0)
+    batch_size = meta_tensor[0].item()
+    prompt_len = meta_tensor[1].item()
     
     if not ctx.is_attention_node:
         # FFN node creates dummy input with correct shape
-        input_ids = torch.zeros(1, prompt_len, dtype=torch.long, device=device)
+        input_ids = torch.zeros(batch_size, prompt_len, dtype=torch.long, device=device)
     
     ctx.barrier()
     

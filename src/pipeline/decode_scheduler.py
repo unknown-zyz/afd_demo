@@ -33,6 +33,12 @@ class DecodeDBOStats:
     num_tokens: int = 0
     num_micro_batches: int = 0
     
+    # Detailed per-phase timing (summed across all layers and micro-batches)
+    attn_compute_time: float = 0.0  # Attention computation
+    ffn_compute_time: float = 0.0   # FFN computation
+    a2f_comm_time: float = 0.0      # Attention → FFN communication
+    f2a_comm_time: float = 0.0      # FFN → Attention communication
+    
     @property
     def tokens_per_second(self) -> float:
         if self.total_time == 0:
@@ -40,12 +46,21 @@ class DecodeDBOStats:
         return self.num_tokens / self.total_time
     
     def __str__(self) -> str:
-        return (
+        lines = [
             f"Decode DBO: {self.total_time*1000:.2f}ms | "
             f"计算: {self.compute_time*1000:.2f}ms | "
             f"通信: {self.comm_time*1000:.2f}ms | "
             f"{self.tokens_per_second:.1f} tok/s"
-        )
+        ]
+        # Add detailed breakdown if available
+        if self.attn_compute_time > 0 or self.ffn_compute_time > 0:
+            lines.append(
+                f"  详细: Attn={self.attn_compute_time*1000:.2f}ms, "
+                f"FFN={self.ffn_compute_time*1000:.2f}ms, "
+                f"A2F={self.a2f_comm_time*1000:.2f}ms, "
+                f"F2A={self.f2a_comm_time*1000:.2f}ms"
+            )
+        return "\n".join(lines)
 
 
 class DecodeDBOScheduler:
@@ -263,18 +278,22 @@ class DecodeDBOScheduler:
                 packed_list.append(packed)
                 
                 compute_end = time.perf_counter()
-                self.stats.compute_time += compute_end - compute_start
+                compute_time = compute_end - compute_start
+                self.stats.compute_time += compute_time
+                self.stats.attn_compute_time += compute_time
                 
                 # Async send - overlaps with next MB's compute
+                send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
                 handle = dist.isend(packed.contiguous(), dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append(handle)
+                send_handles.append((handle, send_start))
             
-            # Wait for all sends
-            for handle in send_handles:
+            # Wait for all sends and record A2F time
+            for handle, send_start in send_handles:
                 handle.wait()
+                self.stats.a2f_comm_time += time.perf_counter() - send_start
             
-            # Receive FFN results
+            # Receive FFN results (F2A communication)
             recv_tensors = []
             for mb_idx in range(num_mb):
                 recv_start = time.perf_counter()
@@ -286,7 +305,9 @@ class DecodeDBOScheduler:
                 dist.recv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
                 recv_tensors.append(recv_tensor)
                 
-                self.stats.comm_time += time.perf_counter() - recv_start
+                recv_time = time.perf_counter() - recv_start
+                self.stats.comm_time += recv_time
+                self.stats.f2a_comm_time += recv_time
             
             # Update hidden states
             for mb_idx in range(num_mb):
@@ -333,11 +354,13 @@ class DecodeDBOScheduler:
             send_handles = []
             
             for mb_idx in range(num_mb):
-                # Wait for data
+                # Wait for data (A2F receive)
                 recv_start = time.perf_counter()
                 recv_handles[mb_idx].wait()
                 packed = recv_tensors[mb_idx]
-                self.stats.comm_time += time.perf_counter() - recv_start
+                recv_time = time.perf_counter() - recv_start
+                self.stats.comm_time += recv_time
+                self.stats.a2f_comm_time += recv_time
                 
                 # Unpack
                 attn_output = packed[..., :self.model.hidden_size].clone()
@@ -354,16 +377,20 @@ class DecodeDBOScheduler:
                     output = output[0]
                 output = output.contiguous()
                 
-                self.stats.compute_time += time.perf_counter() - compute_start
+                compute_time = time.perf_counter() - compute_start
+                self.stats.compute_time += compute_time
+                self.stats.ffn_compute_time += compute_time
                 
-                # Async send - overlaps with next MB's processing
+                # Async send (F2A) - overlaps with next MB's processing
+                send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "ffn_to_attn")
                 handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append(handle)
+                send_handles.append((handle, send_start))
             
-            # Wait for all sends
-            for handle in send_handles:
+            # Wait for all sends and record F2A time
+            for handle, send_start in send_handles:
                 handle.wait()
+                self.stats.f2a_comm_time += time.perf_counter() - send_start
     
     def get_stats(self) -> DecodeDBOStats:
         """Get statistics from last run."""
