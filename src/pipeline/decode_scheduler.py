@@ -162,6 +162,35 @@ class DecodeDBOScheduler:
         
         return micro_batches
     
+    def _slice_kv_cache(self, kv_cache, batch_start: int, batch_end: int):
+        """
+        Create a view of KV cache for a specific batch range.
+        
+        Args:
+            kv_cache: DynamicCache with full batch
+            batch_start: Start index in batch dimension
+            batch_end: End index in batch dimension (exclusive)
+        
+        Returns:
+            Sliced cache view (in-place, shares memory with original)
+        """
+        from transformers import DynamicCache
+        
+        sliced_cache = DynamicCache()
+        
+        # Slice each layer's keys and values along batch dimension
+        for layer_idx in range(len(kv_cache.layers)):
+            layer = kv_cache.layers[layer_idx]
+            
+            # Slice: [batch, heads, seq, dim] -> [batch_end-batch_start, heads, seq, dim]
+            k_slice = layer.keys[batch_start:batch_end]
+            v_slice = layer.values[batch_start:batch_end]
+            
+            # Update sliced cache
+            sliced_cache.update(k_slice, v_slice, layer_idx)
+        
+        return sliced_cache
+    
     @torch.no_grad()
     def forward_decode_dbo(
         self,
@@ -240,23 +269,34 @@ class DecodeDBOScheduler:
         mb_hidden_states = []
         mb_attention_masks = []
         mb_position_embeddings = []
+        mb_kv_caches = []  # Store sliced KV cache for each micro-batch
         
+        batch_start = 0
         for mb_idx, (ids_mb, pos_mb) in enumerate(micro_batches):
+            mb_batch_size = ids_mb.shape[0]
+            batch_end = batch_start + mb_batch_size
+            
             # Embed tokens
             hidden = self.model.attention_worker.embed(ids_mb)
             mb_hidden_states.append(hidden)
             
+            # Slice KV cache for this micro-batch
+            mb_cache = self._slice_kv_cache(kv_cache, batch_start, batch_end)
+            mb_kv_caches.append(mb_cache)
+            
             # Get current cache length for this micro-batch
-            cur_pos = kv_cache.get_seq_length() if mb_idx == 0 else kv_cache.get_seq_length()
+            cur_pos = mb_cache.get_seq_length()
             total_len = cur_pos + 1
             
             # Create attention mask
-            mask = self.model._make_causal_mask(ids_mb.shape[0], 1, total_len)
+            mask = self.model._make_causal_mask(mb_batch_size, 1, total_len)
             mb_attention_masks.append(mask)
             
             # Position embeddings
             pos_emb = self.model.attention_worker.get_position_embeddings(hidden, pos_mb)
             mb_position_embeddings.append(pos_emb)
+            
+            batch_start = batch_end
         
         # Process layers with DBO
         for layer_idx in range(num_layers):
@@ -267,13 +307,20 @@ class DecodeDBOScheduler:
             for mb_idx in range(num_mb):
                 compute_start = time.perf_counter()
                 
-                attn_output, residual = self.model.attention_worker.forward_attention_layer(
+                result = self.model.attention_worker.forward_attention_layer(
                     layer_idx=layer_idx,
                     hidden_states=mb_hidden_states[mb_idx],
                     attention_mask=mb_attention_masks[mb_idx],
                     position_ids=micro_batches[mb_idx][1],
                     position_embeddings=mb_position_embeddings[mb_idx],
+                    use_cache=True,
+                    past_key_value=mb_kv_caches[mb_idx],  # Use sliced cache
                 )
+                # result is (attn_output, residual, updated_cache) when use_cache=True
+                attn_output, residual = result[0], result[1]
+                # Note: updated_cache is result[2], but we don't need it here
+                # because the KV cache is updated in-place in the global cache
+                
                 packed = torch.cat([attn_output, residual], dim=-1)
                 packed_list.append(packed)
                 
