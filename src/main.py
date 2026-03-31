@@ -102,6 +102,8 @@ def parse_args():
                         help="Test prompt")
     parser.add_argument("--timing", action="store_true",
                         help="Enable detailed per-MB timing (saves to results/)")
+    parser.add_argument("--timing-suffix", type=str, default="",
+                        help="Suffix for timing file (e.g., 'local_b4_t5' -> timing_attention_local_b4_t5.json)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable verbose output")
     
@@ -252,8 +254,14 @@ def run_inference_demo(args):
     if args.timing and use_dbo:
         timing_data = scheduler.get_timing_data()
         if timing_data:
-            os.makedirs("results", exist_ok=True)
-            timing_file = f"results/timing_{ctx.role}.json"
+            os.makedirs("results/prefill_dbo", exist_ok=True)
+            # Build timing file name with configuration info
+            if args.timing_suffix:
+                timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            else:
+                # Auto-generate suffix from config
+                suffix = f"b{args.batch_size}_t{args.max_new_tokens}"
+                timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
             timing_data.save(timing_file)
             logger.info(f"Timing saved: {timing_file}")
             logger.info(timing_data.summary())

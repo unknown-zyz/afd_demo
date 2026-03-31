@@ -39,9 +39,15 @@ LANES = {
 }
 
 
-def load_timing_data(attn_path: str, ffn_path: str, max_layers: int = 2):
+def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_layers: int = 2):
     """
-    加载并组织 timing 数据，提取前 N 层。
+    加载并组织 timing 数据，提取指定范围的层。
+    
+    Args:
+        attn_path: Attention timing JSON 文件路径
+        ffn_path: FFN timing JSON 文件路径
+        start_layer: 起始层 (默认: 1, 跳过 Layer 0 的初始化开销)
+        num_layers: 要显示的层数 (默认: 2)
     
     Returns:
         dict: 按泳道组织的事件数据
@@ -58,6 +64,8 @@ def load_timing_data(attn_path: str, ffn_path: str, max_layers: int = 2):
     with open(ffn_path) as f:
         ffn_data = json.load(f)
     
+    end_layer = start_layer + num_layers
+    
     # 组织数据到各个泳道
     lanes_data = {
         'A': [],      # Attention compute
@@ -66,43 +74,65 @@ def load_timing_data(attn_path: str, ffn_path: str, max_layers: int = 2):
         'F2A': [],    # FFN send
     }
     
+    # 找到起始时间偏移 (使图从 0 开始)
+    min_start = float('inf')
+    for event in attn_data['events']:
+        if start_layer <= event['layer'] < end_layer:
+            min_start = min(min_start, event['start'] * 1000)
+    for event in ffn_data['events']:
+        if start_layer <= event['layer'] < end_layer:
+            min_start = min(min_start, event['start'] * 1000)
+    
+    if min_start == float('inf'):
+        min_start = 0
+    
     # 提取 Attention 节点事件
     for event in attn_data['events']:
-        if event['layer'] >= max_layers:
+        layer = event['layer']
+        if layer < start_layer or layer >= end_layer:
             continue
         
-        start_ms = event['start'] * 1000  # 转换为 ms
+        start_ms = event['start'] * 1000 - min_start  # 相对时间
         duration_ms = event['duration_ms']
-        layer = event['layer']
         mb = event['mb']
+        display_layer = layer - start_layer  # 显示用的层号 (从 0 开始)
         
         if event['type'] == 'attn_compute':
-            lanes_data['A'].append((start_ms, duration_ms, layer, mb))
+            lanes_data['A'].append((start_ms, duration_ms, display_layer, mb))
         elif event['type'] == 'send_wait':
-            lanes_data['A2F'].append((start_ms, duration_ms, layer, mb))
+            lanes_data['A2F'].append((start_ms, duration_ms, display_layer, mb))
     
     # 提取 FFN 节点事件
     for event in ffn_data['events']:
-        if event['layer'] >= max_layers:
+        layer = event['layer']
+        if layer < start_layer or layer >= end_layer:
             continue
         
-        start_ms = event['start'] * 1000
+        start_ms = event['start'] * 1000 - min_start
         duration_ms = event['duration_ms']
-        layer = event['layer']
         mb = event['mb']
+        display_layer = layer - start_layer
         
         if event['type'] == 'ffn_compute':
-            lanes_data['F'].append((start_ms, duration_ms, layer, mb))
+            lanes_data['F'].append((start_ms, duration_ms, display_layer, mb))
         elif event['type'] == 'send_wait':
-            lanes_data['F2A'].append((start_ms, duration_ms, layer, mb))
+            lanes_data['F2A'].append((start_ms, duration_ms, display_layer, mb))
     
-    return lanes_data, attn_data, ffn_data
+    return lanes_data, attn_data, ffn_data, start_layer
 
 
 def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict, 
-                  output_path: str, max_layers: int = 2):
+                  output_path: str, num_layers: int = 2, start_layer: int = 1):
     """
     绘制 4 泳道 pipeline 图。
+    
+    Args:
+        lanes_data: 按泳道组织的事件数据
+        attn_data: Attention 节点完整数据
+        ffn_data: FFN 节点完整数据
+        output_path: 输出图片路径
+        num_layers: 显示的层数
+        start_layer: 原始数据中的起始层号
     """
     fig, ax = plt.subplots(figsize=(14, 6))
     
@@ -136,8 +166,9 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
             )
             ax.add_patch(rect)
             
-            # 添加文本标注
-            label = f'L{layer}'
+            # 添加文本标注 - 显示实际层号
+            actual_layer = layer + start_layer
+            label = f'L{actual_layer}'
             duration_label = f'{duration_ms:.1f}ms'
             
             # 标注位置
@@ -174,7 +205,8 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     summary = (f"E2E: Attn={attn_total:.1f}ms, FFN={ffn_total:.1f}ms | "
                f"Compute Ratio: Attn={attn_ratio:.1f}%, FFN={ffn_ratio:.1f}%")
     
-    title = f'DBO Pipeline (First {max_layers} Layers, {num_mb} Micro-batches)\n{summary}'
+    end_layer = start_layer + num_layers - 1
+    title = f'DBO Pipeline (Layer {start_layer}-{end_layer}, {num_mb} Micro-batches)\n{summary}'
     ax.set_title(title, fontsize=12, pad=10)
     
     # 图例
@@ -213,7 +245,13 @@ def main():
         help='Output PNG file path'
     )
     parser.add_argument(
-        '--max-layers',
+        '--start-layer',
+        type=int,
+        default=1,
+        help='Starting layer to visualize (default: 1, skip Layer 0 warmup)'
+    )
+    parser.add_argument(
+        '--num-layers',
         type=int,
         default=2,
         help='Number of layers to visualize (default: 2)'
@@ -234,21 +272,24 @@ def main():
     print(f"Loading timing data...")
     print(f"  Attention: {args.attn_timing}")
     print(f"  FFN: {args.ffn_timing}")
+    print(f"  Layers: {args.start_layer} to {args.start_layer + args.num_layers - 1}")
     
-    lanes_data, attn_data, ffn_data = load_timing_data(
+    lanes_data, attn_data, ffn_data, start_layer = load_timing_data(
         args.attn_timing,
         args.ffn_timing,
-        args.max_layers
+        args.start_layer,
+        args.num_layers
     )
     
     # 打印数据统计
-    print(f"\nData summary (first {args.max_layers} layers):")
+    print(f"\nData summary (layer {args.start_layer}-{args.start_layer + args.num_layers - 1}):")
     for lane_name, events in lanes_data.items():
         print(f"  {LANES[lane_name]['label']}: {len(events)} events")
     
     # 生成可视化
     print(f"\nGenerating visualization...")
-    plot_pipeline(lanes_data, attn_data, ffn_data, args.output, args.max_layers)
+    plot_pipeline(lanes_data, attn_data, ffn_data, args.output, 
+                  args.num_layers, start_layer)
     
     print(f"\n✓ Done! View the result at: {args.output}")
 
