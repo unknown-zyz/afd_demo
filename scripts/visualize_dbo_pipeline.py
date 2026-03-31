@@ -193,21 +193,44 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     ax.autoscale(axis='x')
     ax.grid(axis='x', alpha=0.3, linestyle='--')
     
-    # 标题
+    # 计算改进的性能指标
     num_mb = attn_data.get('num_micro_batches', 2)
-    
-    # 添加性能统计文本
     attn_total = attn_data.get('total_time_ms', 0)
     ffn_total = ffn_data.get('total_time_ms', 0)
-    attn_ratio = attn_data.get('compute_ratio', 0) * 100
-    ffn_ratio = ffn_data.get('compute_ratio', 0) * 100
     
-    summary = (f"E2E: Attn={attn_total:.1f}ms, FFN={ffn_total:.1f}ms | "
-               f"Compute Ratio: Attn={attn_ratio:.1f}%, FFN={ffn_ratio:.1f}%")
+    # 总推理时间 = 两个节点中较大的
+    total_inference_time = max(attn_total, ffn_total)
     
+    # 计算时间
+    attn_compute = attn_data.get('total_compute_ms', 0)
+    ffn_compute = ffn_data.get('total_compute_ms', 0)
+    
+    # 通信时间 (send_wait + recv_wait)
+    attn_send = attn_data.get('total_send_wait_ms', 0)
+    attn_recv = attn_data.get('total_recv_wait_ms', 0)
+    ffn_send = ffn_data.get('total_send_wait_ms', 0)
+    ffn_recv = ffn_data.get('total_recv_wait_ms', 0)
+    total_comm = attn_send + ffn_send  # 单向通信各算一次
+    
+    # 理论串行时间 = 计算 + 通信 (无重叠)
+    serial_time = attn_compute + ffn_compute + total_comm
+    
+    # Overlap 率 = (理论串行 - 实际) / 理论串行
+    if serial_time > 0:
+        overlap_ratio = (serial_time - total_inference_time) / serial_time * 100
+        speedup = serial_time / total_inference_time if total_inference_time > 0 else 1.0
+    else:
+        overlap_ratio = 0
+        speedup = 1.0
+    
+    # 构建标题和统计信息
     end_layer = start_layer + num_layers - 1
-    title = f'DBO Pipeline (Layer {start_layer}-{end_layer}, {num_mb} Micro-batches)\n{summary}'
-    ax.set_title(title, fontsize=12, pad=10)
+    title = f'DBO Pipeline (Layer {start_layer}-{end_layer}, {num_mb} Micro-batches)'
+    
+    stats_line1 = f"Total: {total_inference_time:.1f}ms | Attn: {attn_compute:.1f}ms | FFN: {ffn_compute:.1f}ms | Comm: {total_comm:.1f}ms"
+    stats_line2 = f"Overlap: {overlap_ratio:.1f}% | Speedup vs Serial: {speedup:.2f}x"
+    
+    ax.set_title(f'{title}\n{stats_line1}\n{stats_line2}', fontsize=11, pad=10)
     
     # 图例
     legend_elements = [
