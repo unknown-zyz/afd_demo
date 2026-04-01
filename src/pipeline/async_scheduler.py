@@ -432,16 +432,7 @@ class AsyncPipelineScheduler:
             
             # Wait for all sends to complete
             for mb_idx, handle in enumerate(send_handles):
-                wait_start = time.perf_counter()  # 记录实际 wait 开始时间
                 handle.wait()
-                send_end = time.perf_counter()
-                if tracker:
-                    # 记录 isend→wait完成 的总时间（原有，用于可视化）
-                    tracker.record_event(EventType.SEND_WAIT, layer_idx, mb_idx,
-                                        send_start_times[mb_idx], send_end)
-                    # 记录实际 wait() 等待时间（新增，用于分析）
-                    tracker.record_event(EventType.SEND_ACTUAL_WAIT, layer_idx, mb_idx,
-                                        wait_start, send_end)
             
             # Collect and record real transfer times from monitor
             if monitor and tracker:
@@ -606,16 +597,7 @@ class AsyncPipelineScheduler:
             
             # Wait for all sends
             for mb_idx, handle in enumerate(send_handles):
-                wait_start = time.perf_counter()  # 记录实际 wait 开始时间
                 handle.wait()
-                send_end = time.perf_counter()
-                if tracker:
-                    # 记录 isend→wait完成 的总时间
-                    tracker.record_event(EventType.SEND_WAIT, layer_idx, mb_idx,
-                                        send_start_times[mb_idx], send_end)
-                    # 记录实际 wait() 等待时间
-                    tracker.record_event(EventType.SEND_ACTUAL_WAIT, layer_idx, mb_idx,
-                                        wait_start, send_end)
             
             # Collect and record real transfer times from monitor
             if monitor and tracker:

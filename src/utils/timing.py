@@ -24,8 +24,6 @@ class EventType(Enum):
     MOE_EXPERTS = "moe_experts"
     MOE_SHARED_OR_DENSE = "moe_shared_or_dense"
     SEND_START = "send_start"
-    SEND_WAIT = "send_wait"           # 从 isend 到 wait 返回（包含重叠时间）
-    SEND_ACTUAL_WAIT = "send_actual_wait"  # 实际 wait() 的等待时间
     SEND_TRANSFER = "send_transfer"   # 真实传输时间（isend 到传输完成，通过轮询检测）
     RECV_POST = "recv_post"
     RECV_WAIT = "recv_wait"

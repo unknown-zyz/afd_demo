@@ -3,7 +3,7 @@
 改进的 DBO Pipeline 可视化工具
 
 创建 4 泳道的 Gantt 图，清晰展示 Attention、通信、FFN 模块的重叠关系。
-只显示前 2 层，便于理解 DBO 的工作原理。
+使用 send_transfer 事件测量真实传输时间（通过后台轮询检测完成）。
 
 用法:
     python scripts/visualize_dbo_pipeline.py
@@ -99,7 +99,7 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
         
         if event['type'] == 'attn_compute':
             lanes_data['A'].append((start_ms, duration_ms, display_layer, mb))
-        elif event['type'] == 'send_wait':
+        elif event['type'] == 'send_transfer':
             lanes_data['A2F'].append((start_ms, duration_ms, display_layer, mb))
     
     # 提取 FFN 节点事件
@@ -115,7 +115,7 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
         
         if event['type'] == 'ffn_compute':
             lanes_data['F'].append((start_ms, duration_ms, display_layer, mb))
-        elif event['type'] == 'send_wait':
+        elif event['type'] == 'send_transfer':
             lanes_data['F2A'].append((start_ms, duration_ms, display_layer, mb))
     
     return lanes_data, attn_data, ffn_data, start_layer

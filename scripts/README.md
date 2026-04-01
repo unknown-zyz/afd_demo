@@ -271,7 +271,7 @@ python scripts/visualize_dbo_pipeline.py [options]
 - `--attn-timing` - Attention 节点 timing JSON 文件路径（默认: `results/prefill_dbo/timing_attention.json`）
 - `--ffn-timing` - FFN 节点 timing JSON 文件路径（默认: `results/prefill_dbo/timing_ffn.json`）
 - `--output` - 输出 PNG 文件路径（默认: `results/prefill_dbo/dbo_pipeline_4lanes.png`）
-- `--max-layers` - 显示层数（默认: 2，推荐 2-4 层）
+- `--num-layers` - 显示层数（默认: 2，推荐 2-4 层）
 
 **示例**:
 ```bash
@@ -279,7 +279,7 @@ python scripts/visualize_dbo_pipeline.py [options]
 python scripts/visualize_dbo_pipeline.py
 
 # 显示前 4 层
-python scripts/visualize_dbo_pipeline.py --max-layers 4
+python scripts/visualize_dbo_pipeline.py --num-layers 4
 
 # 指定输入和输出
 python scripts/visualize_dbo_pipeline.py \
@@ -291,9 +291,10 @@ python scripts/visualize_dbo_pipeline.py \
 **输出格式**:
 - 4 个泳道（从上到下）:
   - **A (Attention)** - Attention 节点计算
-  - **A→F (Comm)** - Attention 发送到 FFN 的通信
+  - **A→F (Comm)** - Attention 发送到 FFN 的真实传输时间
   - **F (FFN)** - FFN 节点计算
-  - **F→A (Comm)** - FFN 发送回 Attention 的通信
+  - **F→A (Comm)** - FFN 发送回 Attention 的真实传输时间
+- 使用 `send_transfer` 事件测量真实传输时间（后台轮询检测完成）
 - 不同颜色区分不同的 micro-batch
 - 在时间块上标注层号和持续时间
 - 右上角显示性能统计信息
