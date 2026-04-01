@@ -321,7 +321,7 @@ class DecodeDBOScheduler:
                 # Note: updated_cache is result[2], but we don't need it here
                 # because the KV cache is updated in-place in the global cache
                 
-                packed = torch.cat([attn_output, residual], dim=-1)
+                packed = (attn_output + residual).contiguous()
                 packed_list.append(packed)
                 
                 compute_end = time.perf_counter()
@@ -390,7 +390,7 @@ class DecodeDBOScheduler:
                 batch_size = micro_batches[mb_idx][0].shape[0]
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
                 recv_tensor = torch.empty(
-                    batch_size, 1, self.model.hidden_size * 2,
+                    batch_size, 1, self.model.hidden_size,
                     dtype=self.model.dtype, device=self.model.device
                 )
                 handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
@@ -409,16 +409,11 @@ class DecodeDBOScheduler:
                 self.stats.comm_time += recv_time
                 self.stats.a2f_comm_time += recv_time
                 
-                # Unpack
-                attn_output = packed[..., :self.model.hidden_size].clone()
-                residual = packed[..., self.model.hidden_size:].clone()
-                
-                # Compute FFN
+                # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
                 output = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
-                    attn_output=attn_output,
-                    residual=residual,
+                    hidden_states=packed,
                 )
                 if isinstance(output, tuple):
                     output = output[0]

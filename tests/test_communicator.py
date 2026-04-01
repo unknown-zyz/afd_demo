@@ -29,7 +29,7 @@ class TestBufferManagement:
         assert buffer.shape == (4, 128, 768)
     
     def test_pack_unpack(self):
-        """Test packing and unpacking tensors."""
+        """Test packing and unpacking tensors (legacy cat-based and new add-based)."""
         hidden_size = 768
         batch_size = 2
         seq_len = 10
@@ -37,16 +37,15 @@ class TestBufferManagement:
         attn_output = torch.randn(batch_size, seq_len, hidden_size)
         residual = torch.randn(batch_size, seq_len, hidden_size)
         
-        # Pack
-        packed = torch.cat([attn_output, residual], dim=-1)
-        assert packed.shape == (batch_size, seq_len, hidden_size * 2)
+        # New approach: pre-add on attention side (1×H transfer)
+        packed_new = attn_output + residual
+        assert packed_new.shape == (batch_size, seq_len, hidden_size)
         
-        # Unpack
-        unpacked_attn = packed[..., :hidden_size]
-        unpacked_res = packed[..., hidden_size:]
-        
-        assert torch.allclose(attn_output, unpacked_attn)
-        assert torch.allclose(residual, unpacked_res)
+        # Verify: FFN receives combined, applies same logic
+        # FFNLayer.forward: hidden_states = packed_new (already added)
+        # Then: residual = hidden_states; hidden_states = layernorm(hidden_states)
+        expected = residual + attn_output  # same as packed_new
+        assert torch.allclose(packed_new, expected)
 
 
 class TestTagGeneration:

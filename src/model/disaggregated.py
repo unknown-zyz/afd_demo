@@ -176,10 +176,9 @@ class DisaggregatedQwenModel(nn.Module):
                 position_embeddings=position_embeddings,
             )
             
-            # Send attn_output and residual to FFN node
-            # Pack them together for efficiency
+            # Send pre-combined hidden states to FFN node (1×H instead of 2×H)
             batch_size, seq_len, _ = attn_output.shape
-            packed = torch.cat([attn_output, residual], dim=-1)  # [B, S, 2*H]
+            packed = (attn_output + residual).contiguous()
             
             logger.debug(f"Layer {layer_idx}: Attention node sending to FFN, shape={packed.shape}, tag={tag_base}")
             self.communicator.send_sync(packed, tag=tag_base)
@@ -198,25 +197,20 @@ class DisaggregatedQwenModel(nn.Module):
             # FFN node
             assert self.ffn_worker is not None
             
-            # Receive attn_output and residual from attention node
+            # Receive pre-combined hidden states from attention node
             batch_size, seq_len, _ = hidden_states.shape
             logger.debug(f"Layer {layer_idx}: FFN node receiving from Attention, tag={tag_base}")
             packed = self.communicator.recv_sync(
-                shape=(batch_size, seq_len, self.hidden_size * 2),
+                shape=(batch_size, seq_len, self.hidden_size),
                 tag=tag_base
             )
             logger.debug(f"Layer {layer_idx}: FFN node received, shape={packed.shape}")
             
-            # Unpack
-            attn_output = packed[..., :self.hidden_size].clone()
-            residual = packed[..., self.hidden_size:].clone()
-            
-            # Compute FFN
+            # Compute FFN (input is pre-combined: attn_output + residual)
             logger.debug(f"Layer {layer_idx}: FFN node computing FFN")
             output = self.ffn_worker.forward_ffn_layer(
                 layer_idx=layer_idx,
-                attn_output=attn_output,
-                residual=residual,
+                hidden_states=packed,
             )
             
             # Send output back to attention node
@@ -345,9 +339,9 @@ class DisaggregatedQwenModel(nn.Module):
                 # DynamicCache is updated in-place by the attention layer
                 pass
             
-            # Send to FFN
+            # Send pre-combined hidden states to FFN
             batch_size, seq_len, _ = attn_output.shape
-            packed = torch.cat([attn_output, residual], dim=-1)
+            packed = (attn_output + residual).contiguous()
             self.communicator.send_sync(packed, tag=tag_base)
             
             # Receive from FFN
@@ -359,22 +353,18 @@ class DisaggregatedQwenModel(nn.Module):
             return output.clone()
             
         else:
-            # FFN node - unchanged
+            # FFN node
             assert self.ffn_worker is not None
             
             batch_size, seq_len, _ = hidden_states.shape
             packed = self.communicator.recv_sync(
-                shape=(batch_size, seq_len, self.hidden_size * 2),
+                shape=(batch_size, seq_len, self.hidden_size),
                 tag=tag_base
             )
             
-            attn_output = packed[..., :self.hidden_size].clone()
-            residual = packed[..., self.hidden_size:].clone()
-            
             output = self.ffn_worker.forward_ffn_layer(
                 layer_idx=layer_idx,
-                attn_output=attn_output,
-                residual=residual,
+                hidden_states=packed,
             )
             
             self.communicator.send_sync(output, tag=tag_base + 1)

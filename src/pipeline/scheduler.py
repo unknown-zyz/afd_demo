@@ -101,17 +101,15 @@ class PipelineScheduler:
         attn_output: torch.Tensor,
         residual: torch.Tensor,
     ) -> torch.Tensor:
-        """Pack attention output and residual for transmission."""
-        return torch.cat([attn_output, residual], dim=-1)
+        """Pre-add residual on attention side (halves A2F data)."""
+        return (attn_output + residual).contiguous()
     
     def _unpack_attn_output(
         self,
         packed: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Unpack attention output and residual after receiving."""
-        attn_output = packed[..., :self.hidden_size]
-        residual = packed[..., self.hidden_size:]
-        return attn_output, residual
+    ) -> torch.Tensor:
+        """Return pre-combined hidden states (no unpack needed)."""
+        return packed
     
     def _get_tag(self, layer_idx: int, micro_batch_idx: int, direction: str) -> int:
         """Generate unique tag for communication."""
@@ -229,7 +227,7 @@ class PipelineScheduler:
             # Start all receives for this layer
             for mb_idx, mb in enumerate(micro_batches):
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
-                recv_shape = (mb.batch_size, mb.seq_len, self.hidden_size * 2)
+                recv_shape = (mb.batch_size, mb.seq_len, self.hidden_size)
                 recv_idx = self.comm.recv_async(recv_shape, tag=tag)
                 recv_buffers[(layer_idx, mb_idx)] = recv_idx
             
@@ -241,15 +239,14 @@ class PipelineScheduler:
                 packed = self.comm.wait_recv(recv_idx)
                 packed = packed[:mb.batch_size, :mb.seq_len, :]
                 
-                # Unpack
-                attn_output, residual = self._unpack_attn_output(packed)
+                # Get pre-combined hidden states (no unpack needed)
+                hidden_states_in = self._unpack_attn_output(packed)
                 
                 # Run FFN
                 with torch.cuda.stream(self.compute_stream) if self.compute_stream else torch.no_grad():
                     hidden_states = self.ffn_fn(
                         layer_idx=layer_idx,
-                        attn_output=attn_output.clone(),
-                        residual=residual.clone(),
+                        hidden_states=hidden_states_in.clone(),
                     )
                 
                 # Send back to attention node (async)

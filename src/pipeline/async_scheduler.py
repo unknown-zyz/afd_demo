@@ -406,9 +406,12 @@ class AsyncPipelineScheduler:
                     position_ids=mb.position_ids,
                     position_embeddings=mb.position_embeddings,
                 )
-                packed = torch.cat([attn_output, residual], dim=-1)
+                # Pre-add residual on attention side to halve A2F data (1×H instead of 2×H)
+                packed = (attn_output + residual).contiguous()
                 packed_list.append(packed)
                 
+                if tracker:
+                    torch.cuda.synchronize()
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
                 
@@ -504,7 +507,7 @@ class AsyncPipelineScheduler:
                 recv_post_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
                 recv_handle, recv_tensor = self._recv_async(
-                    (batch_size, seq_len, self.model.hidden_size * 2),
+                    (batch_size, seq_len, self.model.hidden_size),
                     tag
                 )
                 recv_handles.append(recv_handle)
@@ -523,7 +526,7 @@ class AsyncPipelineScheduler:
                 recv_wait_start = time.perf_counter()
                 recv_h.wait()
                 recv_wait_end = time.perf_counter()
-                packed = recv_t
+                hidden_states_in = recv_t
                 
                 # Track recv wait time
                 self.stats.recv_wait_time += recv_wait_end - recv_wait_start
@@ -532,16 +535,11 @@ class AsyncPipelineScheduler:
                     tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
                                         recv_wait_start, recv_wait_end)
                 
-                # Unpack
-                attn_output = packed[..., :self.model.hidden_size].clone()
-                residual = packed[..., self.model.hidden_size:].clone()
-                
-                # Compute FFN
+                # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
                 ffn_result = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
-                    attn_output=attn_output,
-                    residual=residual,
+                    hidden_states=hidden_states_in,
                     return_timing=bool(tracker and self.model.supports_moe_timing),
                 )
                 if isinstance(ffn_result, tuple):
@@ -550,6 +548,8 @@ class AsyncPipelineScheduler:
                     output, stage_timing = ffn_result, None
                 output = output.contiguous().clone()
                 output_list.append(output)
+                if tracker:
+                    torch.cuda.synchronize()
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
                 
@@ -645,7 +645,7 @@ class AsyncPipelineScheduler:
                             position_ids=mb.position_ids,
                             position_embeddings=mb.position_embeddings,
                         )
-                        packed = torch.cat([attn_output, residual], dim=-1)
+                        packed = (attn_output + residual).contiguous()
                     self.compute_stream.synchronize()
                 else:
                     attn_output, residual = self.model.attention_worker.forward_attention_layer(
@@ -655,7 +655,7 @@ class AsyncPipelineScheduler:
                         position_ids=mb.position_ids,
                         position_embeddings=mb.position_embeddings,
                     )
-                    packed = torch.cat([attn_output, residual], dim=-1)
+                    packed = (attn_output + residual).contiguous()
                 
                 packed_tensors.append(packed)
                 
@@ -734,7 +734,7 @@ class AsyncPipelineScheduler:
                 
                 tag_recv = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
                 recv_handle, recv_tensor = self._recv_async(
-                    (batch_size, seq_len, self.model.hidden_size * 2),
+                    (batch_size, seq_len, self.model.hidden_size),
                     tag_recv
                 )
                 recv_handles.append(recv_handle)
@@ -747,29 +747,23 @@ class AsyncPipelineScheduler:
             for mb_idx, mb in enumerate(micro_batches):
                 # Wait for this micro-batch's data
                 recv_handles[mb_idx].wait()
-                packed = recv_tensors[mb_idx]
+                hidden_states_in = recv_tensors[mb_idx]
                 
-                # Unpack - clone to ensure we have our own copy
-                attn_output = packed[..., :self.model.hidden_size].clone()
-                residual = packed[..., self.model.hidden_size:].clone()
-                
-                # Compute FFN
+                # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
                 
                 if self.compute_stream:
                     with torch.cuda.stream(self.compute_stream):
                         ffn_result = self.model.ffn_worker.forward_ffn_layer(
                             layer_idx=layer_idx,
-                            attn_output=attn_output,
-                            residual=residual,
+                            hidden_states=hidden_states_in,
                             return_timing=False,
                         )
                     self.compute_stream.synchronize()
                 else:
                     ffn_result = self.model.ffn_worker.forward_ffn_layer(
                         layer_idx=layer_idx,
-                        attn_output=attn_output,
-                        residual=residual,
+                        hidden_states=hidden_states_in,
                         return_timing=False,
                     )
                 output = ffn_result[0] if isinstance(ffn_result, tuple) else ffn_result

@@ -56,8 +56,8 @@ class FFNLayer(nn.Module):
     
     def forward(
         self,
-        attn_output: torch.Tensor,
-        residual: torch.Tensor,
+        hidden_states: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
         output_device: Optional[torch.device] = None,
         return_timing: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, FFNStageTiming]]:
@@ -65,8 +65,9 @@ class FFNLayer(nn.Module):
         Forward pass for FFN layer.
         
         Args:
-            attn_output: Output from attention layer
-            residual: Residual from before attention
+            hidden_states: Pre-combined input (attn_output + residual, added on attention node).
+                          If residual is provided separately, adds them first (legacy path).
+            residual: Optional separate residual tensor (legacy compatibility).
         
         Returns:
             hidden_states: Output after FFN and residual connections
@@ -74,17 +75,17 @@ class FFNLayer(nn.Module):
         if output_device is None:
             output_device = self.layer_device
 
-        # Move compute tensors to this layer's device (supports role-internal multi-GPU).
-        if attn_output.device != self.layer_device:
-            attn_output = attn_output.to(self.layer_device, non_blocking=True)
-        if residual.device != self.layer_device:
-            residual = residual.to(self.layer_device, non_blocking=True)
+        if hidden_states.device != self.layer_device:
+            hidden_states = hidden_states.to(self.layer_device, non_blocking=True)
 
         stage_timing = FFNStageTiming()
 
-        # First residual connection (attention)
-        hidden_states = residual + attn_output
-        
+        # If residual is provided separately (legacy), add it first
+        if residual is not None:
+            if residual.device != self.layer_device:
+                residual = residual.to(self.layer_device, non_blocking=True)
+            hidden_states = residual + hidden_states
+
         # Store for second residual
         residual = hidden_states
         
@@ -191,8 +192,9 @@ class FFNWorker(nn.Module):
     def forward_ffn_layer(
         self,
         layer_idx: int,
-        attn_output: torch.Tensor,
-        residual: torch.Tensor,
+        hidden_states: torch.Tensor,
+        attn_output: Optional[torch.Tensor] = None,
+        residual: Optional[torch.Tensor] = None,
         return_timing: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, FFNStageTiming]]:
         """
@@ -200,15 +202,15 @@ class FFNWorker(nn.Module):
         
         Args:
             layer_idx: Index of the layer
-            attn_output: Attention output received from attention node
-            residual: Residual tensor received from attention node
+            hidden_states: Pre-combined input (attn_output + residual)
+            attn_output: Deprecated, use hidden_states instead
+            residual: Deprecated, use hidden_states instead
         
         Returns:
             hidden_states: Output to send back to attention node
         """
         return self.ffn_layers[layer_idx](
-            attn_output,
-            residual,
+            hidden_states,
             output_device=self.device,
             return_timing=return_timing,
         )

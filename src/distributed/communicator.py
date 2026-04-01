@@ -93,8 +93,7 @@ class AFDCommunicator:
     
     def _init_buffers(self) -> None:
         """Initialize send and receive buffers."""
-        # Buffer size needs to accommodate packed tensors (attn_output + residual = 2*hidden_size)
-        buffer_shape = (self.max_batch_size, self.max_seq_len, self.hidden_size * 2)
+        buffer_shape = (self.max_batch_size, self.max_seq_len, self.hidden_size)
         
         for _ in range(self.num_buffers):
             send_tensor = torch.empty(
