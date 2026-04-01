@@ -205,28 +205,29 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     attn_compute = attn_data.get('total_compute_ms', 0)
     ffn_compute = ffn_data.get('total_compute_ms', 0)
     
-    # 通信时间 (send_wait + recv_wait)
-    attn_send = attn_data.get('total_send_wait_ms', 0)
-    attn_recv = attn_data.get('total_recv_wait_ms', 0)
-    ffn_send = ffn_data.get('total_send_wait_ms', 0)
-    ffn_recv = ffn_data.get('total_recv_wait_ms', 0)
-    total_comm = attn_send + ffn_send  # 单向通信各算一次
-    
-    # 计算各 MB 的通信时间 (从 events 中提取)
+    # 计算各 MB 的真实传输时间 (从 send_transfer 事件中提取)
     attn_events = attn_data.get('events', [])
-    mb0_send_times = [e['duration_ms'] for e in attn_events 
-                     if e['type'] == 'send_wait' and e['mb'] == 0 and start_layer <= e['layer'] < start_layer + num_layers]
-    mb1_send_times = [e['duration_ms'] for e in attn_events
-                     if e['type'] == 'send_wait' and e['mb'] == 1 and start_layer <= e['layer'] < start_layer + num_layers]
-    mb0_actual_wait = [e['duration_ms'] for e in attn_events
-                      if e['type'] == 'send_actual_wait' and e['mb'] == 0 and start_layer <= e['layer'] < start_layer + num_layers]
-    mb1_actual_wait = [e['duration_ms'] for e in attn_events
-                      if e['type'] == 'send_actual_wait' and e['mb'] == 1 and start_layer <= e['layer'] < start_layer + num_layers]
+    ffn_events = ffn_data.get('events', [])
     
-    mb0_send_avg = sum(mb0_send_times) / len(mb0_send_times) if mb0_send_times else 0
-    mb1_send_avg = sum(mb1_send_times) / len(mb1_send_times) if mb1_send_times else 0
-    mb0_actual_avg = sum(mb0_actual_wait) / len(mb0_actual_wait) if mb0_actual_wait else 0
-    mb1_actual_avg = sum(mb1_actual_wait) / len(mb1_actual_wait) if mb1_actual_wait else 0
+    # A→F 传输时间 (来自 attention 节点)
+    a2f_mb0_times = [e['duration_ms'] for e in attn_events 
+                    if e['type'] == 'send_transfer' and e['mb'] == 0 and start_layer <= e['layer'] < start_layer + num_layers]
+    a2f_mb1_times = [e['duration_ms'] for e in attn_events
+                    if e['type'] == 'send_transfer' and e['mb'] == 1 and start_layer <= e['layer'] < start_layer + num_layers]
+    
+    # F→A 传输时间 (来自 FFN 节点)
+    f2a_mb0_times = [e['duration_ms'] for e in ffn_events 
+                    if e['type'] == 'send_transfer' and e['mb'] == 0 and start_layer <= e['layer'] < start_layer + num_layers]
+    f2a_mb1_times = [e['duration_ms'] for e in ffn_events
+                    if e['type'] == 'send_transfer' and e['mb'] == 1 and start_layer <= e['layer'] < start_layer + num_layers]
+    
+    a2f_mb0_avg = sum(a2f_mb0_times) / len(a2f_mb0_times) if a2f_mb0_times else 0
+    a2f_mb1_avg = sum(a2f_mb1_times) / len(a2f_mb1_times) if a2f_mb1_times else 0
+    f2a_mb0_avg = sum(f2a_mb0_times) / len(f2a_mb0_times) if f2a_mb0_times else 0
+    f2a_mb1_avg = sum(f2a_mb1_times) / len(f2a_mb1_times) if f2a_mb1_times else 0
+    
+    # 总通信时间
+    total_comm = sum(a2f_mb0_times + a2f_mb1_times + f2a_mb0_times + f2a_mb1_times)
     
     # 理论串行时间 = 计算 + 通信 (无重叠)
     serial_time = attn_compute + ffn_compute + total_comm
@@ -244,7 +245,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     title = f'DBO Pipeline (Layer {start_layer}-{end_layer}, {num_mb} Micro-batches)'
     
     stats_line1 = f"Total: {total_inference_time:.1f}ms | Attn: {attn_compute:.1f}ms | FFN: {ffn_compute:.1f}ms"
-    stats_line2 = f"Comm (isend→wait): MB0={mb0_send_avg:.2f}ms, MB1={mb1_send_avg:.2f}ms | Actual wait: MB0={mb0_actual_avg:.2f}ms, MB1={mb1_actual_avg:.2f}ms"
+    stats_line2 = f"Transfer: A→F (MB0={a2f_mb0_avg:.2f}ms, MB1={a2f_mb1_avg:.2f}ms) | F→A (MB0={f2a_mb0_avg:.2f}ms, MB1={f2a_mb1_avg:.2f}ms)"
     stats_line3 = f"Overlap: {overlap_ratio:.1f}% | Speedup vs Serial: {speedup:.2f}x"
     
     ax.set_title(f'{title}\n{stats_line1}\n{stats_line2}\n{stats_line3}', fontsize=10, pad=10)
