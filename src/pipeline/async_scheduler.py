@@ -396,6 +396,10 @@ class AsyncPipelineScheduler:
             packed_list = []
             
             for mb_idx, mb in enumerate(micro_batches):
+                # Sync before measurement to drain prior GPU work (e.g. pending isend)
+                if tracker:
+                    torch.cuda.synchronize()
+                
                 # Compute attention
                 compute_start = time.perf_counter()
                 
@@ -534,6 +538,10 @@ class AsyncPipelineScheduler:
                 if tracker:
                     tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
                                         recv_wait_start, recv_wait_end)
+                
+                # Sync before measurement to drain prior GPU work (e.g. pending isend)
+                if tracker:
+                    torch.cuda.synchronize()
                 
                 # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()

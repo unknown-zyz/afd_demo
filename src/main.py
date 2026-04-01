@@ -278,6 +278,26 @@ def run_inference_demo(args):
             timing_data.save(timing_file)
             logger.info(f"Timing saved: {timing_file}")
             logger.info(timing_data.summary())
+    elif args.timing and not use_dbo:
+        # Save minimal timing for serial baseline
+        os.makedirs("results/prefill_dbo", exist_ok=True)
+        import json
+        serial_data = {
+            "mode": "serial",
+            "role": ctx.role,
+            "total_time_ms": elapsed * 1000,
+            "batch_size": args.batch_size,
+            "prefill_seq_len": getattr(args, 'prefill_seq_len', 1),
+            "max_new_tokens": args.max_new_tokens,
+        }
+        if args.timing_suffix:
+            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+        else:
+            suffix = f"b{args.batch_size}_t{args.max_new_tokens}"
+            timing_file = f"results/prefill_dbo/timing_{ctx.role}_serial_{suffix}.json"
+        with open(timing_file, 'w') as f:
+            json.dump(serial_data, f, indent=2)
+        logger.info(f"Timing saved: {timing_file}")
     
     # Output results (attention node only)
     if ctx.is_attention_node and output is not None:

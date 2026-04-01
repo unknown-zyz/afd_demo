@@ -139,7 +139,8 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
 
 
 def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict, 
-                  output_path: str, num_layers: int = 2, start_layer: int = 1):
+                  output_path: str, num_layers: int = 2, start_layer: int = 1,
+                  serial_time_override: float = None):
     """
     绘制 4 泳道 pipeline 图。
     
@@ -218,36 +219,39 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     # 总推理时间 = 两个节点中较大的
     total_inference_time = max(attn_total, ffn_total)
     
-    # 计算时间
-    attn_compute = attn_data.get('total_compute_ms', 0)
-    ffn_compute = ffn_data.get('total_compute_ms', 0)
-    
-    # 计算各 MB 的真实传输时间 (从 send_transfer 事件中提取)
+    # 计算时间 (从事件中精确计算, 仅统计可视化范围内的层)
     attn_events = attn_data.get('events', [])
     ffn_events = ffn_data.get('events', [])
     
+    attn_compute_times = [e['duration_ms'] for e in attn_events
+                          if e['type'] == 'attn_compute' and start_layer <= e['layer'] < start_layer + num_layers]
+    ffn_compute_times = [e['duration_ms'] for e in ffn_events
+                         if e['type'] == 'ffn_compute' and start_layer <= e['layer'] < start_layer + num_layers]
+    attn_compute = sum(attn_compute_times)
+    ffn_compute = sum(ffn_compute_times)
+    
     # A→F 传输时间 (来自 attention 节点)
-    a2f_mb0_times = [e['duration_ms'] for e in attn_events 
-                    if e['type'] == 'send_transfer' and e['mb'] == 0 and start_layer <= e['layer'] < start_layer + num_layers]
-    a2f_mb1_times = [e['duration_ms'] for e in attn_events
-                    if e['type'] == 'send_transfer' and e['mb'] == 1 and start_layer <= e['layer'] < start_layer + num_layers]
+    a2f_times = [e['duration_ms'] for e in attn_events 
+                 if e['type'] == 'send_transfer' and start_layer <= e['layer'] < start_layer + num_layers]
     
     # F→A 传输时间 (来自 FFN 节点)
-    f2a_mb0_times = [e['duration_ms'] for e in ffn_events 
-                    if e['type'] == 'send_transfer' and e['mb'] == 0 and start_layer <= e['layer'] < start_layer + num_layers]
-    f2a_mb1_times = [e['duration_ms'] for e in ffn_events
-                    if e['type'] == 'send_transfer' and e['mb'] == 1 and start_layer <= e['layer'] < start_layer + num_layers]
+    f2a_times = [e['duration_ms'] for e in ffn_events 
+                 if e['type'] == 'send_transfer' and start_layer <= e['layer'] < start_layer + num_layers]
     
-    a2f_mb0_avg = sum(a2f_mb0_times) / len(a2f_mb0_times) if a2f_mb0_times else 0
-    a2f_mb1_avg = sum(a2f_mb1_times) / len(a2f_mb1_times) if a2f_mb1_times else 0
-    f2a_mb0_avg = sum(f2a_mb0_times) / len(f2a_mb0_times) if f2a_mb0_times else 0
-    f2a_mb1_avg = sum(f2a_mb1_times) / len(f2a_mb1_times) if f2a_mb1_times else 0
+    a2f_avg = sum(a2f_times) / len(a2f_times) if a2f_times else 0
+    f2a_avg = sum(f2a_times) / len(f2a_times) if f2a_times else 0
     
     # 总通信时间
-    total_comm = sum(a2f_mb0_times + a2f_mb1_times + f2a_mb0_times + f2a_mb1_times)
+    total_comm = sum(a2f_times + f2a_times)
     
-    # 理论串行时间 = 计算 + 通信 (无重叠)
-    serial_time = attn_compute + ffn_compute + total_comm
+    # 串行时间：优先使用实测值，否则用估算值
+    estimated_serial = attn_compute + ffn_compute + total_comm
+    if serial_time_override and serial_time_override > 0:
+        serial_time = serial_time_override
+        serial_label = f"Serial: {serial_time:.1f}ms (measured)"
+    else:
+        serial_time = estimated_serial
+        serial_label = f"Serial: {serial_time:.1f}ms (est.)"
     
     # Overlap 率 = (理论串行 - 实际) / 理论串行
     if serial_time > 0:
@@ -257,16 +261,19 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         overlap_ratio = 0
         speedup = 1.0
     
-    # 构建标题和统计信息
+    # Per-layer averages
+    avg_attn = attn_compute / num_layers if num_layers > 0 else 0
+    avg_ffn = ffn_compute / num_layers if num_layers > 0 else 0
+    
+    # 构建标题和统计信息 (4 行)
     end_layer = start_layer + num_layers - 1
-    layer_note = " (Layer 0 skipped)" if start_layer > 0 else ""
-    title = f'DBO Pipeline - Layers {start_layer}-{end_layer}{layer_note}, {num_mb} Micro-batches'
+    layer_note = " (L0 skipped)" if start_layer > 0 else ""
+    line1 = f'DBO Pipeline — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
+    line2 = f"DBO: {total_inference_time:.1f}ms | {serial_label}"
+    line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
+    line4 = f"Overlap: {overlap_ratio:.1f}% | Speedup: {speedup:.2f}×"
     
-    stats_line1 = f"Total: {total_inference_time:.1f}ms | Attn: {attn_compute:.1f}ms | FFN: {ffn_compute:.1f}ms"
-    stats_line2 = f"Transfer: A→F (MB0={a2f_mb0_avg:.2f}ms, MB1={a2f_mb1_avg:.2f}ms) | F→A (MB0={f2a_mb0_avg:.2f}ms, MB1={f2a_mb1_avg:.2f}ms)"
-    stats_line3 = f"Overlap: {overlap_ratio:.1f}% | Speedup vs Serial: {speedup:.2f}x"
-    
-    ax.set_title(f'{title}\n{stats_line1}\n{stats_line2}\n{stats_line3}', fontsize=10, pad=10)
+    ax.set_title(f'{line1}\n{line2}\n{line3}\n{line4}', fontsize=10, pad=10)
     
     # 图例
     legend_elements = [
@@ -315,6 +322,12 @@ def main():
         default=2,
         help='Number of layers to visualize (default: 2)'
     )
+    parser.add_argument(
+        '--serial-time',
+        type=float,
+        default=None,
+        help='Measured serial (no-DBO) time in ms for speedup calculation'
+    )
     
     args = parser.parse_args()
     
@@ -348,7 +361,8 @@ def main():
     # 生成可视化
     print(f"\nGenerating visualization...")
     plot_pipeline(lanes_data, attn_data, ffn_data, args.output, 
-                  args.num_layers, start_layer)
+                  args.num_layers, start_layer,
+                  serial_time_override=args.serial_time)
     
     print(f"\n✓ Done! View the result at: {args.output}")
 
