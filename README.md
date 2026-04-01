@@ -1,6 +1,6 @@
 # AFD Demo: Attention-FFN 分离 + DBO 流水线
 
-流水线**Attention-FFN Disaggregation (AFD)** 架构 + **Dual Batch Overlap (DBO)** 流水线优化的概念验证系统。已适配 PyTorch 2.7.0 + Transformers 5.4.0。
+**Attention-FFN Disaggregation (AFD)** 架构 + **Dual Batch Overlap (DBO)** 流水线优化的概念验证系统。已适配 PyTorch 2.7.0 + Transformers 5.4.0。
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.7.0](https://img.shields.io/badge/pytorch-2.7.0-red.svg)](https://pytorch.org/)
@@ -8,7 +8,7 @@
 
 ## 🎯 功能特性
 
-- ✅ **Attention-
+- ✅ **Attention-FFN 分离**: 分布式节点架构，Attention 和 FFN 分别部署
 - ✅ **DBO 流水线**: 2-micro-batch 异步重叠优化
 - ✅ **单机/多机部署**: 支持本地和跨节点部署
 - ✅ **KV Cache**: 支持自回归文本生成
@@ -53,8 +53,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 
 ## 📖 文档
 
-#)
-)) [`doc/`](doc/) 目录：
+详见 [`doc/`](doc/) 目录：
 
 - **[架构设计](doc/01-architecture.md)** - 系统架构、DBO 实现原理
 - **[使用指南](doc/02-usage.md)** - 命令行参数、运行示例、故障排查
@@ -64,21 +63,21 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 ## 🏗️ 架构
 
 ```
-    NCCL P2P    ┌──────────────────────┐
-   Attention Node     │◄──────────────►│      FFN Node        │
-  - Embedding         │                │  - LayerNorm         │
-  - Self-Attention    │                │  - MLP (FFN)         │
-  - LM Head           │                │  - MoE Router        │
-  - ★ KV Cache ★     │                │  - Experts           │
-                └──────────────────────┘
+┌──────────────────────┐   NCCL P2P   ┌──────────────────────┐
+│   Attention Node     │◄────────────►│      FFN Node        │
+│  - Embedding         │              │  - LayerNorm         │
+│  - Self-Attention    │              │  - MLP (FFN)         │
+│  - LM Head           │              │  - MoE Router        │
+│  - ★ KV Cache ★      │              │  - Experts           │
+└──────────────────────┘              └──────────────────────┘
 ```
 
 **DBO 流水线重叠**:
 ```
-:
+无 DBO (串行):
 [Attn_MB0] → [Send] → [FFN_MB0] → [Send] → [Attn_MB1] ...
 
-DBO）:
+有 DBO (重叠):
 [Attn_MB0][Attn_MB1]...  ← 计算与通信重叠
     [isend0]   [isend1]...
          [FFN_MB0]   [FFN_MB1]...
@@ -103,7 +102,7 @@ DBO）:
 **原因**: KV Cache 对象创建开销过大  
 **建议**: Prefill 启用 DBO，Decode 禁用 DBO（使用 `--no-dbo`）
 
- [results/reports/](results/reports/)。
+详细报告见 [results/reports/](results/reports/)。
 
 ## 🛠️ 运行脚本
 
@@ -124,22 +123,40 @@ DBO）:
 python scripts/measure_comm_latency.py
 ```
 
-) [scripts/README.md](scripts/README.md)。
+详见 [scripts/README.md](scripts/README.md)。
 
 ## 📂 项目结构
 
 ```
 afd_demo/
- src/                      # 源代码
-   ├── distributed/          # 分布式通信
-   ├── model/                # Worker 和模型分割
-   ├── pipeline/             # DBO 调度器
-   └── 
- tests/                    # 单元测试
- scripts/                  # 运行和测试脚本
- doc/                      # 完整文档
- results/                  # 实验结果和报告
- requirements.txt          # Python 依赖
+├── src/                      # 源代码
+│   ├── distributed/          # 分布式通信（NCCL P2P）
+│   ├── model/                # Worker 和模型分割
+│   │   ├── attention_worker.py   # Attention 节点 Worker
+│   │   ├── ffn_worker.py         # FFN 节点 Worker
+│   │   └── kv_cache.py           # KV Cache 管理
+│   ├── pipeline/             # DBO 调度器
+│   │   ├── async_scheduler.py    # Prefill DBO 实现
+│   │   ├── decode_scheduler.py   # Decode DBO 实现
+│   │   └── scheduler.py          # 同步基准调度器
+│   └── utils/                # 工具函数
+├── tests/                    # 单元测试
+├── scripts/                  # 运行和测试脚本
+│   ├── test_local.sh         # 单机测试
+│   ├── test_multinode.sh     # 多机测试
+│   ├── benchmark_dbo.sh      # Prefill DBO 基准测试
+│   └── visualize_*.py        # 可视化脚本
+├── doc/                      # 完整文档
+│   ├── 01-architecture.md    # 架构设计
+│   ├── 02-usage.md           # 使用指南
+│   ├── 03-api-reference.md   # API 参考
+│   └── 04-deployment.md      # 部署指南
+├── results/                  # 实验结果和报告
+│   ├── prefill_dbo/          # Prefill DBO 测试结果
+│   ├── decode_dbo/           # Decode DBO 测试结果
+│   └── reports/              # 综合分析报告
+├── config/                   # 模型配置文件
+└── requirements.txt          # Python 依赖
 ```
 
 ## 🧪 测试和基准测试
@@ -211,7 +228,7 @@ ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 ./scripts/test_multinode.sh 10 1
 
 # 方法 2: 手动启动
-# 步骤 1: 在远程echo FFN 节点
+# 步骤 1: 在远程机器启动 FFN 节点
 ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 cd /path/to/afd_demo && source venv/bin/activate
 ./scripts/run_ffn_node.sh 10.244.64.179 29500
@@ -220,7 +237,7 @@ cd /path/to/afd_demo && source venv/bin/activate
 ./scripts/run_attn_node.sh 10.244.64.179 29500 --prompt "Hello"
 ```
 
-) [部署指南](doc/04-deployment.md#4-多机部署)。
+详见 [部署指南](doc/04-deployment.md#4-多机部署)。
 
 ## ⚠️ 已知问题
 
@@ -232,7 +249,7 @@ cd /path/to/afd_demo && source venv/bin/activate
 
 MIT License
 
-## 🙏 参
+## 🙏 参考
 
 - [vLLM AFD #22799](https://github.com/vllm-project/vllm/issues/22799)
 - [vLLM DBO #23693](https://github.com/vllm-project/vllm/pull/23693)
