@@ -119,8 +119,8 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 # Decode DBO 基准测试
 ./scripts/benchmark_decode_dbo.sh
 
-# 网络延迟测量
-python scripts/measure_comm_latency.py
+# P2P 传输时间测量
+python scripts/measure_transfer_time.py [master_addr] [master_port]
 ```
 
 详见 [scripts/README.md](scripts/README.md)。
@@ -129,34 +129,53 @@ python scripts/measure_comm_latency.py
 
 ```
 afd_demo/
-├── src/                      # 源代码
-│   ├── distributed/          # 分布式通信（NCCL P2P）
-│   ├── model/                # Worker 和模型分割
+├── src/                          # 源代码
+│   ├── main.py                   # 程序入口
+│   ├── distributed/              # 分布式通信
+│   │   └── communicator.py       # NCCL P2P 异步通信
+│   ├── model/                    # Worker 和模型分割
 │   │   ├── attention_worker.py   # Attention 节点 Worker
 │   │   ├── ffn_worker.py         # FFN 节点 Worker
+│   │   ├── disaggregated.py      # 分离模型主类
 │   │   └── kv_cache.py           # KV Cache 管理
-│   ├── pipeline/             # DBO 调度器
+│   ├── pipeline/                 # DBO 调度器
 │   │   ├── async_scheduler.py    # Prefill DBO 实现
 │   │   ├── decode_scheduler.py   # Decode DBO 实现
+│   │   ├── micro_batch.py        # Micro-batch 状态管理
 │   │   └── scheduler.py          # 同步基准调度器
-│   └── utils/                # 工具函数
-├── tests/                    # 单元测试
-├── scripts/                  # 运行和测试脚本
-│   ├── test_local.sh         # 单机测试
-│   ├── test_multinode.sh     # 多机测试
-│   ├── benchmark_dbo.sh      # Prefill DBO 基准测试
-│   └── visualize_*.py        # 可视化脚本
-├── doc/                      # 完整文档
-│   ├── 01-architecture.md    # 架构设计
-│   ├── 02-usage.md           # 使用指南
-│   ├── 03-api-reference.md   # API 参考
-│   └── 04-deployment.md      # 部署指南
-├── results/                  # 实验结果和报告
-│   ├── prefill_dbo/          # Prefill DBO 测试结果
-│   ├── decode_dbo/           # Decode DBO 测试结果
-│   └── reports/              # 综合分析报告
-├── config/                   # 模型配置文件
-└── requirements.txt          # Python 依赖
+│   └── utils/                    # 工具函数
+│       ├── profiler.py           # GPU 内存和性能分析
+│       ├── sampling.py           # Token 采样策略
+│       ├── timing.py             # DBO 时序记录
+│       └── validation.py         # 输入验证
+├── tests/                        # 单元测试
+│   ├── test_communicator.py      # 通信模块测试
+│   ├── test_correctness.py       # 正确性验证测试
+│   └── test_pipeline.py          # 调度器测试
+├── scripts/                      # 运行和测试脚本
+│   ├── run_attn_node.sh          # 启动 Attention 节点
+│   ├── run_ffn_node.sh           # 启动 FFN 节点
+│   ├── test_local.sh             # 单机测试脚本
+│   ├── test_multinode.sh         # 多机测试脚本
+│   ├── benchmark_dbo.sh          # Prefill DBO 基准测试
+│   ├── benchmark_decode_dbo.sh   # Decode DBO 基准测试
+│   ├── profile_dbo_pipeline.sh   # DBO 时序 profiling
+│   ├── visualize_dbo.py          # Prefill DBO 可视化
+│   ├── visualize_dbo_pipeline.py # 4-lane 流水线图
+│   ├── plot_dbo_summary.py       # DBO 对比汇总图
+│   └── measure_transfer_time.py  # P2P 传输时间测量
+├── doc/                          # 完整文档
+│   ├── 01-architecture.md        # 架构设计
+│   ├── 02-usage.md               # 使用指南
+│   ├── 03-api-reference.md       # API 参考
+│   └── 04-deployment.md          # 部署指南
+├── results/                      # 实验结果和报告
+│   ├── prefill_dbo/              # Prefill DBO 测试结果
+│   ├── decode_dbo/               # Decode DBO 测试结果
+│   ├── network_latency/          # 网络延迟测试结果
+│   └── reports/                  # 综合分析报告
+├── config/                       # 模型配置文件
+└── requirements.txt              # Python 依赖
 ```
 
 ## 🧪 测试和基准测试

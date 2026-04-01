@@ -19,7 +19,8 @@
 |------|------|------|
 | `benchmark_dbo.sh` | Prefill DBO 基准测试 | `./scripts/benchmark_dbo.sh [tokens] [batch] [on\|off]` |
 | `benchmark_decode_dbo.sh` | Decode DBO 全面测试 | `./scripts/benchmark_decode_dbo.sh` |
-| `measure_comm_latency.py` | 网络延迟测量 | `python scripts/measure_comm_latency.py [opts]` |
+| `profile_dbo_pipeline.sh` | DBO 时序 profiling | `./scripts/profile_dbo_pipeline.sh [batch] [tokens]` |
+| `measure_transfer_time.py` | P2P 传输时间测量 | `python scripts/measure_transfer_time.py [opts]` |
 
 ### 📈 可视化脚本
 
@@ -191,31 +192,36 @@ cd /path/to/afd_demo && source venv/bin/activate
 
 ---
 
-### measure_comm_latency.py
+### measure_transfer_time.py
 
-**功能**: 测量单机或多机通信延迟（ping-pong 测试）
+**功能**: 测量 NCCL P2P 单向传输时间（同步 send 基准测试）
 
 **语法**:
 ```bash
-python scripts/measure_comm_latency.py [--size SIZE] [--iterations N]
+# 单机测试 (默认)
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/measure_transfer_time.py
+
+# 多机测试
+# 机器 1 (rank 1 - receiver):
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --nnodes=2 --node_rank=1 \
+  --master_addr=<master_addr> --master_port=29500 scripts/measure_transfer_time.py
+
+# 机器 2 (rank 0 - sender):  
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --nnodes=2 --node_rank=0 \
+  --master_addr=<master_addr> --master_port=29500 scripts/measure_transfer_time.py
 ```
 
-**参数**:
-- `--size` - 传输数据大小（默认: 4096 floats）
-- `--iterations` - 测试次数（默认: 200）
+**测试内容**:
+- 不同 tensor 大小（batch × hidden_dim）
+- 单向同步传输延迟
+- 带宽计算
 
-**示例**:
-```bash
-# 默认配置
-python scripts/measure_comm_latency.py
-
-# 自定义大小和次数
-python scripts/measure_comm_latency.py --size 8192 --iterations 500
+**示例输出**:
+```
+Transfer size: 2.0 MB, Time: 0.11 ms, Bandwidth: 144.8 Gb/s
 ```
 
-**输出**:
-- 终端输出：mean, P95, P99 延迟
-- 日志: `results/network_latency/latency_*.log`
+**用途**: 用于对比 DBO 的异步通信时间是否符合预期
 
 ---
 
@@ -334,18 +340,11 @@ python scripts/plot_dbo_summary.py
 diff results/prefill_dbo/*_on.log results/prefill_dbo/*_off.log
 ```
 
-### 测试网络延迟
+### 测量 P2P 传输时间
 
 ```bash
-# 单机
-python scripts/measure_comm_latency.py
-
-# 多机（需要两台机器同时运行）
-# 机器 1:
-CUDA_VISIBLE_DEVICES=0 python scripts/measure_comm_latency.py --rank 0
-
-# 机器 2:
-CUDA_VISIBLE_DEVICES=0 python scripts/measure_comm_latency.py --rank 1
+# 单机测试
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/measure_transfer_time.py
 ```
 
 ### 生成完整分析报告
