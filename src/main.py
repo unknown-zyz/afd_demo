@@ -96,6 +96,8 @@ def parse_args():
                         help="Total batch size (divided into micro-batches)")
     parser.add_argument("--max-seq-len", type=int, default=128,
                         help="Maximum sequence length")
+    parser.add_argument("--prefill-seq-len", type=int, default=None,
+                        help="Prefill sequence length (if set, pad/truncate prompt to this length)")
     parser.add_argument("--dtype", type=str, choices=["float16", "bfloat16", "float32"],
                         default="bfloat16", help="Data type")
     parser.add_argument("--prompt", type=str, default="Hello, how are you today?",
@@ -210,12 +212,23 @@ def run_inference_demo(args):
     # Prepare input
     if ctx.is_attention_node:
         prompts = [args.prompt] * args.batch_size
-        inputs = tokenizer(prompts, return_tensors="pt", padding=True,
-                          truncation=True, max_length=args.max_seq_len)
+        
+        # 如果指定了 prefill_seq_len，先 tokenize 然后 pad/truncate
+        if args.prefill_seq_len:
+            inputs = tokenizer(prompts, return_tensors="pt", padding="max_length",
+                              truncation=True, max_length=args.prefill_seq_len)
+            logger.info(f"Prefill seq_len set to {args.prefill_seq_len}")
+        else:
+            inputs = tokenizer(prompts, return_tensors="pt", padding=True,
+                              truncation=True, max_length=args.max_seq_len)
+        
         input_ids = inputs["input_ids"].to(device)
         attention_mask = inputs["attention_mask"].to(device)
+        logger.info(f"Input shape: {input_ids.shape}")
     else:
-        input_ids = torch.zeros(args.batch_size, args.max_seq_len, dtype=torch.long, device=device)
+        # FFN 节点：创建占位符
+        seq_len = args.prefill_seq_len if args.prefill_seq_len else args.max_seq_len
+        input_ids = torch.zeros(args.batch_size, seq_len, dtype=torch.long, device=device)
         attention_mask = None
     
     def run_with_scheduler(scheduler):

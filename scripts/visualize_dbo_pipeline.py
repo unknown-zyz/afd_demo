@@ -5,9 +5,26 @@
 创建 4 泳道的 Gantt 图，清晰展示 Attention、通信、FFN 模块的重叠关系。
 使用 send_transfer 事件测量真实传输时间（通过后台轮询检测完成）。
 
+特性:
+  - 自动跳过 Layer 0 的初始化开销（~91ms vs 其他层 ~1.7ms）
+  - 使用 --start-layer 0 可以显示 Layer 0
+  - 支持自定义层范围和输出路径
+
 用法:
+    # 默认：显示 Layer 1-2（跳过 Layer 0）
     python scripts/visualize_dbo_pipeline.py
-    python scripts/visualize_dbo_pipeline.py --output custom_output.png
+    
+    # 显示 Layer 1-5
+    python scripts/visualize_dbo_pipeline.py --start-layer 1 --num-layers 5
+    
+    # 包含 Layer 0
+    python scripts/visualize_dbo_pipeline.py --start-layer 0 --num-layers 3
+    
+    # 自定义输入输出
+    python scripts/visualize_dbo_pipeline.py \
+        --attn-timing results/prefill_dbo/timing_attention_local_b8_s128_t5.json \
+        --ffn-timing results/prefill_dbo/timing_ffn_local_b8_s128_t5.json \
+        --output results/prefill_dbo/dbo_pipeline_local_b8_s128_t5.png
 """
 
 import argparse
@@ -242,7 +259,8 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     
     # 构建标题和统计信息
     end_layer = start_layer + num_layers - 1
-    title = f'DBO Pipeline (Layer {start_layer}-{end_layer}, {num_mb} Micro-batches)'
+    layer_note = " (Layer 0 skipped)" if start_layer > 0 else ""
+    title = f'DBO Pipeline - Layers {start_layer}-{end_layer}{layer_note}, {num_mb} Micro-batches'
     
     stats_line1 = f"Total: {total_inference_time:.1f}ms | Attn: {attn_compute:.1f}ms | FFN: {ffn_compute:.1f}ms"
     stats_line2 = f"Transfer: A→F (MB0={a2f_mb0_avg:.2f}ms, MB1={a2f_mb1_avg:.2f}ms) | F→A (MB0={f2a_mb0_avg:.2f}ms, MB1={f2a_mb1_avg:.2f}ms)"
