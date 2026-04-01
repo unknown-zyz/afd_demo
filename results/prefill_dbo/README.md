@@ -1,84 +1,133 @@
-# Prefill DBO 测试结果
+# Prefill DBO Results
 
-本目录包含 Prefill 阶段 DBO (Dual Batch Overlap) 的测试结果和分析。
+本目录包含 AFD (Attention-FFN Disaggregation) + DBO (Dual Batch Overlap) 的 Prefill 阶段实验结果。
 
-## 文件说明
+## 目录结构
 
-### 📊 可视化结果
-
-| 文件 | 说明 |
-|------|------|
-| `dbo_summary.png` | **综合总结图**（6 个子图）- 最重要的可视化 |
-| `dbo_prefill_timeline.png` | 详细时间线（每层每个 micro-batch） |
-| `dbo_prefill_timeline_analysis.png` | 计算 vs 等待时间汇总 |
-
-### 📝 原始数据
-
-| 文件 | 说明 |
-|------|------|
-| `timing_attention.json` | Attention 节点 Prefill 阶段详细时间（30KB） |
-| `timing_ffn.json` | FFN 节点 Prefill 阶段详细时间（49KB） |
-
-### 📋 测试日志
-
-| 文件 | 说明 |
-|------|------|
-| `attn_prefill.log` | Attention 节点测试日志 |
-| `ffn_prefill.log` | FFN 节点测试日志 |
-| `attn_bench.log` | Attention 基准测试日志 |
-| `ffn_bench.log` | FFN 基准测试日志 |
-
-### 📄 分析报告
-
-| 文件 | 说明 |
-|------|------|
-| `timing_analysis.md` | Prefill 阶段详细分析 |
-
-## 核心发现
-
-### Prefill DBO 效率
-
-| 节点 | 端到端时间 | 计算时间 | 计算效率 |
-|------|----------|---------|---------|
-| **Attention** | 1278ms | 701ms | **54.8%** |
-| **FFN** | 1550ms | 1103ms | **71.2%** |
-
-**关键结论**:
-- ✅ FFN 节点达到 71.2% 计算利用率，DBO 重叠有效
-- ⚠️ FFN 计算时间是 Attention 的 1.57x，成为瓶颈
-- 📊 MoE 开销：router 171ms + experts 702ms (79% FFN compute)
-
-## 测试配置
-
-- **模型**: Qwen2-1.5B (28 layers)
-- **环境**: 单机 4 GPU (CUDA_VISIBLE_DEVICES=0,1,2,3)
-- **Prompt**: "Hello, how are you today? I'm testing the DBO system."
-- **Micro-batches**: 2
-
-## 使用方法
-
-### 重新生成可视化
-
-```bash
-# 从 timing JSON 生成 timeline
-MPLBACKEND=Agg python scripts/visualize_dbo.py results/prefill_dbo/ \
-  --output results/prefill_dbo/dbo_prefill_timeline.png \
-  --max-layers 8
-
-# 生成综合总结图
-python scripts/plot_dbo_summary.py
+```
+prefill_dbo/
+├── README.md                          # 本文件
+├── logs/                              # 实验日志
+├── archive/                           # 早期实验归档
+│   ├── dbo_pipeline_4lanes.png
+│   ├── dbo_prefill_timeline.png
+│   ├── dbo_summary.png
+│   └── timing_*.json
+├── batch_scaling/                     # Batch size scaling 实验（待完成）
+│   ├── b4/, b8/, b16/, ...
+├── seq_scaling/                       # Sequence length scaling 实验（待完成）
+│   ├── s32/, s64/, s128/, ...
+├── timing_attention_*.json            # 当前测试数据
+├── timing_ffn_*.json
+└── dbo_pipeline_*.png                 # 当前测试可视化
 ```
 
-### 运行新测试
+## 文件命名规范
 
+### Timing JSON 文件
+格式: `timing_{node}_{deployment}_b{batch}_s{seq}_t{tokens}.json`
+
+- `node`: `attention` 或 `ffn`
+- `deployment`: `local` (单机) 或 `multinode` (多机)
+- `batch`: batch size
+- `seq`: sequence length (默认 1 时省略)
+- `tokens`: 生成的 token 数
+
+示例:
+- `timing_attention_local_b4_t5.json` - 单机, batch=4, seq=1, tokens=5
+- `timing_attention_local_b4_s128_t5.json` - 单机, batch=4, seq=128, tokens=5
+- `timing_attention_multinode_b8_s256_t5.json` - 多机, batch=8, seq=256, tokens=5
+
+### 可视化图片
+格式: `dbo_pipeline_{deployment}_b{batch}_s{seq}_t{tokens}.png`
+
+## 当前实验结果
+
+### 基准测试 (已完成)
+- **batch=4, seq=1, tokens=3/5**: 单机 + 多机
+  - 验证 SEND_TRANSFER 时间测量
+  - 修复 recv_wait 时间记录 bug
+  - Layer 0 初始化开销: ~91ms (其他层 ~1.7ms)
+
+### 关键发现
+1. **通信延迟分析** (详见 `doc/communication_analysis.md`)
+   - A2F: ~5.3ms (FFN 延迟就绪导致)
+   - F2A: ~0.5ms (Attn 提前就绪)
+   - 小数据 NCCL 开销占主导
+
+2. **Layer 0 初始化**
+   - 首次计算开销 50x 高于后续层
+   - 可视化默认跳过 Layer 0 (--start-layer 1)
+
+3. **Pipeline 时序**
+   - ✓ 每层正确等待上一层完成
+   - recv_wait 测量 wait() 阻塞时间 (~0.01-0.2ms)
+
+## 待完成实验
+
+### Phase 1: Batch Size Scaling (seq=128)
+测试配置: batch=4, 8, 16, 32, 64 (单机 + 多机)
+
+### Phase 2: Sequence Length Scaling (batch=8)
+测试配置: seq=32, 64, 128, 256, 512 (单机 + 多机)
+
+### Phase 3: High Load Combinations
+测试配置: (batch=8, seq=256), (16, 128), (32, 64) (单机 + 多机)
+
+## 运行实验
+
+### 使用自动化脚本
 ```bash
-# Prefill 测试（不生成 tokens）
-./scripts/benchmark_dbo.sh 50 4 on   # DBO ON
-./scripts/benchmark_dbo.sh 50 4 off  # DBO OFF
+# 运行所有实验
+./scripts/batch_scaling_experiments.sh all
+
+# 分阶段运行
+./scripts/batch_scaling_experiments.sh batch      # Phase 1
+./scripts/batch_scaling_experiments.sh seq        # Phase 2
+./scripts/batch_scaling_experiments.sh combined   # Phase 3
 ```
+
+### 手动运行单个配置
+```bash
+# 使用 profile_dbo_pipeline.sh (旧接口，seq=1)
+./scripts/profile_dbo_pipeline.sh local 8 5
+
+# 使用 src.main 直接运行 (支持 --prefill-seq-len)
+# FFN 节点 (后台)
+CUDA_VISIBLE_DEVICES=2,3 python -m src.main \
+  --model-name /data/Qwen/Qwen3-30B-A3B/ \
+  --role ffn --batch-size 8 --prefill-seq-len 128 \
+  --max-new-tokens 5 --timing --timing-suffix "local_b8_s128_t5" &
+
+# Attention 节点 (前台)
+CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
+  --model-name /data/Qwen/Qwen3-30B-A3B/ \
+  --role attention --batch-size 8 --prefill-seq-len 128 \
+  --max-new-tokens 5 --timing --timing-suffix "local_b8_s128_t5"
+```
+
+### 生成可视化
+```bash
+# 默认：Layer 1-5 (跳过 Layer 0 初始化开销)
+python scripts/visualize_dbo_pipeline.py \
+  --attn-timing timing_attention_local_b8_s128_t5.json \
+  --ffn-timing timing_ffn_local_b8_s128_t5.json \
+  --output dbo_pipeline_local_b8_s128_t5.png \
+  --start-layer 1 --num-layers 5
+
+# 包含 Layer 0
+python scripts/visualize_dbo_pipeline.py \
+  --start-layer 0 --num-layers 6
+```
+
+## 分析和报告
+
+实验完成后，将在 `results/reports/` 中生成：
+- `batch_scaling_summary.md` - 实验总结和性能分析
+- 对比图表: batch vs 延迟, 通信时间变化趋势等
 
 ## 相关文档
 
-- [../reports/FINAL_REPORT.md](../reports/FINAL_REPORT.md) - 最终综合报告
-- [../decode_dbo/](../decode_dbo/) - Decode DBO 测试结果
-- [../../doc/01-architecture.md](../../doc/01-architecture.md) - DBO 实现原理
+- `doc/communication_analysis.md` - 通信延迟深度分析
+- `scripts/README.md` - 脚本使用说明
+- `README.md` - 项目总体文档
