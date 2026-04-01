@@ -97,7 +97,7 @@ class PipelineTiming:
             self.total_moe_shared_or_dense_ms += event.duration_ms
         elif event.event_type == EventType.RECV_WAIT.value:
             self.total_recv_wait_ms += event.duration_ms
-        elif event.event_type == EventType.SEND_WAIT.value:
+        elif event.event_type == EventType.SEND_TRANSFER.value:
             self.total_send_wait_ms += event.duration_ms
     
     @property

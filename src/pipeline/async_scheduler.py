@@ -530,7 +530,7 @@ class AsyncPipelineScheduler:
                 
                 if tracker:
                     tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
-                                        recv_post_times[mb_idx], recv_wait_end)
+                                        recv_wait_start, recv_wait_end)
                 
                 # Unpack
                 attn_output = packed[..., :self.model.hidden_size].clone()
