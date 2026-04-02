@@ -1,0 +1,82 @@
+
+[0;32m========================================[0m
+[0;32m  Qwen3-30B-A3B 扩展实验[0m
+[0;32m========================================[0m
+
+
+[0;32m========================================[0m
+[0;32m  Decode 大 Batch 扩展 (seq=128, tokens=20) — Qwen3-30B-A3B[0m
+[0;32m========================================[0m
+
+[0;34m[INFO][0m Decode: batch=256 seq=128 DBO=off tokens=20 (port=29851)
+[0;32m[OK][0m Decode serial_b256_s128: 13977.98ms, 1.4 tok/s
+[0;34m[INFO][0m Decode: batch=256 seq=128 DBO=on tokens=20 (port=29851)
+[0;32m[OK][0m Decode dbo_b256_s128: 13969.47ms, 1.4 tok/s
+[0;34m[INFO][0m Decode: batch=512 seq=128 DBO=off tokens=20 (port=29851)
+[1;33m[WARN][0m OOM: batch=512 DBO=off
+[1;33m[WARN][0m Batch=512 serial OOM/Error, 跳过更大的 batch
+
+[0;32m========================================[0m
+[0;32m  Prefill 多 Micro-batch 实验 (seq=128) — Qwen3-30B-A3B[0m
+[0;32m========================================[0m
+
+[0;34m[INFO][0m Skip serial for batch=32 (already tested)
+[0;34m[INFO][0m Prefill: batch=32 seq=128 DBO=on micro_batches=2 (port=29851)
+[0;32m[OK][0m Prefill dbo_b32_s128: 5691.43ms
+usage: visualize_dbo_pipeline.py [-h] [--attn-timing ATTN_TIMING]
+                                 [--ffn-timing FFN_TIMING] [--output OUTPUT]
+                                 [--start-layer START_LAYER]
+                                 [--num-layers NUM_LAYERS]
+                                 [--serial-time SERIAL_TIME]
+                                 [--serial-timing SERIAL_TIMING]
+visualize_dbo_pipeline.py: error: unrecognized arguments: --attention-json results/prefill_dbo/timing_attention_q3_dbo_b32_s128.json --ffn-json results/prefill_dbo/timing_ffn_q3_dbo_b32_s128.json --skip-l0 --end-layer 4
+[1;33m[WARN][0m Pipeline 图生成失败: dbo_b32_s128
+[0;32m[OK][0m Pipeline 图: pipeline_dbo_b32_s128.png
+[0;34m[INFO][0m Prefill: batch=32 seq=128 DBO=on micro_batches=3 (port=29851)
+[0;32m[OK][0m Prefill dbo_b32_s128_mb3: 6765.04ms
+[0;34m[INFO][0m Prefill: batch=32 seq=128 DBO=on micro_batches=4 (port=29851)
+[0;32m[OK][0m Prefill dbo_b32_s128_mb4: 8047.15ms
+[0;34m[INFO][0m Skip serial for batch=64 (already tested)
+[0;34m[INFO][0m Prefill: batch=64 seq=128 DBO=on micro_batches=2 (port=29851)
+[0;32m[OK][0m Prefill dbo_b64_s128: 8322.24ms
+usage: visualize_dbo_pipeline.py [-h] [--attn-timing ATTN_TIMING]
+                                 [--ffn-timing FFN_TIMING] [--output OUTPUT]
+                                 [--start-layer START_LAYER]
+                                 [--num-layers NUM_LAYERS]
+                                 [--serial-time SERIAL_TIME]
+                                 [--serial-timing SERIAL_TIMING]
+visualize_dbo_pipeline.py: error: unrecognized arguments: --attention-json results/prefill_dbo/timing_attention_q3_dbo_b64_s128.json --ffn-json results/prefill_dbo/timing_ffn_q3_dbo_b64_s128.json --skip-l0 --end-layer 4
+[1;33m[WARN][0m Pipeline 图生成失败: dbo_b64_s128
+[0;32m[OK][0m Pipeline 图: pipeline_dbo_b64_s128.png
+[0;34m[INFO][0m Prefill: batch=64 seq=128 DBO=on micro_batches=3 (port=29851)
+[0;32m[OK][0m Prefill dbo_b64_s128_mb3: 9376.04ms
+[0;34m[INFO][0m Prefill: batch=64 seq=128 DBO=on micro_batches=4 (port=29851)
+[0;32m[OK][0m Prefill dbo_b64_s128_mb4: 10425.51ms
+
+[0;32m========================================[0m
+[0;32m  扩展实验完成[0m
+[0;32m========================================[0m
+
+
+新增结果已追加到: results/experiments_q3/summary.csv
+
+dbo_b4_s64,prefill,4,64,on,3440.23,
+serial_b4_s128,prefill,4,128,off,3391.46,
+dbo_b4_s128,prefill,4,128,on,3556.68,
+serial_b4_s256,prefill,4,256,off,3704.15,
+dbo_b4_s256,prefill,4,256,on,3843.93,
+serial_b4_s512,prefill,4,512,off,4587.67,
+dbo_b4_s512,prefill,4,512,on,4691.46,
+serial_b4_s1024,prefill,4,1024,off,6338.21,
+dbo_b4_s1024,prefill,4,1024,on,6381.33,
+serial_b4_s2048,prefill,4,2048,off,10571.70,
+dbo_b4_s2048,prefill,4,2048,on,10609.71,
+serial_b256_s128,decode,256,128,off,13977.98,1.4
+dbo_b256_s128,decode,256,128,on,13969.47,1.4
+serial_b512_s128,decode,512,128,off,OOM,OOM
+dbo_b32_s128,prefill,32,128,on,5691.43,,2
+dbo_b32_s128_mb3,prefill,32,128,on,6765.04,,3
+dbo_b32_s128_mb4,prefill,32,128,on,8047.15,,4
+dbo_b64_s128,prefill,64,128,on,8322.24,,2
+dbo_b64_s128_mb3,prefill,64,128,on,9376.04,,3
+dbo_b64_s128_mb4,prefill,64,128,on,10425.51,,4
