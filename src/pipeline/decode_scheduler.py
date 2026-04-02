@@ -1,13 +1,13 @@
 """
-Decode DBO Scheduler - DBO pipeline for decode phase.
+Decode DBO Scheduler - Pipeline for decode phase.
 
-Key insight: During decode, we process multiple requests' current tokens as a batch.
-This batch can be split into micro-batches for DBO overlap, similar to prefill.
+For decode (seq=1 per token), micro-batching provides negligible overlap
+because the compute-to-communication ratio is very low. The cuBLAS kernel
+overhead of multiple small FFN calls actually dominates any overlap saving.
 
-Differences from prefill DBO:
-- Each token position may be different (different KV cache lengths per request)
-- We need to handle variable sequence lengths in KV cache
-- Single token per request, but batched across requests
+This scheduler uses full-batch communication (single send/recv per layer)
+to avoid kernel launch overhead while maintaining the scheduler interface
+for future cross-layer pipelining.
 """
 
 import logging
@@ -31,20 +31,19 @@ class DecodeDBOStats:
     compute_time: float = 0.0
     comm_time: float = 0.0
     num_tokens: int = 0
-    num_micro_batches: int = 0
-    
-    # Detailed per-phase timing (summed across all layers and micro-batches)
-    attn_compute_time: float = 0.0  # Attention computation
-    ffn_compute_time: float = 0.0   # FFN computation
-    a2f_comm_time: float = 0.0      # Attention → FFN communication
-    f2a_comm_time: float = 0.0      # FFN → Attention communication
-    
+    num_layers: int = 0
+
+    attn_compute_time: float = 0.0
+    ffn_compute_time: float = 0.0
+    a2f_comm_time: float = 0.0
+    f2a_comm_time: float = 0.0
+
     @property
     def tokens_per_second(self) -> float:
         if self.total_time == 0:
             return 0.0
         return self.num_tokens / self.total_time
-    
+
     def __str__(self) -> str:
         lines = [
             f"Decode DBO: {self.total_time*1000:.2f}ms | "
@@ -52,7 +51,6 @@ class DecodeDBOStats:
             f"通信: {self.comm_time*1000:.2f}ms | "
             f"{self.tokens_per_second:.1f} tok/s"
         ]
-        # Add detailed breakdown if available
         if self.attn_compute_time > 0 or self.ffn_compute_time > 0:
             lines.append(
                 f"  详细: Attn={self.attn_compute_time*1000:.2f}ms, "
@@ -65,375 +63,162 @@ class DecodeDBOStats:
 
 class DecodeDBOScheduler:
     """
-    Decode phase scheduler with DBO (Dual Batch Overlap).
-    
-    For decode, we batch multiple requests' current tokens together:
-    - Request 0: generating token at position 10
-    - Request 1: generating token at position 15
-    - Request 2: generating token at position 12
-    - Request 3: generating token at position 8
-    
-    These 4 tokens form a batch [4, 1], which we split into 2 micro-batches
-    for DBO overlap.
-    
-    Pipeline pattern (2 micro-batches, 2 requests each):
-    
-    Attention Node:
-      Layer 0: [Attn_MB0][Attn_MB1]
-                 ↓isend   ↓isend
-      Layer 1: [recv][Attn_MB0][Attn_MB1]
-               ...
-    
-    FFN Node:
-      Layer 0: [irecv][recv_wait][FFN_MB0][FFN_MB1]
-                                   ↓isend   ↓isend
-      Layer 1: [irecv][recv_wait][FFN_MB0][FFN_MB1]
-               ...
+    Decode phase scheduler.
+
+    Uses full-batch attention (with global KV cache) and full-batch FFN
+    communication. Micro-batching is avoided because for decode (seq=1):
+    - cuBLAS kernel overhead for 2×FFN(b/2) ≈ 2× FFN(b) (kernel selection issue)
+    - NCCL latency per extra op ≈ 150-300μs, exceeding any overlap benefit
+    - The correct KV cache is maintained by computing attention for the full batch
     """
-    
+
     def __init__(
         self,
         model,  # DisaggregatedQwenModel
         num_micro_batches: int = 2,
         enable_timing: bool = False,
     ):
-        """
-        Initialize decode DBO scheduler.
-        
-        Args:
-            model: DisaggregatedQwenModel instance
-            num_micro_batches: Number of micro-batches (2 for standard DBO)
-            enable_timing: Whether to record detailed timing
-        """
         self.model = model
         self.ctx = get_distributed_context()
-        self.num_micro_batches = num_micro_batches
         self.enable_timing = enable_timing
-        
-        # Pending async operations
-        self._pending_sends: List[dist.Work] = []
-        
-        # Stats
         self.stats = DecodeDBOStats()
-        
-        logger.debug(f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}")
-    
-    def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
-        """Get unique tag for send/recv matching."""
-        dir_code = 0 if direction == "attn_to_ffn" else 1
-        # Use different tag space from prefill (add 10000 offset)
-        return 10000 + layer_idx * 1000 + mb_idx * 10 + dir_code
-    
-    def _split_batch(
-        self,
-        input_ids: torch.Tensor,
-        position_ids: torch.Tensor,
-    ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-        """
-        Split decode batch into micro-batches.
-        
-        Args:
-            input_ids: [batch_size, 1] - current tokens
-            position_ids: [batch_size, 1] - position of each token
-        
-        Returns:
-            List of (input_ids_mb, position_ids_mb) tuples
-        """
-        batch_size = input_ids.shape[0]
-        
-        if batch_size < self.num_micro_batches:
-            # Can't split further, return as single batch
-            return [(input_ids, position_ids)]
-        
-        # Split evenly
-        mb_size = batch_size // self.num_micro_batches
-        remainder = batch_size % self.num_micro_batches
-        
-        micro_batches = []
-        start = 0
-        for i in range(self.num_micro_batches):
-            size = mb_size + (1 if i < remainder else 0)
-            end = start + size
-            micro_batches.append((
-                input_ids[start:end],
-                position_ids[start:end],
-            ))
-            start = end
-        
-        return micro_batches
-    
-    def _slice_kv_cache(self, kv_cache, batch_start: int, batch_end: int):
-        """
-        Create a view of KV cache for a specific batch range.
-        
-        Args:
-            kv_cache: DynamicCache with full batch
-            batch_start: Start index in batch dimension
-            batch_end: End index in batch dimension (exclusive)
-        
-        Returns:
-            Sliced cache view (in-place, shares memory with original)
-        """
-        from transformers import DynamicCache
-        
-        sliced_cache = DynamicCache()
-        
-        # Slice each layer's keys and values along batch dimension
-        for layer_idx in range(len(kv_cache.layers)):
-            layer = kv_cache.layers[layer_idx]
-            
-            # Slice: [batch, heads, seq, dim] -> [batch_end-batch_start, heads, seq, dim]
-            k_slice = layer.keys[batch_start:batch_end]
-            v_slice = layer.values[batch_start:batch_end]
-            
-            # Update sliced cache
-            sliced_cache.update(k_slice, v_slice, layer_idx)
-        
-        return sliced_cache
-    
+        logger.debug("DecodeDBOScheduler initialized (full-batch mode)")
+
+    def _get_tag(self, layer_idx: int) -> int:
+        """Get unique tags for A2F and F2A communication."""
+        return 10000 + layer_idx * 10
+
     @torch.no_grad()
     def forward_decode_dbo(
         self,
-        input_ids: torch.Tensor,  # [batch_size, 1]
-        position_ids: torch.Tensor,  # [batch_size, 1]
-        kv_cache,  # DynamicCache
-    ) -> torch.Tensor:
+        input_ids: torch.Tensor,   # [batch_size, 1]
+        position_ids: torch.Tensor, # [batch_size, 1]
+        kv_cache,                   # DynamicCache (attention node) or None (FFN node)
+    ) -> Optional[torch.Tensor]:
         """
-        Decode forward pass with DBO.
-        
-        Args:
-            input_ids: Current tokens [batch_size, 1]
-            position_ids: Position IDs [batch_size, 1]
-            kv_cache: KV cache (DynamicCache)
-        
+        Decode forward pass.
+
         Returns:
-            Logits [batch_size, 1, vocab_size] (attention node only)
+            Logits [batch_size, 1, vocab_size] on attention node, None on FFN node.
         """
         start_time = time.perf_counter()
         batch_size = input_ids.shape[0]
-        
-        # Reset stats
-        self.stats = DecodeDBOStats(
-            num_tokens=batch_size,
-            num_micro_batches=self.num_micro_batches,
-        )
-        
-        # Split into micro-batches
-        micro_batches = self._split_batch(input_ids, position_ids)
-        actual_num_mb = len(micro_batches)
-        
-        # Sync metadata
-        metadata = torch.tensor([batch_size, actual_num_mb], dtype=torch.long, device=self.model.device)
-        dist.broadcast(metadata, src=0)
-        
-        if not self.ctx.is_attention_node:
-            batch_size = metadata[0].item()
-            actual_num_mb = metadata[1].item()
-            # Recreate micro-batches with correct sizes
-            mb_size = batch_size // actual_num_mb
-            remainder = batch_size % actual_num_mb
-            micro_batches = []
-            for i in range(actual_num_mb):
-                size = mb_size + (1 if i < remainder else 0)
-                micro_batches.append((
-                    torch.zeros(size, 1, dtype=torch.long, device=self.model.device),
-                    torch.zeros(size, 1, dtype=torch.long, device=self.model.device),
-                ))
-        
-        # Run pipeline
+
+        self.stats = DecodeDBOStats(num_tokens=batch_size)
+
         if self.ctx.is_attention_node:
-            result = self._run_attention_decode(micro_batches, kv_cache)
+            result = self._run_attention_decode(input_ids, position_ids, kv_cache)
         else:
-            self._run_ffn_decode(micro_batches)
+            self._run_ffn_decode(batch_size)
             result = None
-        
-        # Record stats
+
         self.stats.total_time = time.perf_counter() - start_time
-        
+        self.stats.num_layers = self.model.num_layers
         return result
-    
+
     def _run_attention_decode(
         self,
-        micro_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
         kv_cache,
     ) -> torch.Tensor:
         """
-        Attention node decode with DBO overlap.
+        Attention node: full-batch attention + full-batch communication.
         """
         assert self.model.attention_worker is not None
-        
-        num_mb = len(micro_batches)
+
+        batch_size = input_ids.shape[0]
         num_layers = self.model.num_layers
-        
-        # Initialize hidden states for each micro-batch
-        mb_hidden_states = []
-        mb_attention_masks = []
-        mb_position_embeddings = []
-        mb_kv_caches = []  # Store sliced KV cache for each micro-batch
-        
-        batch_start = 0
-        for mb_idx, (ids_mb, pos_mb) in enumerate(micro_batches):
-            mb_batch_size = ids_mb.shape[0]
-            batch_end = batch_start + mb_batch_size
-            
-            # Embed tokens
-            hidden = self.model.attention_worker.embed(ids_mb)
-            mb_hidden_states.append(hidden)
-            
-            # Slice KV cache for this micro-batch
-            mb_cache = self._slice_kv_cache(kv_cache, batch_start, batch_end)
-            mb_kv_caches.append(mb_cache)
-            
-            # Get current cache length for this micro-batch
-            cur_pos = mb_cache.get_seq_length()
-            total_len = cur_pos + 1
-            
-            # Create attention mask
-            mask = self.model._make_causal_mask(mb_batch_size, 1, total_len)
-            mb_attention_masks.append(mask)
-            
-            # Position embeddings
-            pos_emb = self.model.attention_worker.get_position_embeddings(hidden, pos_mb)
-            mb_position_embeddings.append(pos_emb)
-            
-            batch_start = batch_end
-        
-        # Process layers with DBO
+
+        hidden_states = self.model.attention_worker.embed(input_ids)
+        position_embeddings = self.model.attention_worker.get_position_embeddings(
+            hidden_states, position_ids
+        )
+        cur_pos = kv_cache.get_seq_length()
+        total_len = cur_pos + 1
+        attention_mask = self.model._make_causal_mask(batch_size, 1, total_len)
+
         for layer_idx in range(num_layers):
-            send_handles = []
-            packed_list = []
-            
-            # Compute attention for all micro-batches, send immediately after each
-            for mb_idx in range(num_mb):
-                compute_start = time.perf_counter()
-                
-                result = self.model.attention_worker.forward_attention_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=mb_hidden_states[mb_idx],
-                    attention_mask=mb_attention_masks[mb_idx],
-                    position_ids=micro_batches[mb_idx][1],
-                    position_embeddings=mb_position_embeddings[mb_idx],
-                    use_cache=True,
-                    past_key_value=mb_kv_caches[mb_idx],  # Use sliced cache
-                )
-                # result is (attn_output, residual, updated_cache) when use_cache=True
-                attn_output, residual = result[0], result[1]
-                # Note: updated_cache is result[2], but we don't need it here
-                # because the KV cache is updated in-place in the global cache
-                
-                packed = (attn_output + residual).contiguous()
-                packed_list.append(packed)
-                
-                compute_end = time.perf_counter()
-                compute_time = compute_end - compute_start
-                self.stats.compute_time += compute_time
-                self.stats.attn_compute_time += compute_time
-                
-                # Async send - overlaps with next MB's compute
-                send_start = time.perf_counter()
-                tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
-                handle = dist.isend(packed.contiguous(), dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append((handle, send_start))
-            
-            # Wait for all sends and record A2F time
-            for handle, send_start in send_handles:
-                handle.wait()
-                self.stats.a2f_comm_time += time.perf_counter() - send_start
-            
-            # Receive FFN results (F2A communication)
-            recv_tensors = []
-            for mb_idx in range(num_mb):
-                recv_start = time.perf_counter()
-                tag = self._get_tag(layer_idx, mb_idx, "ffn_to_attn")
-                recv_tensor = torch.empty(
-                    micro_batches[mb_idx][0].shape[0], 1, self.model.hidden_size,
-                    dtype=self.model.dtype, device=self.model.device
-                )
-                dist.recv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-                recv_tensors.append(recv_tensor)
-                
-                recv_time = time.perf_counter() - recv_start
-                self.stats.comm_time += recv_time
-                self.stats.f2a_comm_time += recv_time
-            
-            # Update hidden states
-            for mb_idx in range(num_mb):
-                mb_hidden_states[mb_idx] = recv_tensors[mb_idx].clone()
-        
-        # Generate logits
-        results = []
-        for mb_idx in range(num_mb):
-            logits = self.model.attention_worker.forward_lm_head(mb_hidden_states[mb_idx])
-            results.append(logits)
-        
-        # Merge results
-        return torch.cat(results, dim=0)
-    
-    def _run_ffn_decode(
-        self,
-        micro_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-    ) -> None:
+            # Full-batch attention (KV cache updated in-place)
+            compute_start = time.perf_counter()
+            attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
+                layer_idx=layer_idx,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                position_embeddings=position_embeddings,
+                use_cache=True,
+                past_key_value=kv_cache,
+            )
+            packed = (attn_output + residual).contiguous()
+            compute_end = time.perf_counter()
+            compute_time = compute_end - compute_start
+            self.stats.compute_time += compute_time
+            self.stats.attn_compute_time += compute_time
+
+            # Send full batch to FFN
+            tag_a2f = self._get_tag(layer_idx)
+            send_start = time.perf_counter()
+            dist.send(packed, dst=self.ctx.peer_rank, tag=tag_a2f)
+            send_end = time.perf_counter()
+            self.stats.a2f_comm_time += send_end - send_start
+
+            # Receive full batch from FFN
+            tag_f2a = self._get_tag(layer_idx) + 1
+            recv_start = time.perf_counter()
+            hidden_states = torch.empty(
+                batch_size, 1, self.model.hidden_size,
+                dtype=self.model.dtype, device=self.model.device,
+            )
+            dist.recv(hidden_states, src=self.ctx.peer_rank, tag=tag_f2a)
+            recv_end = time.perf_counter()
+            self.stats.f2a_comm_time += recv_end - recv_start
+            self.stats.comm_time += (send_end - send_start) + (recv_end - recv_start)
+
+        return self.model.attention_worker.forward_lm_head(hidden_states)
+
+    def _run_ffn_decode(self, batch_size: int) -> None:
         """
-        FFN node decode with DBO overlap.
+        FFN node: receive full batch → compute FFN → send back.
         """
         assert self.model.ffn_worker is not None
-        
-        num_mb = len(micro_batches)
+
         num_layers = self.model.num_layers
-        
+
         for layer_idx in range(num_layers):
-            # Post all receives first (async)
-            recv_handles = []
-            recv_tensors = []
-            
-            for mb_idx in range(num_mb):
-                batch_size = micro_batches[mb_idx][0].shape[0]
-                tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
-                recv_tensor = torch.empty(
-                    batch_size, 1, self.model.hidden_size,
-                    dtype=self.model.dtype, device=self.model.device
-                )
-                handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-                recv_handles.append(handle)
-                recv_tensors.append(recv_tensor)
-            
-            # Process each MB: wait, compute, send
-            send_handles = []
-            
-            for mb_idx in range(num_mb):
-                # Wait for data (A2F receive)
-                recv_start = time.perf_counter()
-                recv_handles[mb_idx].wait()
-                packed = recv_tensors[mb_idx]
-                recv_time = time.perf_counter() - recv_start
-                self.stats.comm_time += recv_time
-                self.stats.a2f_comm_time += recv_time
-                
-                # Compute FFN (input is pre-combined: attn_output + residual)
-                compute_start = time.perf_counter()
-                output = self.model.ffn_worker.forward_ffn_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=packed,
-                )
-                if isinstance(output, tuple):
-                    output = output[0]
-                output = output.contiguous()
-                
-                compute_time = time.perf_counter() - compute_start
-                self.stats.compute_time += compute_time
-                self.stats.ffn_compute_time += compute_time
-                
-                # Async send (F2A) - overlaps with next MB's processing
-                send_start = time.perf_counter()
-                tag = self._get_tag(layer_idx, mb_idx, "ffn_to_attn")
-                handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append((handle, send_start))
-            
-            # Wait for all sends and record F2A time
-            for handle, send_start in send_handles:
-                handle.wait()
-                self.stats.f2a_comm_time += time.perf_counter() - send_start
-    
+            # Receive full batch from attention
+            tag_a2f = self._get_tag(layer_idx)
+            recv_start = time.perf_counter()
+            hidden_states = torch.empty(
+                batch_size, 1, self.model.hidden_size,
+                dtype=self.model.dtype, device=self.model.device,
+            )
+            dist.recv(hidden_states, src=self.ctx.peer_rank, tag=tag_a2f)
+            recv_end = time.perf_counter()
+            self.stats.a2f_comm_time += recv_end - recv_start
+
+            # Full-batch FFN (single kernel launch)
+            compute_start = time.perf_counter()
+            output = self.model.ffn_worker.forward_ffn_layer(
+                layer_idx=layer_idx,
+                hidden_states=hidden_states,
+            )
+            if isinstance(output, tuple):
+                output = output[0]
+            output = output.contiguous()
+            compute_end = time.perf_counter()
+            compute_time = compute_end - compute_start
+            self.stats.compute_time += compute_time
+            self.stats.ffn_compute_time += compute_time
+
+            # Send full batch back to attention
+            tag_f2a = self._get_tag(layer_idx) + 1
+            send_start = time.perf_counter()
+            dist.send(output, dst=self.ctx.peer_rank, tag=tag_f2a)
+            send_end = time.perf_counter()
+            self.stats.f2a_comm_time += send_end - send_start
+            self.stats.comm_time += (recv_end - recv_start) + (send_end - send_start)
+
     def get_stats(self) -> DecodeDBOStats:
         """Get statistics from last run."""
         return self.stats
