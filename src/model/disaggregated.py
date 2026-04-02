@@ -610,8 +610,8 @@ class DisaggregatedQwenModel(nn.Module):
         
         # Decode loop
         for step in range(max_new_tokens - 1):
-            # Current position in sequence
-            cur_pos = prompt_len + step + 1  # +1 because we already generated one token
+            # Current position = KV cache length (accurate regardless of path)
+            cur_pos = self.kv_cache.get_seq_length()
             position_ids = torch.full(
                 (batch_size, 1), cur_pos,
                 device=self.device, dtype=torch.long
