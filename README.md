@@ -85,12 +85,19 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 
 ## 📊 性能特征
 
-### Prefill DBO（推荐使用✅）
+### Prefill DBO 实测结果（Qwen3-30B-A3B, 48 layers, bfloat16）
 
-| 环境 | Attention 效率 | FFN 效率 | 推荐 |
-|------|---------------|---------|------|
-| 单机 | 54.8% | 71.2% | ✅ |
-| 多机 | >70%（预期） | >80%（预期） | ✅ |
+**Batch Scaling (seq=128)**:
+
+| Batch | Local DBO | Serial | Speedup | Multi DBO | Serial | Speedup |
+|------:|----------:|-------:|--------:|----------:|-------:|--------:|
+|     4 |   3683 ms| 3642 ms|   0.99x |   3708 ms| 3716 ms|   1.00x |
+|     8 |   3869 ms| 3877 ms|   1.00x |   3902 ms| 3935 ms|   1.01x |
+|    16 |   4477 ms| 4590 ms|   1.03x |   4585 ms| 4696 ms|   1.02x |
+|    32 |   5609 ms| 5853 ms|   1.04x |   5726 ms| 5997 ms|   1.05x |
+|    64 |   7881 ms|      — |      — |   8148 ms|      — |      — |
+
+**分析**: DBO 加速 1.00x–1.05x，随 batch 增大略有提升。加速幅度有限是因为 FFN（MoE）计算占绝对主导（~60ms/layer），而通信仅 ~0.3ms/layer，重叠收益有限。
 
 ### Decode DBO（当前不推荐❌）
 
@@ -102,7 +109,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 **原因**: KV Cache 对象创建开销过大  
 **建议**: Prefill 启用 DBO，Decode 禁用 DBO（使用 `--no-dbo`）
 
-详细报告见 [results/reports/](results/reports/)。
+详细报告见 [results/reports/experiment_summary.md](results/reports/experiment_summary.md)。
 
 ## 🛠️ 运行脚本
 
@@ -113,11 +120,18 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 # 多机测试
 ./scripts/test_multinode.sh [max_tokens] [batch_size]
 
-# Prefill DBO 基准测试
-./scripts/benchmark_dbo.sh [tokens] [batch] [on|off]
+# 单次实验（支持 DBO/Serial，本地/多机）
+./scripts/run_experiment.sh local 8 128 5         # Local DBO, batch=8, seq=128
+./scripts/run_experiment.sh multinode 16 128 5     # Multinode DBO
+./scripts/run_experiment.sh local 8 128 5 nodbo    # Serial baseline
 
-# Decode DBO 基准测试
-./scripts/benchmark_decode_dbo.sh
+# 全量实验套件（batch/seq scaling + serial baselines）
+./scripts/run_all_experiments.sh local              # 仅本地
+./scripts/run_all_experiments.sh multinode           # 仅多机
+./scripts/run_all_experiments.sh all                 # 全部
+
+# 生成对比图表
+python scripts/plot_scaling_comparison.py
 
 # P2P 传输时间测量
 python scripts/measure_transfer_time.py [master_addr] [master_port]
@@ -157,11 +171,15 @@ afd_demo/
 │   ├── run_ffn_node.sh           # 启动 FFN 节点
 │   ├── test_local.sh             # 单机测试脚本
 │   ├── test_multinode.sh         # 多机测试脚本
+│   ├── run_experiment.sh         # 单次实验运行器（DBO/Serial）
+│   ├── run_all_experiments.sh    # 全量实验套件
 │   ├── benchmark_dbo.sh          # Prefill DBO 基准测试
 │   ├── benchmark_decode_dbo.sh   # Decode DBO 基准测试
+│   ├── batch_scaling_experiments.sh # 早期 batch scaling 脚本
 │   ├── profile_dbo_pipeline.sh   # DBO 时序 profiling
-│   ├── visualize_dbo.py          # Prefill DBO 可视化
-│   ├── visualize_dbo_pipeline.py # 4-lane 流水线图
+│   ├── visualize_dbo.py          # Prefill DBO 基础可视化
+│   ├── visualize_dbo_pipeline.py # 4-lane 流水线 Gantt 图
+│   ├── plot_scaling_comparison.py# 对比图表生成
 │   ├── plot_dbo_summary.py       # DBO 对比汇总图
 │   └── measure_transfer_time.py  # P2P 传输时间测量
 ├── doc/                          # 完整文档
@@ -171,6 +189,10 @@ afd_demo/
 │   └── 04-deployment.md          # 部署指南
 ├── results/                      # 实验结果和报告
 │   ├── prefill_dbo/              # Prefill DBO 测试结果
+│   │   ├── batch_scaling/        # Batch 扩展实验 (b4-b64)
+│   │   ├── seq_scaling/          # Seq 扩展实验 (s32-s512)
+│   │   ├── logs/                 # 实验日志
+│   │   └── archive/              # 旧实验结果归档
 │   ├── decode_dbo/               # Decode DBO 测试结果
 │   ├── network_latency/          # 网络延迟测试结果
 │   └── reports/                  # 综合分析报告
