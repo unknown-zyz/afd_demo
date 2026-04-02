@@ -253,27 +253,24 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         serial_time = estimated_serial
         serial_label = f"Serial: {serial_time:.1f}ms (est.)"
     
-    # Overlap 率 = (理论串行 - 实际) / 理论串行
-    if serial_time > 0:
-        overlap_ratio = (serial_time - total_inference_time) / serial_time * 100
-        speedup = serial_time / total_inference_time if total_inference_time > 0 else 1.0
+    # Speedup vs serial
+    if serial_time > 0 and total_inference_time > 0:
+        speedup = serial_time / total_inference_time
     else:
-        overlap_ratio = 0
         speedup = 1.0
     
     # Per-layer averages
     avg_attn = attn_compute / num_layers if num_layers > 0 else 0
     avg_ffn = ffn_compute / num_layers if num_layers > 0 else 0
     
-    # 构建标题和统计信息 (4 行)
+    # 构建标题和统计信息 (3 行)
     end_layer = start_layer + num_layers - 1
     layer_note = " (L0 skipped)" if start_layer > 0 else ""
     line1 = f'DBO Pipeline — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
-    line2 = f"DBO: {total_inference_time:.1f}ms | {serial_label}"
+    line2 = f"DBO: {total_inference_time:.1f}ms | {serial_label} | Speedup: {speedup:.2f}x"
     line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
-    line4 = f"Overlap: {overlap_ratio:.1f}% | Speedup: {speedup:.2f}×"
     
-    ax.set_title(f'{line1}\n{line2}\n{line3}\n{line4}', fontsize=10, pad=10)
+    ax.set_title(f'{line1}\n{line2}\n{line3}', fontsize=10, pad=10)
     
     # 图例
     legend_elements = [
@@ -328,8 +325,24 @@ def main():
         default=None,
         help='Measured serial (no-DBO) time in ms for speedup calculation'
     )
+    parser.add_argument(
+        '--serial-timing',
+        default=None,
+        help='Path to serial (no-DBO) attention timing JSON to read total_time_ms'
+    )
     
     args = parser.parse_args()
+    
+    # 从 serial timing JSON 读取实测时间（优先级低于 --serial-time）
+    if args.serial_time is None and args.serial_timing and Path(args.serial_timing).exists():
+        try:
+            with open(args.serial_timing) as f:
+                serial_data = json.load(f)
+            args.serial_time = serial_data.get('total_time_ms')
+            if args.serial_time:
+                print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms)")
+        except Exception as e:
+            print(f"  Warning: Failed to read serial timing: {e}")
     
     # 检查输入文件
     if not Path(args.attn_timing).exists():
