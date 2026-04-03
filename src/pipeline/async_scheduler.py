@@ -400,11 +400,9 @@ class AsyncPipelineScheduler:
             packed_list = []
             
             for mb_idx, mb in enumerate(micro_batches):
-                # CUDA Events: mark_start/mark_end (zero overhead, no sync)
+                # Stream sync for accurate timing (only sync compute stream, not NCCL)
                 if tracker:
-                    tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
-                
-                # Compute attention
+                    torch.cuda.current_stream().synchronize()
                 compute_start = time.perf_counter()
                 
                 attn_output, residual = self.model.attention_worker.forward_attention_layer(
@@ -419,9 +417,13 @@ class AsyncPipelineScheduler:
                 packed_list.append(packed)
                 
                 if tracker:
-                    tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
+                    torch.cuda.current_stream().synchronize()
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
+                
+                if tracker:
+                    tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
+                                        compute_start, compute_end)
                 
                 # Start async send immediately after compute
                 send_start = time.perf_counter()
@@ -538,9 +540,9 @@ class AsyncPipelineScheduler:
                     tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
                                         recv_wait_start, recv_wait_end)
                 
-                # CUDA Events: mark_start/mark_end (zero overhead, no sync)
+                # Stream sync for accurate timing (only sync compute stream, not NCCL)
                 if tracker:
-                    tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    torch.cuda.current_stream().synchronize()
                 
                 # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
@@ -556,9 +558,13 @@ class AsyncPipelineScheduler:
                 output = output.contiguous().clone()
                 output_list.append(output)
                 if tracker:
-                    tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    torch.cuda.current_stream().synchronize()
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
+                
+                if tracker:
+                    tracker.record_event(EventType.FFN_COMPUTE, layer_idx, mb_idx,
+                                        compute_start, compute_end)
                 
                 # MoE sub-stage timing (uses CPU timestamps from ffn_worker)
                 if tracker and stage_timing is not None:
