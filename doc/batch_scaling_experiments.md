@@ -20,13 +20,8 @@ mkdir -p results/prefill_dbo/seq_scaling/{s32,s64,s128,s256,s512}
 
 #### 方式 1: 使用自动化脚本 (推荐)
 ```bash
-# 运行所有实验（自动化，但可能需要几个小时）
-./scripts/batch_scaling_experiments.sh all
-
-# 分阶段运行
-./scripts/batch_scaling_experiments.sh batch      # Phase 1: batch scaling
-./scripts/batch_scaling_experiments.sh seq        # Phase 2: seq scaling
-./scripts/batch_scaling_experiments.sh combined   # Phase 3: high load
+# 运行所有实验
+./scripts/run_qwen3_experiments.sh
 ```
 
 #### 方式 2: 手动运行 (逐个测试，便于调试)
@@ -245,6 +240,6 @@ python scripts/analyze_batch_scaling.py  # (待创建)
 
 实验完成后:
 1. 将结果文件移动到对应子目录
-2. 生成对比分析报告 (`results/reports/batch_scaling_summary.md`)
+2. 在 `results/experiments_qwen3/` 中查看实验总结和性能分析
 3. 绘制性能曲线图
 4. 更新项目 README

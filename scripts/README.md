@@ -18,7 +18,6 @@
 | 脚本 | 功能 | 用法 |
 |------|------|------|
 | `benchmark_dbo.sh` | Prefill DBO 基准测试 | `./scripts/benchmark_dbo.sh [tokens] [batch] [on\|off]` |
-| `benchmark_decode_dbo.sh` | Decode DBO 全面测试 | `./scripts/benchmark_decode_dbo.sh` |
 | `profile_dbo_pipeline.sh` | DBO 时序 profiling | `./scripts/profile_dbo_pipeline.sh [batch] [tokens]` |
 | `measure_transfer_time.py` | P2P 传输时间测量 | `python scripts/measure_transfer_time.py [opts]` |
 
@@ -26,9 +25,9 @@
 
 | 脚本 | 功能 | 用法 |
 |------|------|------|
-| `visualize_dbo.py` | DBO 时间线图 | `python scripts/visualize_dbo.py <results_dir> [opts]` |
 | `visualize_dbo_pipeline.py` | DBO Pipeline 4泳道图 | `python scripts/visualize_dbo_pipeline.py [opts]` |
-| `plot_dbo_summary.py` | 综合总结图 | `python scripts/plot_dbo_summary.py` |
+| `plot_experiment_results.py` | 实验结果绘图 | `python scripts/plot_experiment_results.py [opts]` |
+| `plot_scaling_comparison.py` | Scaling 对比图 | `python scripts/plot_scaling_comparison.py [opts]` |
 
 ---
 
@@ -170,28 +169,6 @@ cd /path/to/afd_demo && source venv/bin/activate
 
 ---
 
-### benchmark_decode_dbo.sh
-
-**功能**: Decode DBO 全面基准测试（12 个测试用例）
-
-**语法**:
-```bash
-./scripts/benchmark_decode_dbo.sh
-```
-
-**测试矩阵**:
-- Batch sizes: 2, 4, 8
-- Sequence lengths: 128, 512
-- DBO: ON vs OFF
-
-**输出**:
-- 日志: `results/decode_dbo/Qwen2-1.5B_batch*_seq*_dbo_*.log`
-- 汇总: `results/decode_dbo/summary.csv`
-
-**注意**: 测试需要 10-15 分钟，请耐心等待
-
----
-
 ### measure_transfer_time.py
 
 **功能**: 测量 NCCL P2P 单向传输时间（同步 send 基准测试）
@@ -222,39 +199,6 @@ Transfer size: 2.0 MB, Time: 0.11 ms, Bandwidth: 144.8 Gb/s
 ```
 
 **用途**: 用于对比 DBO 的异步通信时间是否符合预期
-
----
-
-### visualize_dbo.py
-
-**功能**: 生成 Prefill DBO 时间线可视化
-
-**语法**:
-```bash
-python scripts/visualize_dbo.py <results_dir> [options]
-```
-
-**参数**:
-- `results_dir` - 包含 timing JSON 的目录
-- `--output` - 输出 PNG 文件路径
-- `--max-layers` - 显示最多层数（默认: 所有层）
-
-**示例**:
-```bash
-# 基本用法
-python scripts/visualize_dbo.py results/prefill_dbo/
-
-# 指定输出路径和层数
-python scripts/visualize_dbo.py results/prefill_dbo/ \
-  --output timeline.png \
-  --max-layers 8
-```
-
-**输入文件**:
-- `timing_attention.json` - Attention 节点计时数据
-- `timing_ffn.json` - FFN 节点计时数据
-
-**输出**: PNG 时间线图
 
 ---
 
@@ -300,31 +244,9 @@ python scripts/visualize_dbo_pipeline.py \
 - 右上角显示性能统计信息
 
 **优势**: 
-- 相比 `visualize_dbo.py`，不显示空闲等待时间，更直观
+- 不显示空闲等待时间，更直观
 - 清晰展示 DBO 的计算-通信重叠效果
 - 适合理解 pipeline 工作原理
-
----
-
-### plot_dbo_summary.py
-
-**功能**: 生成综合总结图（6 个子图：计时、效率、对比等）
-
-**语法**:
-```bash
-python scripts/plot_dbo_summary.py
-```
-
-**输入**: 从 `results/` 目录读取所有相关数据
-
-**输出**: `results/dbo_summary.png`
-
-**包含内容**:
-- Prefill 阶段时间分解
-- 计算效率分析
-- Decode 吞吐量对比
-- Attention/FFN 时间线
-- 关键发现总结
 
 ---
 
@@ -354,15 +276,12 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/measure_transfer_ti
 # 1. 运行基准测试
 ./scripts/benchmark_dbo.sh 50 4 on
 ./scripts/benchmark_dbo.sh 50 4 off
-./scripts/benchmark_decode_dbo.sh
 
 # 2. 生成可视化
-python scripts/visualize_dbo.py results/prefill_dbo/
-python scripts/plot_dbo_summary.py
+python scripts/visualize_dbo_pipeline.py
 
 # 3. 查看结果
 ls -lh results/*.png
-cat results/decode_dbo/summary.csv
 ```
 
 ---
@@ -373,7 +292,7 @@ cat results/decode_dbo/summary.csv
 
 ```bash
 # 使用 nohup
-nohup ./scripts/benchmark_decode_dbo.sh > test.log 2>&1 &
+nohup ./scripts/benchmark_dbo.sh 50 4 on > test.log 2>&1 &
 
 # 查看进度
 tail -f test.log

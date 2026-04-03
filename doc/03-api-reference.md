@@ -404,24 +404,17 @@ class MicroBatchState(Enum):
 
 ### 5.2 可视化工具
 
-#### `visualize_dbo.py`
+#### `visualize_dbo_pipeline.py`
 
-生成 Prefill DBO 时间线图。
-
-**用法**:
-```bash
-python scripts/visualize_dbo.py <results_dir> \
-  --output <output.png> \
-  --max-layers 8
-```
-
-#### `plot_dbo_summary.py`
-
-生成综合总结图（6 个子图）。
+生成 Prefill DBO Pipeline 时间线图。
 
 **用法**:
 ```bash
-python scripts/plot_dbo_summary.py
+python scripts/visualize_dbo_pipeline.py \
+  --attn-timing results/prefill_dbo/timing_attention_local_b4_s128_t5.json \
+  --ffn-timing results/prefill_dbo/timing_ffn_local_b4_s128_t5.json \
+  --output results/prefill_dbo/dbo_pipeline_local_b4_s128_t5.png \
+  --start-layer 1 --num-layers 5
 ```
 
 ---

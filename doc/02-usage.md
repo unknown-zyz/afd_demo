@@ -186,58 +186,23 @@ cd /path/to/afd_demo
 - 日志: `results/prefill_dbo/benchmark_*.log`
 - JSON: `results/prefill_dbo/timing_*.json`
 
-### 4.2 Decode DBO 基准测试
-
-```bash
-./scripts/benchmark_decode_dbo.sh
-```
-
-**测试矩阵**:
-- Batch sizes: 2, 4, 8
-- Sequence lengths: 128, 512
-- DBO: ON vs OFF
-- 总共 12 个测试用例
-
-**输出**:
-- 日志: `results/decode_dbo/Qwen2-1.5B_batch*_seq*_dbo_*.log`
-- 汇总: `results/decode_dbo/summary.csv`
-
-### 4.3 网络延迟测量
-
-```bash
-python scripts/measure_comm_latency.py
-```
-
-**参数**:
-- `--size` - 传输数据大小（默认: 4096 floats）
-- `--iterations` - 测试次数（默认: 200）
-
-**输出**: `results/network_latency/latency_*.log`
-
 ---
 
 ## 5. 可视化
 
-### 5.1 DBO 时间线图
+### 5.1 DBO Pipeline 时间线图
 
 ```bash
-# 生成 Prefill DBO 时间线
-python scripts/visualize_dbo.py results/prefill_dbo/ \
-  --output results/prefill_dbo/timeline.png \
-  --max-layers 8
+# 生成 Prefill DBO Pipeline 时间线
+python scripts/visualize_dbo_pipeline.py \
+  --attn-timing results/prefill_dbo/timing_attention_local_b4_s128_t5.json \
+  --ffn-timing results/prefill_dbo/timing_ffn_local_b4_s128_t5.json \
+  --output results/prefill_dbo/dbo_pipeline_local_b4_s128_t5.png \
+  --start-layer 1 --num-layers 5
 ```
 
-**输入**: `timing_attention.json`, `timing_ffn.json`  
-**输出**: PNG 时间线图
-
-### 5.2 综合总结图
-
-```bash
-python scripts/plot_dbo_summary.py
-```
-
-**输入**: 所有 timing JSON 和 log 文件  
-**输出**: `results/dbo_summary.png` (6 个子图)
+**输入**: `timing_attention_*.json`, `timing_ffn_*.json`  
+**输出**: PNG Pipeline 时间线图
 
 ---
 

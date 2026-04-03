@@ -109,7 +109,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 **原因**: KV Cache 对象创建开销过大  
 **建议**: Prefill 启用 DBO，Decode 禁用 DBO（使用 `--no-dbo`）
 
-详细报告见 [results/reports/experiment_summary.md](results/reports/experiment_summary.md)。
+详细报告见 [results/experiments_qwen3/实验报告_Qwen3-30B-A3B.md](results/experiments_qwen3/实验报告_Qwen3-30B-A3B.md)。
 
 ## 🛠️ 运行脚本
 
@@ -125,13 +125,13 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 ./scripts/run_experiment.sh multinode 16 128 5     # Multinode DBO
 ./scripts/run_experiment.sh local 8 128 5 nodbo    # Serial baseline
 
-# 全量实验套件（batch/seq scaling + serial baselines）
-./scripts/run_all_experiments.sh local              # 仅本地
-./scripts/run_all_experiments.sh multinode           # 仅多机
-./scripts/run_all_experiments.sh all                 # 全部
+# 全量实验套件（Qwen3-30B-A3B）
+./scripts/run_qwen3_experiments.sh                  # 标准实验
+./scripts/run_qwen3_extended.sh                     # 扩展实验
 
 # 生成对比图表
 python scripts/plot_scaling_comparison.py
+python scripts/plot_experiment_results.py
 
 # P2P 传输时间测量
 python scripts/measure_transfer_time.py [master_addr] [master_port]
@@ -172,15 +172,13 @@ afd_demo/
 │   ├── test_local.sh             # 单机测试脚本
 │   ├── test_multinode.sh         # 多机测试脚本
 │   ├── run_experiment.sh         # 单次实验运行器（DBO/Serial）
-│   ├── run_all_experiments.sh    # 全量实验套件
+│   ├── run_qwen3_experiments.sh  # Qwen3-30B-A3B 标准实验
+│   ├── run_qwen3_extended.sh     # Qwen3-30B-A3B 扩展实验
 │   ├── benchmark_dbo.sh          # Prefill DBO 基准测试
-│   ├── benchmark_decode_dbo.sh   # Decode DBO 基准测试
-│   ├── batch_scaling_experiments.sh # 早期 batch scaling 脚本
 │   ├── profile_dbo_pipeline.sh   # DBO 时序 profiling
-│   ├── visualize_dbo.py          # Prefill DBO 基础可视化
 │   ├── visualize_dbo_pipeline.py # 4-lane 流水线 Gantt 图
+│   ├── plot_experiment_results.py# 实验结果图表
 │   ├── plot_scaling_comparison.py# 对比图表生成
-│   ├── plot_dbo_summary.py       # DBO 对比汇总图
 │   └── measure_transfer_time.py  # P2P 传输时间测量
 ├── doc/                          # 完整文档
 │   ├── 01-architecture.md        # 架构设计
@@ -188,14 +186,12 @@ afd_demo/
 │   ├── 03-api-reference.md       # API 参考
 │   └── 04-deployment.md          # 部署指南
 ├── results/                      # 实验结果和报告
-│   ├── prefill_dbo/              # Prefill DBO 测试结果
-│   │   ├── batch_scaling/        # Batch 扩展实验 (b4-b64)
-│   │   ├── seq_scaling/          # Seq 扩展实验 (s32-s512)
-│   │   ├── logs/                 # 实验日志
-│   │   └── archive/              # 旧实验结果归档
-│   ├── decode_dbo/               # Decode DBO 测试结果
-│   ├── network_latency/          # 网络延迟测试结果
-│   └── reports/                  # 综合分析报告
+│   ├── experiments_qwen3/        # Qwen3-30B-A3B 实验结果
+│   └── prefill_dbo/              # Prefill DBO 时序数据
+│       ├── batch_scaling/        # Batch 扩展实验 (b4-b64)
+│       ├── seq_scaling/          # Seq 扩展实验 (s32-s512)
+│       ├── logs/                 # 实验日志
+│       └── archive/              # 旧实验结果归档
 ├── config/                       # 模型配置文件
 └── requirements.txt              # Python 依赖
 ```
@@ -210,12 +206,9 @@ pytest tests/ -v
 ./scripts/benchmark_dbo.sh 50 4 on   # DBO ON
 ./scripts/benchmark_dbo.sh 50 4 off  # DBO OFF
 
-# Decode DBO 全面测试（12 个用例）
-./scripts/benchmark_decode_dbo.sh
-
 # 生成可视化
-python scripts/visualize_dbo.py results/prefill_dbo/
-python scripts/plot_dbo_summary.py
+python scripts/visualize_dbo_pipeline.py results/prefill_dbo/
+python scripts/plot_experiment_results.py
 ```
 
 ## 🔧 常用命令

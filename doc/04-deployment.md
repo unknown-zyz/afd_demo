@@ -454,4 +454,4 @@ nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader
 - [架构设计](01-architecture.md) - 系统架构和实现
 - [使用指南](02-usage.md) - 命令行参数和示例
 - [API 参考](03-api-reference.md) - 代码接口文档
-- [测试报告](../results/reports/) - 性能测试数据
+- [实验结果](../results/) - 性能测试数据

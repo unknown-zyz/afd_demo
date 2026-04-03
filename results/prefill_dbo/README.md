@@ -79,12 +79,7 @@ prefill_dbo/
 ### 使用自动化脚本
 ```bash
 # 运行所有实验
-./scripts/batch_scaling_experiments.sh all
-
-# 分阶段运行
-./scripts/batch_scaling_experiments.sh batch      # Phase 1
-./scripts/batch_scaling_experiments.sh seq        # Phase 2
-./scripts/batch_scaling_experiments.sh combined   # Phase 3
+./scripts/run_qwen3_experiments.sh
 ```
 
 ### 手动运行单个配置
@@ -122,9 +117,9 @@ python scripts/visualize_dbo_pipeline.py \
 
 ## 分析和报告
 
-实验完成后，将在 `results/reports/` 中生成：
-- `batch_scaling_summary.md` - 实验总结和性能分析
-- 对比图表: batch vs 延迟, 通信时间变化趋势等
+实验完成后：
+- 结果保存在 `results/experiments_qwen3/` 中
+- 包含实验总结、性能分析和对比图表
 
 ## 相关文档
 

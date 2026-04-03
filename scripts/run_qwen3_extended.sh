@@ -3,7 +3,7 @@
 # 1) Decode 大 batch 扩展 (256, 512, 1024)
 # 2) Prefill 多 micro-batch 实验 (num_micro_batches=2,3,4)
 #
-# Usage: ./scripts/run_q3_extended.sh [decode-large|prefill-multimb|all]
+# Usage: ./scripts/run_qwen3_extended.sh [decode-large|prefill-multimb|all]
 
 set -e
 cd "$(dirname "$0")/.."
@@ -13,7 +13,7 @@ PHASE="${1:-all}"
 MODEL="/data/Qwen/Qwen3-30B-A3B/"
 TOKENS_DECODE=20
 TOKENS_PREFILL=5
-BASE_DIR="results/experiments_q3"
+BASE_DIR="results/experiments_qwen3"
 DECODE_DIR="$BASE_DIR/decode"
 PREFILL_DIR="$BASE_DIR/prefill"
 TIMING_DIR="results/prefill_dbo"
@@ -178,7 +178,7 @@ run_prefill_experiment() {
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS_PREFILL" \
         --num-micro-batches "$NUM_MB" \
-        --timing --timing-suffix "q3_${SUFFIX}" \
+        --timing --timing-suffix "qwen3_${SUFFIX}" \
         --no-generate $DBO_FLAG \
         > "$FFN_LOG" 2>&1 &
     local FFN_PID=$!
@@ -207,7 +207,7 @@ run_prefill_experiment() {
         --max-new-tokens "$TOKENS_PREFILL" \
         --num-micro-batches "$NUM_MB" \
         --prompt "Hello world, this is a test prompt for scaling experiments." \
-        --timing --timing-suffix "q3_${SUFFIX}" \
+        --timing --timing-suffix "qwen3_${SUFFIX}" \
         --no-generate $DBO_FLAG \
         > "$ATTN_LOG" 2>&1
 
@@ -238,11 +238,11 @@ run_prefill_experiment() {
 
     # Pipeline 可视化（仅 DBO 且有 serial 数据时）
     if [ "$DBO" = "on" ]; then
-        local SERIAL_TIMING="$TIMING_DIR/timing_attention_q3_serial_b${BATCH}_s${SEQ}${MB_SUFFIX}.json"
+        local SERIAL_TIMING="$TIMING_DIR/timing_attention_qwen3_serial_b${BATCH}_s${SEQ}${MB_SUFFIX}.json"
         if [ -f "$SERIAL_TIMING" ]; then
             python scripts/visualize_dbo_pipeline.py \
-                --attention-json "$TIMING_DIR/timing_attention_q3_${SUFFIX}.json" \
-                --ffn-json "$TIMING_DIR/timing_ffn_q3_${SUFFIX}.json" \
+                --attention-json "$TIMING_DIR/timing_attention_qwen3_${SUFFIX}.json" \
+                --ffn-json "$TIMING_DIR/timing_ffn_qwen3_${SUFFIX}.json" \
                 --output "$PREFILL_DIR/pipeline_${SUFFIX}.png" \
                 --skip-l0 --start-layer 1 --end-layer 4 \
                 --serial-timing "$SERIAL_TIMING" \

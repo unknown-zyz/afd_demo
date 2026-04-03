@@ -3,7 +3,7 @@
 # 在单机 4×V100-32GB 上测试 Prefill/Decode 阶段 DBO 开启/关闭的效果
 #
 # Usage:
-#   ./scripts/run_q3_experiments.sh [phase]
+#   ./scripts/run_qwen3_experiments.sh [phase]
 #   phase: prefill-batch | prefill-seq | decode | all (默认 all)
 #
 # 模型: Qwen3-30B-A3B (MoE, 128 experts, 8 active/token, 48 layers)
@@ -17,7 +17,7 @@ PHASE="${1:-all}"
 MODEL="/data/Qwen/Qwen3-30B-A3B/"
 TOKENS_PREFILL=5
 TOKENS_DECODE=20
-BASE_DIR="results/experiments_q3"
+BASE_DIR="results/experiments_qwen3"
 PREFILL_DIR="$BASE_DIR/prefill"
 DECODE_DIR="$BASE_DIR/decode"
 TIMING_DIR="results/prefill_dbo"
@@ -86,7 +86,7 @@ run_prefill_experiment() {
         --batch-size "$BATCH" \
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS_PREFILL" \
-        --timing --timing-suffix "q3_${SUFFIX}" \
+        --timing --timing-suffix "qwen3_${SUFFIX}" \
         --no-generate $DBO_FLAG \
         > "$FFN_LOG" 2>&1 &
     local FFN_PID=$!
@@ -114,7 +114,7 @@ run_prefill_experiment() {
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS_PREFILL" \
         --prompt "Hello world, this is a test prompt for scaling experiments." \
-        --timing --timing-suffix "q3_${SUFFIX}" \
+        --timing --timing-suffix "qwen3_${SUFFIX}" \
         --no-generate $DBO_FLAG \
         > "$ATTN_LOG" 2>&1
 
@@ -150,11 +150,11 @@ run_prefill_experiment() {
 
     # DBO 模式下生成 pipeline 可视化
     if [ "$DBO" = "on" ]; then
-        local ATTN_TIMING="$TIMING_DIR/timing_attention_q3_${SUFFIX}.json"
-        local FFN_TIMING="$TIMING_DIR/timing_ffn_q3_${SUFFIX}.json"
+        local ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_${SUFFIX}.json"
+        local FFN_TIMING="$TIMING_DIR/timing_ffn_qwen3_${SUFFIX}.json"
         # 查找对应的 serial timing 文件
         local SERIAL_SUFFIX="serial_b${BATCH}_s${SEQ}"
-        local SERIAL_ATTN_TIMING="$TIMING_DIR/timing_attention_q3_${SERIAL_SUFFIX}.json"
+        local SERIAL_ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_${SERIAL_SUFFIX}.json"
         local SERIAL_FLAG=""
         if [ -f "$SERIAL_ATTN_TIMING" ]; then
             SERIAL_FLAG="--serial-timing $SERIAL_ATTN_TIMING"
