@@ -104,6 +104,9 @@ def parse_args():
                         help="Test prompt")
     parser.add_argument("--timing", action="store_true",
                         help="Enable detailed per-MB timing (saves to results/)")
+    parser.add_argument("--timing-mode", type=str, choices=["cuda_events", "sync"],
+                        default="cuda_events",
+                        help="Timing method: cuda_events (zero-overhead, default) or sync (legacy, breaks pipeline)")
     parser.add_argument("--timing-suffix", type=str, default="",
                         help="Suffix for timing file (e.g., 'local_b4_t5' -> timing_attention_local_b4_t5.json)")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -249,6 +252,7 @@ def run_inference_demo(args):
         scheduler = AsyncPipelineScheduler(
             model=model, num_micro_batches=args.num_micro_batches,
             use_cuda_streams=True, enable_timing=args.timing,
+            timing_mode=args.timing_mode,
         )
         scheduler_name = "DBO"
     else:

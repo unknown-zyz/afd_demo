@@ -186,6 +186,7 @@ class AsyncPipelineScheduler:
         num_micro_batches: int = 2,
         use_cuda_streams: bool = True,
         enable_timing: bool = False,
+        timing_mode: str = "cuda_events",
     ):
         """
         Initialize async scheduler.
@@ -195,12 +196,14 @@ class AsyncPipelineScheduler:
             num_micro_batches: Number of micro-batches (2 for standard DBO)
             use_cuda_streams: Whether to use separate CUDA streams
             enable_timing: Whether to record detailed per-MB timing
+            timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
         """
         self.model = model
         self.ctx = get_distributed_context()
         self.num_micro_batches = num_micro_batches
         self.use_cuda_streams = use_cuda_streams
         self.enable_timing = enable_timing
+        self.timing_mode = timing_mode
         
         self.mb_manager = MicroBatchManager(
             num_micro_batches=num_micro_batches,
@@ -328,6 +331,7 @@ class AsyncPipelineScheduler:
                 node=node_name,
                 num_layers=self.model.num_layers,
                 num_micro_batches=self.num_micro_batches,
+                mode=self.timing_mode,
             )
             # Initialize send transfer monitor for real transfer time measurement
             self._send_monitor = SendTransferMonitor(poll_interval=0.0001)
@@ -396,9 +400,9 @@ class AsyncPipelineScheduler:
             packed_list = []
             
             for mb_idx, mb in enumerate(micro_batches):
-                # Sync before measurement to drain prior GPU work (e.g. pending isend)
+                # CUDA Events: mark_start/mark_end (zero overhead, no sync)
                 if tracker:
-                    torch.cuda.synchronize()
+                    tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
                 
                 # Compute attention
                 compute_start = time.perf_counter()
@@ -415,14 +419,9 @@ class AsyncPipelineScheduler:
                 packed_list.append(packed)
                 
                 if tracker:
-                    torch.cuda.synchronize()
+                    tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
-                
-                # Record timing
-                if tracker:
-                    tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
-                                        compute_start, compute_end)
                 
                 # Start async send immediately after compute
                 send_start = time.perf_counter()
@@ -539,9 +538,9 @@ class AsyncPipelineScheduler:
                     tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
                                         recv_wait_start, recv_wait_end)
                 
-                # Sync before measurement to drain prior GPU work (e.g. pending isend)
+                # CUDA Events: mark_start/mark_end (zero overhead, no sync)
                 if tracker:
-                    torch.cuda.synchronize()
+                    tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 
                 # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
@@ -557,40 +556,38 @@ class AsyncPipelineScheduler:
                 output = output.contiguous().clone()
                 output_list.append(output)
                 if tracker:
-                    torch.cuda.synchronize()
+                    tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
                 
-                if tracker:
-                    tracker.record_event(EventType.FFN_COMPUTE, layer_idx, mb_idx,
-                                        compute_start, compute_end)
-                    if stage_timing is not None:
-                        if stage_timing.router_s > 0:
-                            tracker.record_event(
-                                EventType.MOE_ROUTER,
-                                layer_idx,
-                                mb_idx,
-                                compute_start,
-                                compute_start + stage_timing.router_s,
-                            )
-                        if stage_timing.experts_s > 0:
-                            experts_start = compute_start + stage_timing.router_s
-                            tracker.record_event(
-                                EventType.MOE_EXPERTS,
-                                layer_idx,
-                                mb_idx,
-                                experts_start,
-                                experts_start + stage_timing.experts_s,
-                            )
-                        if stage_timing.shared_or_dense_s > 0:
-                            shared_start = compute_start + stage_timing.router_s + stage_timing.experts_s
-                            tracker.record_event(
-                                EventType.MOE_SHARED_OR_DENSE,
-                                layer_idx,
-                                mb_idx,
-                                shared_start,
-                                shared_start + stage_timing.shared_or_dense_s,
-                            )
+                # MoE sub-stage timing (uses CPU timestamps from ffn_worker)
+                if tracker and stage_timing is not None:
+                    if stage_timing.router_s > 0:
+                        tracker.record_event(
+                            EventType.MOE_ROUTER,
+                            layer_idx,
+                            mb_idx,
+                            compute_start,
+                            compute_start + stage_timing.router_s,
+                        )
+                    if stage_timing.experts_s > 0:
+                        experts_start = compute_start + stage_timing.router_s
+                        tracker.record_event(
+                            EventType.MOE_EXPERTS,
+                            layer_idx,
+                            mb_idx,
+                            experts_start,
+                            experts_start + stage_timing.experts_s,
+                        )
+                    if stage_timing.shared_or_dense_s > 0:
+                        shared_start = compute_start + stage_timing.router_s + stage_timing.experts_s
+                        tracker.record_event(
+                            EventType.MOE_SHARED_OR_DENSE,
+                            layer_idx,
+                            mb_idx,
+                            shared_start,
+                            shared_start + stage_timing.shared_or_dense_s,
+                        )
                 
                 # Send immediately (async) - next MB's compute overlaps with this send
                 send_start = time.perf_counter()
