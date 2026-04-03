@@ -188,7 +188,7 @@ class DecodeDBOScheduler:
             dist.send(packed, dst=self.ctx.peer_rank, tag=tag_a2f)
             send_end = time.perf_counter()
             if tracker:
-                tracker.record_event(EventType.SEND_START, layer_idx, 0, send_start, send_end)
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, 0, send_start, send_end)
             self.stats.a2f_comm_time += send_end - send_start
 
             # Receive full batch from FFN
@@ -253,7 +253,7 @@ class DecodeDBOScheduler:
             dist.send(output, dst=self.ctx.peer_rank, tag=tag_f2a)
             send_end = time.perf_counter()
             if tracker:
-                tracker.record_event(EventType.SEND_START, layer_idx, 0, send_start, send_end)
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, 0, send_start, send_end)
             self.stats.f2a_comm_time += send_end - send_start
             self.stats.comm_time += (recv_end - recv_start) + (send_end - send_start)
 
