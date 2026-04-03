@@ -97,24 +97,24 @@ ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 # 步骤 1: 在远程机器启动 FFN 节点
 ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 cd /path/to/afd_demo
-./scripts/run_ffn_node.sh <master_addr> <master_port>
+./scripts/run_node.sh ffn <master_addr> <master_port>
 
 # 步骤 2: 在本地机器启动 Attention 节点
-./scripts/run_attn_node.sh <master_addr> <master_port> [options]
+./scripts/run_node.sh attention <master_addr> <master_port> [options]
 ```
 
 **示例**:
 ```bash
 # 远程机器 (FFN 节点)
-./scripts/run_ffn_node.sh 10.244.64.179 29500
+./scripts/run_node.sh ffn 10.244.64.179 29500
 
 # 本地机器 (Attention 节点)
-./scripts/run_attn_node.sh 10.244.64.179 29500 \
+./scripts/run_node.sh attention 10.244.64.179 29500 \
   --prompt "Hello, how are you?" \
   --max-new-tokens 20
 
 # 禁用 DBO（仅 AF 分离）
-./scripts/run_attn_node.sh 10.244.64.179 29500 \
+./scripts/run_node.sh attention 10.244.64.179 29500 \
   --no-dbo --prompt "Hello"
 ```
 
@@ -167,19 +167,19 @@ cd /path/to/afd_demo
 ### 4.1 Prefill DBO 基准测试
 
 ```bash
-./scripts/benchmark_dbo.sh [max_tokens] [batch_size] [dbo_mode]
+./scripts/test_local.sh [max_tokens] [batch_size] [--timing] [--no-dbo]
 ```
 
 **参数**:
-- `max_tokens` - 生成 token 数（默认: 30）
+- `max_tokens` - 生成 token 数（默认: 5）
 - `batch_size` - 批大小（默认: 1）
-- `dbo_mode` - `on` 或 `off`（默认: on）
+- `--timing` - 启用计时统计
+- `--no-dbo` - 禁用 DBO
 
 **示例**:
 ```bash
-./scripts/benchmark_dbo.sh                 # 默认配置
-./scripts/benchmark_dbo.sh 50 2 on         # DBO ON
-./scripts/benchmark_dbo.sh 50 2 off        # DBO OFF
+./scripts/test_local.sh 50 2 --timing          # DBO ON + 计时
+./scripts/test_local.sh 50 2 --timing --no-dbo # DBO OFF + 计时
 ```
 
 **输出**:
@@ -338,11 +338,11 @@ htop
 ### 9.1 对比 DBO 效果
 
 ```bash
-# DBO ON
-./scripts/benchmark_dbo.sh 50 4 on
+# DBO ON + 计时
+./scripts/test_local.sh 50 4 --timing
 
-# DBO OFF  
-./scripts/benchmark_dbo.sh 50 4 off
+# DBO OFF + 计时
+./scripts/test_local.sh 50 4 --timing --no-dbo
 
 # 对比结果
 diff results/prefill_dbo/*_on.log results/prefill_dbo/*_off.log

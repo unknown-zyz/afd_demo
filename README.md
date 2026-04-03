@@ -121,13 +121,15 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
 ./scripts/test_multinode.sh [max_tokens] [batch_size]
 
 # 单次实验（支持 DBO/Serial，本地/多机）
-./scripts/run_experiment.sh local 8 128 5         # Local DBO, batch=8, seq=128
-./scripts/run_experiment.sh multinode 16 128 5     # Multinode DBO
-./scripts/run_experiment.sh local 8 128 5 nodbo    # Serial baseline
+./scripts/run_single.sh local 8 128 --tokens 5          # Local DBO, batch=8, seq=128
+./scripts/run_single.sh multinode 16 128 --tokens 5     # Multinode DBO
+./scripts/run_single.sh local 8 128 --no-dbo            # Serial baseline
+./scripts/run_single.sh local 4 128 --visualize          # 带可视化 profiling
 
 # 全量实验套件（Qwen3-30B-A3B）
-./scripts/run_qwen3_experiments.sh                  # 标准实验
-./scripts/run_qwen3_extended.sh                     # 扩展实验
+./scripts/run_experiments.sh all                          # 所有实验
+./scripts/run_experiments.sh decode                       # Decode 实验
+./scripts/run_experiments.sh prefill-batch                # Prefill batch scaling
 
 # 生成对比图表
 python scripts/plot_scaling_comparison.py
@@ -167,15 +169,11 @@ afd_demo/
 │   ├── test_correctness.py       # 正确性验证测试
 │   └── test_pipeline.py          # 调度器测试
 ├── scripts/                      # 运行和测试脚本
-│   ├── run_attn_node.sh          # 启动 Attention 节点
-│   ├── run_ffn_node.sh           # 启动 FFN 节点
-│   ├── test_local.sh             # 单机测试脚本
+│   ├── run_node.sh               # 启动单个节点（attention/ffn）
+│   ├── test_local.sh             # 单机测试脚本（支持 --timing）
 │   ├── test_multinode.sh         # 多机测试脚本
-│   ├── run_experiment.sh         # 单次实验运行器（DBO/Serial）
-│   ├── run_qwen3_experiments.sh  # Qwen3-30B-A3B 标准实验
-│   ├── run_qwen3_extended.sh     # Qwen3-30B-A3B 扩展实验
-│   ├── benchmark_dbo.sh          # Prefill DBO 基准测试
-│   ├── profile_dbo_pipeline.sh   # DBO 时序 profiling
+│   ├── run_single.sh             # 单次实验运行器（支持 --visualize）
+│   ├── run_experiments.sh        # 全量实验套件
 │   ├── visualize_dbo_pipeline.py # 4-lane 流水线 Gantt 图
 │   ├── plot_experiment_results.py# 实验结果图表
 │   ├── plot_scaling_comparison.py# 对比图表生成
@@ -202,9 +200,9 @@ afd_demo/
 # 单元测试
 pytest tests/ -v
 
-# 对比 DBO 效果
-./scripts/benchmark_dbo.sh 50 4 on   # DBO ON
-./scripts/benchmark_dbo.sh 50 4 off  # DBO OFF
+# 对比 DBO 效果（使用 --timing 启用计时统计）
+./scripts/test_local.sh 50 4 --timing          # DBO ON
+./scripts/test_local.sh 50 4 --timing --no-dbo # DBO OFF
 
 # 生成可视化
 python scripts/visualize_dbo_pipeline.py results/prefill_dbo/
@@ -221,7 +219,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m src.main \
   --local-test --no-dbo --prompt "Hello"
 
 # 多机
-./scripts/run_attn_node.sh 10.244.64.179 29500 --no-dbo
+./scripts/run_node.sh attention 10.244.64.179 29500 --no-dbo
 ```
 
 ### 调试模式
@@ -265,10 +263,10 @@ ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 # 步骤 1: 在远程机器启动 FFN 节点
 ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 cd /path/to/afd_demo && source venv/bin/activate
-./scripts/run_ffn_node.sh 10.244.64.179 29500
+./scripts/run_node.sh ffn 10.244.64.179 29500
 
 # 步骤 2: 在本地启动 Attention 节点
-./scripts/run_attn_node.sh 10.244.64.179 29500 --prompt "Hello"
+./scripts/run_node.sh attention 10.244.64.179 29500 --prompt "Hello"
 ```
 
 详见 [部署指南](doc/04-deployment.md#4-多机部署)。

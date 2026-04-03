@@ -13,7 +13,7 @@ source venv/bin/activate
 
 MAX_TOKENS="${1:-3}"
 BATCH_SIZE="${2:-1}"
-MODEL_PATH="/data/Qwen/Qwen3-30B-A3B/"
+MODEL_PATH="${MODEL_PATH:-"/data/Qwen/Qwen3-30B-A3B/"}"
 
 # 网络配置
 LOCAL_IP="10.244.64.179"

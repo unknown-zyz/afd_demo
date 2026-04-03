@@ -196,10 +196,10 @@ nvidia-smi
 ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 cd /path/to/afd_demo
 source venv/bin/activate
-./scripts/run_ffn_node.sh 10.244.64.179 29500
+./scripts/run_node.sh ffn 10.244.64.179 29500
 
 # 步骤 2: 在本地机器启动 Attention 节点
-./scripts/run_attn_node.sh 10.244.64.179 29500 \
+./scripts/run_node.sh attention 10.244.64.179 29500 \
   --prompt "Hello" --max-new-tokens 20
 ```
 

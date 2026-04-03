@@ -21,7 +21,7 @@ mkdir -p results/prefill_dbo/seq_scaling/{s32,s64,s128,s256,s512}
 #### 方式 1: 使用自动化脚本 (推荐)
 ```bash
 # 运行所有实验
-./scripts/run_qwen3_experiments.sh
+./scripts/run_experiments.sh all
 ```
 
 #### 方式 2: 手动运行 (逐个测试，便于调试)

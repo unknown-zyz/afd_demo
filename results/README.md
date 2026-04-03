@@ -78,8 +78,8 @@
 
 ```bash
 # Prefill DBO
-./scripts/benchmark_dbo.sh 50 4 on
-./scripts/benchmark_dbo.sh 50 4 off
+./scripts/test_local.sh 50 4 --timing          # DBO ON
+./scripts/test_local.sh 50 4 --timing --no-dbo # DBO OFF
 
 # Decode DBO
 ./scripts/benchmark_decode_dbo.sh
