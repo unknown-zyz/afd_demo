@@ -77,11 +77,17 @@ class DecodeDBOScheduler:
         model,  # DisaggregatedQwenModel
         num_micro_batches: int = 2,
         enable_timing: bool = False,
+        timing_mode: str = "cuda_events",
     ):
         self.model = model
         self.ctx = get_distributed_context()
         self.enable_timing = enable_timing
+        self.timing_mode = timing_mode
         self.stats = DecodeDBOStats()
+        self._timing_data: Optional[PipelineTiming] = None
+        # Track timing on step 1 (skip step 0 warmup)
+        self._timing_step = 1
+        self._current_step = 0
         logger.debug("DecodeDBOScheduler initialized (full-batch mode)")
 
     def _get_tag(self, layer_idx: int) -> int:
@@ -106,14 +112,29 @@ class DecodeDBOScheduler:
 
         self.stats = DecodeDBOStats(num_tokens=batch_size)
 
+        # Create per-step timing tracker (track one representative step)
+        should_track = self.enable_timing and self._current_step == self._timing_step
+        tracker = None
+        if should_track:
+            tracker = TimingTracker(
+                node=self.ctx.role,
+                num_layers=self.model.num_layers,
+                num_micro_batches=1,
+                mode=self.timing_mode,
+            )
+
         if self.ctx.is_attention_node:
-            result = self._run_attention_decode(input_ids, position_ids, kv_cache)
+            result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
         else:
-            self._run_ffn_decode(batch_size)
+            self._run_ffn_decode(batch_size, tracker)
             result = None
+
+        if should_track and tracker is not None:
+            self._timing_data = tracker.finish()
 
         self.stats.total_time = time.perf_counter() - start_time
         self.stats.num_layers = self.model.num_layers
+        self._current_step += 1
         return result
 
     def _run_attention_decode(
@@ -121,6 +142,7 @@ class DecodeDBOScheduler:
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         kv_cache,
+        tracker: Optional[TimingTracker] = None,
     ) -> torch.Tensor:
         """
         Attention node: full-batch attention + full-batch communication.
@@ -140,6 +162,8 @@ class DecodeDBOScheduler:
 
         for layer_idx in range(num_layers):
             # Full-batch attention (KV cache updated in-place)
+            if tracker:
+                tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, 0)
             compute_start = time.perf_counter()
             attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
                 layer_idx=layer_idx,
@@ -152,6 +176,8 @@ class DecodeDBOScheduler:
             )
             packed = (attn_output + residual).contiguous()
             compute_end = time.perf_counter()
+            if tracker:
+                tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, 0)
             compute_time = compute_end - compute_start
             self.stats.compute_time += compute_time
             self.stats.attn_compute_time += compute_time
@@ -161,6 +187,8 @@ class DecodeDBOScheduler:
             send_start = time.perf_counter()
             dist.send(packed, dst=self.ctx.peer_rank, tag=tag_a2f)
             send_end = time.perf_counter()
+            if tracker:
+                tracker.record_event(EventType.SEND_START, layer_idx, 0, send_start, send_end)
             self.stats.a2f_comm_time += send_end - send_start
 
             # Receive full batch from FFN
@@ -172,12 +200,14 @@ class DecodeDBOScheduler:
             )
             dist.recv(hidden_states, src=self.ctx.peer_rank, tag=tag_f2a)
             recv_end = time.perf_counter()
+            if tracker:
+                tracker.record_event(EventType.RECV_WAIT, layer_idx, 0, recv_start, recv_end)
             self.stats.f2a_comm_time += recv_end - recv_start
             self.stats.comm_time += (send_end - send_start) + (recv_end - recv_start)
 
         return self.model.attention_worker.forward_lm_head(hidden_states)
 
-    def _run_ffn_decode(self, batch_size: int) -> None:
+    def _run_ffn_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
         """
         FFN node: receive full batch → compute FFN → send back.
         """
@@ -195,9 +225,13 @@ class DecodeDBOScheduler:
             )
             dist.recv(hidden_states, src=self.ctx.peer_rank, tag=tag_a2f)
             recv_end = time.perf_counter()
+            if tracker:
+                tracker.record_event(EventType.RECV_WAIT, layer_idx, 0, recv_start, recv_end)
             self.stats.a2f_comm_time += recv_end - recv_start
 
             # Full-batch FFN (single kernel launch)
+            if tracker:
+                tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, 0)
             compute_start = time.perf_counter()
             output = self.model.ffn_worker.forward_ffn_layer(
                 layer_idx=layer_idx,
@@ -207,6 +241,8 @@ class DecodeDBOScheduler:
                 output = output[0]
             output = output.contiguous()
             compute_end = time.perf_counter()
+            if tracker:
+                tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, 0)
             compute_time = compute_end - compute_start
             self.stats.compute_time += compute_time
             self.stats.ffn_compute_time += compute_time
@@ -216,9 +252,15 @@ class DecodeDBOScheduler:
             send_start = time.perf_counter()
             dist.send(output, dst=self.ctx.peer_rank, tag=tag_f2a)
             send_end = time.perf_counter()
+            if tracker:
+                tracker.record_event(EventType.SEND_START, layer_idx, 0, send_start, send_end)
             self.stats.f2a_comm_time += send_end - send_start
             self.stats.comm_time += (recv_end - recv_start) + (send_end - send_start)
 
     def get_stats(self) -> DecodeDBOStats:
         """Get statistics from last run."""
         return self.stats
+
+    def get_timing_data(self) -> Optional[PipelineTiming]:
+        """Get per-layer timing data (tracked for one representative decode step)."""
+        return self._timing_data

@@ -31,7 +31,7 @@ PHASE="${1:-all}"
 MODEL="${MODEL_PATH:-"/data/Qwen/Qwen3-30B-A3B/"}"
 TOKENS_PREFILL=5
 TOKENS_DECODE=20
-BASE_DIR="results/experiments_qwen3"
+BASE_DIR="results/experiments_qwen3_v2"
 PREFILL_DIR="$BASE_DIR/prefill"
 DECODE_DIR="$BASE_DIR/decode"
 TIMING_DIR="results/prefill_dbo"
@@ -232,6 +232,7 @@ run_decode_experiment() {
         --batch-size "$BATCH" \
         --max-new-tokens "$TOKENS_DECODE" \
         --greedy \
+        --timing --timing-suffix "qwen3_decode_${SUFFIX}" \
         $DBO_FLAG \
         > "$FFN_LOG" 2>&1 &
     local FFN_PID=$!
@@ -259,6 +260,7 @@ run_decode_experiment() {
         --max-new-tokens "$TOKENS_DECODE" \
         --prompt "$PROMPT" \
         --greedy \
+        --timing --timing-suffix "qwen3_decode_${SUFFIX}" \
         $DBO_FLAG \
         > "$ATTN_LOG" 2>&1
 
@@ -291,6 +293,27 @@ run_decode_experiment() {
     TOK_S=$(grep -oP '\(\K[0-9.]+(?= tok/s)' "$ATTN_LOG" || echo "N/A")
     log_ok "Decode $SUFFIX: ${TIME_MS}ms, ${TOK_S} tok/s"
     echo "$SUFFIX,decode,$BATCH,$SEQ,$DBO,$TIME_MS,$TOK_S" >> "$BASE_DIR/summary.csv"
+
+    # DBO 模式下生成 pipeline 可视化
+    if [ "$DBO" = "on" ]; then
+        local ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_decode_${SUFFIX}.json"
+        local FFN_TIMING="$TIMING_DIR/timing_ffn_qwen3_decode_${SUFFIX}.json"
+        local SERIAL_SUFFIX="serial_b${BATCH}_s${SEQ}"
+        local SERIAL_ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_decode_${SERIAL_SUFFIX}.json"
+        local SERIAL_FLAG=""
+        if [ -f "$SERIAL_ATTN_TIMING" ]; then
+            SERIAL_FLAG="--serial-timing $SERIAL_ATTN_TIMING"
+        fi
+        if [ -f "$ATTN_TIMING" ] && [ -f "$FFN_TIMING" ]; then
+            python scripts/visualize_dbo_pipeline.py \
+                --attn-timing "$ATTN_TIMING" \
+                --ffn-timing "$FFN_TIMING" \
+                --output "$DECODE_DIR/pipeline_${SUFFIX}.png" \
+                --start-layer 1 --num-layers 4 $SERIAL_FLAG 2>/dev/null && \
+                log_ok "Pipeline 图: pipeline_${SUFFIX}.png" || \
+                log_warn "可视化生成失败"
+        fi
+    fi
 
     cleanup_gpu
     return 0
