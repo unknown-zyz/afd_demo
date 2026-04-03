@@ -213,7 +213,11 @@ class TimingTracker:
                 self.mode = "sync"
     
     def mark_start(self, event_type: EventType, layer_idx: int, mb_idx: int):
-        """Record start of an event. In cuda_events mode, no sync needed."""
+        """Record start of a GPU compute event.
+        
+        - cuda_events mode: records CUDA event marker (~1μs, no pipeline disruption)
+        - sync mode: calls cuda.synchronize() + perf_counter (breaks pipeline)
+        """
         if self.mode == "cuda_events":
             start_event = torch.cuda.Event(enable_timing=True)
             end_event = torch.cuda.Event(enable_timing=True)
@@ -221,10 +225,17 @@ class TimingTracker:
             self._cuda_event_records.append(
                 (event_type, layer_idx, mb_idx, start_event, end_event)
             )
-        # sync mode: do nothing here, caller handles perf_counter
+        else:
+            # sync mode: synchronize to drain GPU pipeline, then record CPU time
+            torch.cuda.synchronize()
+            self._sync_start_time = time.perf_counter()
     
     def mark_end(self, event_type: EventType, layer_idx: int, mb_idx: int):
-        """Record end of an event. In cuda_events mode, no sync needed."""
+        """Record end of a GPU compute event.
+        
+        - cuda_events mode: records CUDA event marker (~1μs, no pipeline disruption)
+        - sync mode: calls cuda.synchronize() + perf_counter, records event immediately
+        """
         if self.mode == "cuda_events":
             # Find the matching record (last one with same type/layer/mb)
             for i in range(len(self._cuda_event_records) - 1, -1, -1):
@@ -232,6 +243,12 @@ class TimingTracker:
                 if rec[0] == event_type and rec[1] == layer_idx and rec[2] == mb_idx:
                     rec[3 + 1].record()  # end_event.record()
                     break
+        else:
+            # sync mode: synchronize, record CPU time, add event immediately
+            torch.cuda.synchronize()
+            end_time = time.perf_counter()
+            self.record_event(event_type, layer_idx, mb_idx,
+                            self._sync_start_time, end_time)
     
     def record_event(self, event_type: EventType, layer_idx: int, mb_idx: int,
                      start_time: float, end_time: float):

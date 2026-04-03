@@ -186,6 +186,7 @@ class AsyncPipelineScheduler:
         num_micro_batches: int = 2,
         use_cuda_streams: bool = True,
         enable_timing: bool = False,
+        timing_mode: str = "cuda_events",
     ):
         """
         Initialize async scheduler.
@@ -195,12 +196,14 @@ class AsyncPipelineScheduler:
             num_micro_batches: Number of micro-batches (2 for standard DBO)
             use_cuda_streams: Whether to use separate CUDA streams
             enable_timing: Whether to record detailed per-MB timing
+            timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
         """
         self.model = model
         self.ctx = get_distributed_context()
         self.num_micro_batches = num_micro_batches
         self.use_cuda_streams = use_cuda_streams
         self.enable_timing = enable_timing
+        self.timing_mode = timing_mode
         
         self.mb_manager = MicroBatchManager(
             num_micro_batches=num_micro_batches,
@@ -328,6 +331,7 @@ class AsyncPipelineScheduler:
                 node=node_name,
                 num_layers=self.model.num_layers,
                 num_micro_batches=self.num_micro_batches,
+                mode=self.timing_mode,
             )
             # Initialize send transfer monitor for real transfer time measurement
             self._send_monitor = SendTransferMonitor(poll_interval=0.0001)
