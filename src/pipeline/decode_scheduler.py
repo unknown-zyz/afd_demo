@@ -20,6 +20,7 @@ import torch.distributed as dist
 
 from ..distributed import get_distributed_context
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
+from .async_scheduler import SendTransferMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,8 @@ class DecodeDBOScheduler:
         # Track timing on step 1 (skip step 0 warmup)
         self._timing_step = 1
         self._current_step = 0
+        # Send monitor for accurate async send timing
+        self._send_monitor: Optional[SendTransferMonitor] = None
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
         )
@@ -135,6 +138,9 @@ class DecodeDBOScheduler:
                 num_micro_batches=actual_num_mb,
                 mode=self.timing_mode,
             )
+            self._send_monitor = SendTransferMonitor(poll_interval=0.0001)
+        else:
+            self._send_monitor = None
 
         if self.ctx.is_attention_node:
             result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
@@ -251,20 +257,18 @@ class DecodeDBOScheduler:
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "a2f")
                 handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append((handle, send_start, mb_idx))
+                send_handles.append(handle)
+                if self._send_monitor:
+                    self._send_monitor.start_monitoring(
+                        handle, send_start, layer_idx, mb_idx, "a2f")
 
             # Reconstruct full KV cache for this layer from all MB updates
             cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
             cache_layer.values = torch.cat(mb_updated_values, dim=0)
 
             # Wait for all sends
-            for handle, send_start, mb_idx in send_handles:
+            for handle in send_handles:
                 handle.wait()
-                send_end = time.perf_counter()
-                if tracker:
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
-                self.stats.a2f_comm_time += send_end - send_start
 
             # Receive micro-batch results from FFN
             recv_chunks = []
@@ -284,6 +288,12 @@ class DecodeDBOScheduler:
                 self.stats.f2a_comm_time += recv_end - recv_start
 
             hidden_states = torch.cat(recv_chunks, dim=0)
+
+        # Collect send monitor results for accurate timing
+        if self._send_monitor and tracker:
+            for layer_idx, mb_idx, direction, start, end in self._send_monitor.collect_results():
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx, start, end)
+                self.stats.a2f_comm_time += end - start
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
         return self.model.attention_worker.forward_lm_head(hidden_states)
@@ -356,16 +366,20 @@ class DecodeDBOScheduler:
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 send_start = time.perf_counter()
                 handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append((handle, send_start, mb_idx))
+                send_handles.append(handle)
+                if self._send_monitor:
+                    self._send_monitor.start_monitoring(
+                        handle, send_start, layer_idx, mb_idx, "f2a")
 
             # Wait for all sends to complete
-            for handle, send_start, mb_idx in send_handles:
+            for handle in send_handles:
                 handle.wait()
-                send_end = time.perf_counter()
-                if tracker:
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
-                self.stats.f2a_comm_time += send_end - send_start
+
+        # Collect send monitor results for accurate timing
+        if self._send_monitor and tracker:
+            for layer_idx, mb_idx, direction, start, end in self._send_monitor.collect_results():
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx, start, end)
+                self.stats.f2a_comm_time += end - start
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
 
