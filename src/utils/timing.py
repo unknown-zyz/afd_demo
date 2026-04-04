@@ -8,11 +8,12 @@ Records per-micro-batch timing for each stage:
 - Recv wait
 
 Supports two timing modes:
-- "cuda_events" (default): Uses CUDA Events for zero-overhead GPU timing.
-  event.record() inserts stream markers without blocking — no pipeline disruption.
-  Times are collected once at pipeline end via a single synchronize().
-- "sync": Legacy mode using cuda.synchronize() + time.perf_counter().
-  Accurate per-op timing but breaks GPU pipeline parallelism (~17% overhead).
+- "cuda_events" (default): Uses current_stream().synchronize() + perf_counter.
+  Stream-level sync only blocks the default compute stream (not NCCL streams),
+  preserving DBO overlap while giving consistent CPU timestamps for all events.
+  This ensures compute and communication events share a single timeline.
+- "sync": Legacy mode using torch.cuda.synchronize() (device-level) + perf_counter.
+  Syncs ALL streams including NCCL — breaks DBO overlap. For debugging only.
 
 Outputs JSON timeline data for visualization.
 """
@@ -20,7 +21,7 @@ Outputs JSON timeline data for visualization.
 import json
 import time
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any
 from enum import Enum
 
 import torch
@@ -160,10 +161,12 @@ class TimingTracker:
     Tracker for recording pipeline timing events.
     
     Supports two modes:
-    - "cuda_events" (default): Zero-overhead CUDA Event-based timing.
-      event.record() is ~1μs and doesn't block GPU pipeline.
-      All times collected at pipeline end via single synchronize().
-    - "sync": Legacy sync + perf_counter mode (breaks pipeline).
+    - "cuda_events" (default): Stream-level sync + CPU timestamps.
+      current_stream().synchronize() only blocks the default compute stream,
+      not NCCL streams, so DBO overlap is preserved. All events use CPU
+      perf_counter for a single consistent timeline.
+    - "sync": Device-level sync (torch.cuda.synchronize()) + CPU timestamps.
+      Syncs ALL streams including NCCL — breaks DBO overlap. For debugging.
     
     Usage:
         tracker = TimingTracker("attention", num_layers=48, num_mb=2)
@@ -174,7 +177,7 @@ class TimingTracker:
                 # ... GPU compute ...
                 tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
         
-        timing = tracker.finish()  # synchronize + collect
+        timing = tracker.finish()
         timing.save("results/timing.json")
     """
     
@@ -185,7 +188,7 @@ class TimingTracker:
             node: "attention" or "ffn"
             num_layers: Number of transformer layers
             num_micro_batches: Number of micro-batches
-            mode: "cuda_events" (default, zero-overhead) or "sync" (legacy)
+            mode: "cuda_events" (default, stream-level sync) or "sync" (device-level sync)
         """
         self.mode = mode
         self.timing = PipelineTiming(
@@ -194,61 +197,43 @@ class TimingTracker:
             num_micro_batches=num_micro_batches,
         )
         self.start_time = time.perf_counter()
+        self._sync_start_time: float = 0.0
         self._current_event: Optional[Dict] = None
         
         if mode == "cuda_events" and torch.cuda.is_available():
-            # CUDA Events mode: pre-allocate event pairs, collect times at end
-            self._cuda_event_records: List[Tuple[
-                EventType, int, int,               # event_type, layer_idx, mb_idx
-                torch.cuda.Event, torch.cuda.Event  # start_event, end_event
-            ]] = []
-            # Record pipeline start event for relative timestamps
-            self._pipeline_start_event = torch.cuda.Event(enable_timing=True)
-            self._pipeline_start_event.record()
-        else:
-            self._cuda_event_records = None
-            self._pipeline_start_event = None
-            if mode == "cuda_events":
-                # Fallback to sync if CUDA not available
-                self.mode = "sync"
+            # Verify CUDA is available for stream sync
+            pass
+        elif mode == "cuda_events":
+            # Fallback to sync if CUDA not available
+            self.mode = "sync"
     
     def mark_start(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Record start of a GPU compute event.
         
-        - cuda_events mode: records CUDA event marker (~1μs, no pipeline disruption)
-        - sync mode: calls cuda.synchronize() + perf_counter (breaks pipeline)
+        - cuda_events mode: current_stream().synchronize() + perf_counter.
+          Only syncs the default compute stream (not NCCL), preserving DBO overlap.
+        - sync mode: torch.cuda.synchronize() + perf_counter (syncs ALL streams).
         """
         if self.mode == "cuda_events":
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-            self._cuda_event_records.append(
-                (event_type, layer_idx, mb_idx, start_event, end_event)
-            )
+            torch.cuda.current_stream().synchronize()
         else:
-            # sync mode: synchronize to drain GPU pipeline, then record CPU time
             torch.cuda.synchronize()
-            self._sync_start_time = time.perf_counter()
+        self._sync_start_time = time.perf_counter()
     
     def mark_end(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Record end of a GPU compute event.
         
-        - cuda_events mode: records CUDA event marker (~1μs, no pipeline disruption)
-        - sync mode: calls cuda.synchronize() + perf_counter, records event immediately
+        - cuda_events mode: current_stream().synchronize() + perf_counter.
+        - sync mode: torch.cuda.synchronize() + perf_counter.
+        Both record the event immediately via record_event().
         """
         if self.mode == "cuda_events":
-            # Find the matching record (last one with same type/layer/mb)
-            for i in range(len(self._cuda_event_records) - 1, -1, -1):
-                rec = self._cuda_event_records[i]
-                if rec[0] == event_type and rec[1] == layer_idx and rec[2] == mb_idx:
-                    rec[3 + 1].record()  # end_event.record()
-                    break
+            torch.cuda.current_stream().synchronize()
         else:
-            # sync mode: synchronize, record CPU time, add event immediately
             torch.cuda.synchronize()
-            end_time = time.perf_counter()
-            self.record_event(event_type, layer_idx, mb_idx,
-                            self._sync_start_time, end_time)
+        end_time = time.perf_counter()
+        self.record_event(event_type, layer_idx, mb_idx,
+                         self._sync_start_time, end_time)
     
     def record_event(self, event_type: EventType, layer_idx: int, mb_idx: int,
                      start_time: float, end_time: float):
@@ -268,35 +253,9 @@ class TimingTracker:
         return _TimingContext(self, event_type, layer_idx, mb_idx)
     
     def finish(self) -> PipelineTiming:
-        """Finalize timing and return results.
-        
-        In cuda_events mode, this is where the single synchronize() happens
-        to collect all GPU timestamps at once.
-        """
+        """Finalize timing and return results."""
         end_time = time.perf_counter()
         self.timing.total_time_ms = (end_time - self.start_time) * 1000
-        
-        if self.mode == "cuda_events" and self._cuda_event_records:
-            # Single synchronize to ensure all events are complete
-            torch.cuda.synchronize()
-            
-            # Collect all CUDA event timestamps
-            # We use pipeline_start_event as the reference point (time=0)
-            for event_type, layer_idx, mb_idx, start_evt, end_evt in self._cuda_event_records:
-                # elapsed_time returns ms between two events
-                start_ms = self._pipeline_start_event.elapsed_time(start_evt)
-                end_ms = self._pipeline_start_event.elapsed_time(end_evt)
-                
-                event = TimingEvent(
-                    event_type=event_type.value,
-                    layer_idx=layer_idx,
-                    mb_idx=mb_idx,
-                    start_time=start_ms / 1000.0,  # Convert to seconds (relative)
-                    end_time=end_ms / 1000.0,
-                    node=self.timing.node,
-                )
-                self.timing.add_event(event)
-        
         return self.timing
 
 
