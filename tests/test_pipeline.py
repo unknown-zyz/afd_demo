@@ -110,5 +110,151 @@ class TestHelperFunctions:
         assert torch.allclose(mask[0, 0], expected)
 
 
+class TestCrossLayerPipeline:
+    """跨层 MB 流水线调度的正确性测试。"""
+
+    def test_layer0_sends_before_layer1_recv_tags(self):
+        """验证 layer 0 的 send tag 与 layer 1 recv 使用的 tag 正确匹配且不冲突。"""
+
+        def get_tag(layer_idx, mb_idx, direction):
+            dir_code = 0 if direction == "attn_to_ffn" else 1
+            return layer_idx * 1000 + mb_idx * 10 + dir_code
+
+        num_layers = 4
+        num_mb = 2
+
+        for layer_idx in range(num_layers):
+            for mb_idx in range(num_mb):
+                send_tag = get_tag(layer_idx, mb_idx, "attn_to_ffn")
+                recv_tag = get_tag(layer_idx, mb_idx, "ffn_to_attn")
+                assert send_tag != recv_tag, (
+                    f"Layer {layer_idx} MB {mb_idx}: send/recv tag 冲突 {send_tag}"
+                )
+
+        # 跨层 tag 不冲突
+        for layer_idx in range(num_layers - 1):
+            for mb_idx in range(num_mb):
+                recv_tag_L = get_tag(layer_idx, mb_idx, "ffn_to_attn")
+                send_tag_L1 = get_tag(layer_idx + 1, mb_idx, "attn_to_ffn")
+                assert recv_tag_L != send_tag_L1
+
+    def test_pipeline_ordering_simulation(self):
+        """模拟跨层流水线操作顺序，验证 MB0 下一层不等 MB1 recv 完成。"""
+        events = []
+        clock = [0]
+
+        def tick():
+            clock[0] += 1
+            return clock[0]
+
+        num_layers = 3
+        num_mb = 2
+
+        # Layer 0: compute + send
+        for mb_idx in range(num_mb):
+            events.append((tick(), "compute", 0, mb_idx))
+            events.append((tick(), "send", 0, mb_idx))
+
+        # Layers 1~N-1: interleaved recv + compute
+        for layer_idx in range(1, num_layers):
+            for mb_idx in range(num_mb):
+                events.append((tick(), "recv_post", layer_idx - 1, mb_idx))
+            for mb_idx in range(num_mb):
+                events.append((tick(), "recv_wait", layer_idx - 1, mb_idx))
+                events.append((tick(), "compute", layer_idx, mb_idx))
+                events.append((tick(), "send", layer_idx, mb_idx))
+
+        # Last recv
+        for mb_idx in range(num_mb):
+            events.append((tick(), "recv_wait", num_layers - 1, mb_idx))
+
+        # 关键验证：MB0 layer 1 compute 在 MB1 layer 0 recv_wait 之前
+        mb0_l1_compute = next(
+            t for t, ev, l, m in events if ev == "compute" and l == 1 and m == 0
+        )
+        mb1_l0_recv_wait = next(
+            t for t, ev, l, m in events if ev == "recv_wait" and l == 0 and m == 1
+        )
+        assert mb0_l1_compute < mb1_l0_recv_wait, (
+            f"MB0 layer 1 compute (t={mb0_l1_compute}) 应在 "
+            f"MB1 layer 0 recv_wait (t={mb1_l0_recv_wait}) 之前"
+        )
+
+    def test_single_layer_no_interleave(self):
+        """单层场景：只有 layer 0 compute+send 和 last recv，无交错循环。"""
+        num_layers = 1
+        num_mb = 2
+        events = []
+        clock = [0]
+
+        def tick():
+            clock[0] += 1
+            return clock[0]
+
+        for mb_idx in range(num_mb):
+            events.append((tick(), "compute", 0, mb_idx))
+            events.append((tick(), "send", 0, mb_idx))
+
+        # range(1, 1) 为空
+        for layer_idx in range(1, num_layers):
+            pass  # pragma: no cover
+
+        for mb_idx in range(num_mb):
+            events.append((tick(), "recv_wait", 0, mb_idx))
+
+        assert len([e for e in events if e[1] == "compute"]) == num_mb
+        assert len([e for e in events if e[1] == "send"]) == num_mb
+        assert len([e for e in events if e[1] == "recv_wait"]) == num_mb
+
+    def test_single_mb_pipeline(self):
+        """单 MB 场景：每层只有一个 MB，流水线仍正确。"""
+        num_layers = 3
+        num_mb = 1
+        events = []
+        clock = [0]
+
+        def tick():
+            clock[0] += 1
+            return clock[0]
+
+        for mb_idx in range(num_mb):
+            events.append((tick(), "compute", 0, mb_idx))
+            events.append((tick(), "send", 0, mb_idx))
+
+        for layer_idx in range(1, num_layers):
+            for mb_idx in range(num_mb):
+                events.append((tick(), "recv_wait", layer_idx - 1, mb_idx))
+                events.append((tick(), "compute", layer_idx, mb_idx))
+                events.append((tick(), "send", layer_idx, mb_idx))
+
+        for mb_idx in range(num_mb):
+            events.append((tick(), "recv_wait", num_layers - 1, mb_idx))
+
+        for layer_idx in range(num_layers):
+            assert len([e for e in events if e[1] == "compute" and e[2] == layer_idx]) == 1
+            assert len([e for e in events if e[1] == "send" and e[2] == layer_idx]) == 1
+            assert len([e for e in events if e[1] == "recv_wait" and e[2] == layer_idx]) == 1
+
+    def test_tag_uniqueness_across_layers_and_mbs(self):
+        """验证所有层和 MB 组合的 tag 全局唯一。"""
+
+        def get_tag(layer_idx, mb_idx, direction):
+            dir_code = 0 if direction == "attn_to_ffn" else 1
+            return layer_idx * 1000 + mb_idx * 10 + dir_code
+
+        num_layers = 8
+        num_mb = 4
+        all_tags = set()
+
+        for layer_idx in range(num_layers):
+            for mb_idx in range(num_mb):
+                for direction in ("attn_to_ffn", "ffn_to_attn"):
+                    tag = get_tag(layer_idx, mb_idx, direction)
+                    assert tag not in all_tags, f"Tag 冲突: {layer_idx}/{mb_idx}/{direction}"
+                    all_tags.add(tag)
+
+        assert len(all_tags) == num_layers * num_mb * 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

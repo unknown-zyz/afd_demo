@@ -381,26 +381,111 @@ class AsyncPipelineScheduler:
         micro_batches: List[MicroBatch],
     ) -> torch.Tensor:
         """
-        Attention node with overlapped computation and communication.
+        Attention node with cross-layer pipelined computation and communication.
         
-        The key overlap pattern:
-        - For each layer, while sending MB0's result, we compute MB1
-        - This overlaps send(MB0) with compute(MB1)
+        跨层 MB 流水线优化：recv 和下一层 compute 交错进行，每个 MB 独立推进。
+        MB0 的 Layer L+1 attention 不再等待 MB1 的 Layer L recv 完成。
+        
+        流水线结构：
+          Layer 0:   compute(MB0) → send(MB0) → compute(MB1) → send(MB1)
+          Layer 1~N-1: post recv(all MBs, prev_layer) →
+                       per-MB: wait recv → update → compute → send
+          Last recv: recv(last_layer) → update hidden_states
         """
         assert self.model.attention_worker is not None
         
         num_mb = len(micro_batches)
+        num_layers = self.model.num_layers
         tracker = self._timing_tracker
         monitor = self._send_monitor
         
-        for layer_idx in range(self.model.num_layers):
-            # Process micro-batches with overlap
+        # === Layer 0: compute all MBs + send (无 recv 前置) ===
+        prev_send_handles = []
+        
+        for mb_idx, mb in enumerate(micro_batches):
+            # Stream sync for accurate timing (only sync compute stream, not NCCL)
+            if tracker:
+                torch.cuda.current_stream().synchronize()
+            compute_start = time.perf_counter()
+            
+            attn_output, residual = self.model.attention_worker.forward_attention_layer(
+                layer_idx=0,
+                hidden_states=mb.hidden_states,
+                attention_mask=mb.attention_mask,
+                position_ids=mb.position_ids,
+                position_embeddings=mb.position_embeddings,
+            )
+            # Pre-add residual on attention side to halve A2F data (1×H instead of 2×H)
+            packed = (attn_output + residual).contiguous()
+            
+            if tracker:
+                torch.cuda.current_stream().synchronize()
+            compute_end = time.perf_counter()
+            self.stats.compute_time += compute_end - compute_start
+            
+            if tracker:
+                tracker.record_event(EventType.ATTN_COMPUTE, 0, mb_idx,
+                                    compute_start, compute_end)
+            
+            # Start async send immediately after compute
+            send_start = time.perf_counter()
+            tag = self._get_tag(0, mb_idx, "attn_to_ffn")
+            handle = self._send_async(packed, tag)
+            prev_send_handles.append(handle)
+            
+            # Start polling for actual transfer completion (if timing enabled)
+            if monitor:
+                monitor.start_monitoring(handle, send_start, 0, mb_idx, "a2f")
+            
+            # The next MB's compute will overlap with this send!
+        
+        # === Layers 1 ~ num_layers-1: 交错 recv(prev_layer) + compute(curr_layer) ===
+        for layer_idx in range(1, num_layers):
+            prev_layer = layer_idx - 1
+            
+            # Post all recvs for previous layer (non-blocking，尽早占位)
+            recv_handles = []
+            recv_start_times = []
+            for mb_idx, mb in enumerate(micro_batches):
+                recv_start = time.perf_counter()
+                tag = self._get_tag(prev_layer, mb_idx, "ffn_to_attn")
+                recv_handle, recv_tensor = self._recv_async(
+                    (mb.batch_size, mb.seq_len, self.model.hidden_size),
+                    tag
+                )
+                recv_handles.append((recv_handle, recv_tensor))
+                recv_start_times.append(recv_start)
+            
+            # Wait all sends from previous layer
+            for handle in prev_send_handles:
+                handle.wait()
+            
+            # Collect and record real transfer times from monitor
+            if monitor and tracker:
+                for result in monitor.collect_results():
+                    l_idx, m_idx, direction, start, end = result
+                    tracker.record_event(EventType.SEND_TRANSFER, l_idx, m_idx, start, end)
+            
+            # 逐 MB 处理：recv 完一个就立即 compute 下一层，不等其他 MB
             send_handles = []
-            send_start_times = []
-            packed_list = []
             
             for mb_idx, mb in enumerate(micro_batches):
-                # Stream sync for accurate timing (only sync compute stream, not NCCL)
+                # Wait for this MB's recv from previous layer
+                recv_handle, recv_tensor = recv_handles[mb_idx]
+                recv_handle.wait()
+                recv_end = time.perf_counter()
+                
+                # Track recv wait time
+                self.stats.recv_wait_time += recv_end - recv_start_times[mb_idx]
+                
+                if tracker:
+                    tracker.record_event(EventType.RECV_WAIT, prev_layer, mb_idx,
+                                        recv_start_times[mb_idx], recv_end)
+                
+                # Update hidden states from FFN result
+                mb.hidden_states = recv_tensor.clone()
+                
+                # Immediately compute this MB's current layer attention
                 if tracker:
                     torch.cuda.current_stream().synchronize()
                 compute_start = time.perf_counter()
@@ -412,9 +497,7 @@ class AsyncPipelineScheduler:
                     position_ids=mb.position_ids,
                     position_embeddings=mb.position_embeddings,
                 )
-                # Pre-add residual on attention side to halve A2F data (1×H instead of 2×H)
                 packed = (attn_output + residual).contiguous()
-                packed_list.append(packed)
                 
                 if tracker:
                     torch.cuda.current_stream().synchronize()
@@ -425,52 +508,45 @@ class AsyncPipelineScheduler:
                     tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
                                         compute_start, compute_end)
                 
-                # Start async send immediately after compute
+                # Send async — next MB's recv.wait will overlap with this send
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
-                handle = self._send_async(packed.contiguous(), tag)
+                handle = self._send_async(packed, tag)
                 send_handles.append(handle)
-                send_start_times.append(send_start)
                 
-                # Start polling for actual transfer completion (if timing enabled)
                 if monitor:
                     monitor.start_monitoring(handle, send_start, layer_idx, mb_idx, "a2f")
-                
-                # The next MB's compute will overlap with this send!
             
-            # Wait for all sends to complete
-            for mb_idx, handle in enumerate(send_handles):
-                handle.wait()
+            prev_send_handles = send_handles
+        
+        # === 最后一层的 recv: wait sends + recv + update ===
+        last_layer = num_layers - 1
+        
+        for handle in prev_send_handles:
+            handle.wait()
+        
+        if monitor and tracker:
+            for result in monitor.collect_results():
+                l_idx, m_idx, direction, start, end = result
+                tracker.record_event(EventType.SEND_TRANSFER, l_idx, m_idx, start, end)
+        
+        for mb_idx, mb in enumerate(micro_batches):
+            recv_start = time.perf_counter()
+            tag = self._get_tag(last_layer, mb_idx, "ffn_to_attn")
+            recv_handle, recv_tensor = self._recv_async(
+                (mb.batch_size, mb.seq_len, self.model.hidden_size),
+                tag
+            )
+            recv_handle.wait()
+            recv_end = time.perf_counter()
             
-            # Collect and record real transfer times from monitor
-            if monitor and tracker:
-                for result in monitor.collect_results():
-                    l_idx, m_idx, direction, start, end = result
-                    tracker.record_event(EventType.SEND_TRANSFER, l_idx, m_idx, start, end)
+            self.stats.recv_wait_time += recv_end - recv_start
             
-            # Now receive FFN results
-            recv_tensors = []
-            for mb_idx, mb in enumerate(micro_batches):
-                recv_start = time.perf_counter()
-                tag = self._get_tag(layer_idx, mb_idx, "ffn_to_attn")
-                recv_handle, recv_tensor = self._recv_async(
-                    (mb.batch_size, mb.seq_len, self.model.hidden_size),
-                    tag
-                )
-                recv_handle.wait()
-                recv_end = time.perf_counter()
-                recv_tensors.append(recv_tensor)
-                
-                # Track recv wait time
-                self.stats.recv_wait_time += recv_end - recv_start
-                
-                if tracker:
-                    tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
-                                        recv_start, recv_end)
+            if tracker:
+                tracker.record_event(EventType.RECV_WAIT, last_layer, mb_idx,
+                                    recv_start, recv_end)
             
-            # Update hidden states
-            for mb_idx, mb in enumerate(micro_batches):
-                mb.hidden_states = recv_tensors[mb_idx].clone()
+            mb.hidden_states = recv_tensor.clone()
         
         self._pending_sends.clear()
         
