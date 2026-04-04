@@ -424,6 +424,26 @@ def run_generation_demo(args):
             timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
         model._last_decode_timing.save(timing_file)
         logger.info(f"Decode timing saved: {timing_file}")
+    elif args.timing and (not hasattr(model, '_last_decode_timing') or model._last_decode_timing is None):
+        # Save minimal timing for serial decode baseline
+        os.makedirs("results/prefill_dbo", exist_ok=True)
+        import json as json_mod
+        serial_data = {
+            "mode": "serial",
+            "role": ctx.role,
+            "total_time_ms": gen_time * 1000,
+            "batch_size": args.batch_size,
+            "max_new_tokens": args.max_new_tokens,
+            "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,
+        }
+        if args.timing_suffix:
+            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+        else:
+            suffix = f"decode_serial_b{args.batch_size}_t{args.max_new_tokens}"
+            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+        with open(timing_file, 'w') as f:
+            json_mod.dump(serial_data, f, indent=2)
+        logger.info(f"Decode timing saved (serial): {timing_file}")
     
     ctx.barrier()
     ctx.cleanup()

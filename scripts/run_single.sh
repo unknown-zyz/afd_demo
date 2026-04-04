@@ -235,7 +235,10 @@ FFN_TIMING="results/prefill_dbo/timing_ffn_${SUFFIX}.json"
 if [ ! -f "$ATTN_TIMING" ] || [ ! -f "$FFN_TIMING" ]; then
     echo "⚠️  Missing timing files for $SUFFIX"
     ls -la results/prefill_dbo/timing_*${SUFFIX}* 2>/dev/null
-    exit 1
+    # Non-fatal for serial mode (timing may be minimal)
+    if [ "$NO_DBO" = false ]; then
+        exit 1
+    fi
 fi
 
 # ── Visualization (DBO only) ─────────────────────────────────────
