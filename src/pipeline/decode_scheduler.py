@@ -211,7 +211,7 @@ class DecodeDBOScheduler:
                 end = start + mb_sizes[mb_idx]
 
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
 
                 # Temporarily set cache to this MB's batch slice
@@ -244,14 +244,11 @@ class DecodeDBOScheduler:
                 packed = (attn_output + residual).contiguous()
 
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
                 compute_end = time.perf_counter()
                 compute_time = compute_end - compute_start
                 self.stats.compute_time += compute_time
                 self.stats.attn_compute_time += compute_time
-                if tracker:
-                    tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
-                                        compute_start, compute_end)
 
                 # Async send immediately — next MB's attention overlaps with this send
                 send_start = time.perf_counter()
@@ -273,6 +270,8 @@ class DecodeDBOScheduler:
             # Receive micro-batch results from FFN
             recv_chunks = []
             for mb_idx, mb_size in enumerate(mb_sizes):
+                if tracker:
+                    tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
                 recv_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 recv_tensor = torch.empty(
@@ -283,8 +282,7 @@ class DecodeDBOScheduler:
                 recv_end = time.perf_counter()
                 recv_chunks.append(recv_tensor)
                 if tracker:
-                    tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
-                                        recv_start, recv_end)
+                    tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
                 self.stats.f2a_comm_time += recv_end - recv_start
 
             hidden_states = torch.cat(recv_chunks, dim=0)
@@ -332,17 +330,18 @@ class DecodeDBOScheduler:
             send_handles = []
             for mb_idx in range(num_mb):
                 # Wait for this MB's data from attention
+                if tracker:
+                    tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
                 recv_start = time.perf_counter()
                 recv_handles[mb_idx].wait()
                 recv_end = time.perf_counter()
                 if tracker:
-                    tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx,
-                                        recv_start, recv_end)
+                    tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
                 self.stats.a2f_comm_time += recv_end - recv_start
 
                 # Compute FFN
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
                 output = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
@@ -352,14 +351,11 @@ class DecodeDBOScheduler:
                     output = output[0]
                 output = output.contiguous()
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_end = time.perf_counter()
                 compute_time = compute_end - compute_start
                 self.stats.compute_time += compute_time
                 self.stats.ffn_compute_time += compute_time
-                if tracker:
-                    tracker.record_event(EventType.FFN_COMPUTE, layer_idx, mb_idx,
-                                        compute_start, compute_end)
 
                 # Send result back immediately (async)
                 # Next MB's compute will overlap with this send!
