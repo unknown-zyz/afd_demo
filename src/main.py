@@ -394,6 +394,8 @@ def run_generation_demo(args):
         pad_token_id=tokenizer.pad_token_id if tokenizer else None,
         use_decode_dbo=use_dbo,
         num_decode_micro_batches=args.num_micro_batches,
+        enable_timing=args.timing,
+        timing_mode=args.timing_mode,
     )
     
     if torch.cuda.is_available():
@@ -410,6 +412,17 @@ def run_generation_demo(args):
         # Decode output
         output_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
         logger.info(f"\n=== Generated Text ===\n{output_text}\n{'=' * 22}")
+    
+    # Save decode timing data if enabled
+    if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
+        os.makedirs("results/prefill_dbo", exist_ok=True)
+        if args.timing_suffix:
+            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+        else:
+            suffix = f"decode_b{args.batch_size}_t{args.max_new_tokens}"
+            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+        model._last_decode_timing.save(timing_file)
+        logger.info(f"Decode timing saved: {timing_file}")
     
     ctx.barrier()
     ctx.cleanup()

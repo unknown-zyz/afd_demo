@@ -544,6 +544,8 @@ class DisaggregatedQwenModel(nn.Module):
         pad_token_id: Optional[int] = None,
         use_decode_dbo: bool = True,
         num_decode_micro_batches: int = 2,
+        enable_timing: bool = False,
+        timing_mode: str = "cuda_events",
     ) -> torch.Tensor:
         """
         Generate text autoregressively with optional Decode DBO.
@@ -559,13 +561,18 @@ class DisaggregatedQwenModel(nn.Module):
             pad_token_id: Padding token ID
             use_decode_dbo: Whether to use DBO for decode phase
             num_decode_micro_batches: Number of micro-batches for decode DBO
+            enable_timing: Whether to collect per-layer timing data
+            timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
         
         Returns:
             Generated token IDs [batch_size, seq_len + num_generated]
         """
         if not self.ctx.is_attention_node:
             # FFN node: just participate in forward passes
-            return self._generate_ffn_node(input_ids, max_new_tokens, use_decode_dbo, num_decode_micro_batches)
+            return self._generate_ffn_node(
+                input_ids, max_new_tokens, use_decode_dbo,
+                num_decode_micro_batches, enable_timing, timing_mode,
+            )
         
         # Initialize KV cache if needed
         batch_size, prompt_len = input_ids.shape
@@ -605,6 +612,8 @@ class DisaggregatedQwenModel(nn.Module):
             decode_scheduler = DecodeDBOScheduler(
                 model=self,
                 num_micro_batches=num_decode_micro_batches,
+                enable_timing=enable_timing,
+                timing_mode=timing_mode,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
         
@@ -650,6 +659,8 @@ class DisaggregatedQwenModel(nn.Module):
         # Log Decode DBO stats
         if decode_scheduler is not None:
             logger.info(f"Decode DBO stats: {decode_scheduler.get_stats()}")
+            # Store timing data for external access
+            self._last_decode_timing = decode_scheduler.get_timing_data()
         
         return generated_ids
     
@@ -659,6 +670,8 @@ class DisaggregatedQwenModel(nn.Module):
         max_new_tokens: int,
         use_decode_dbo: bool = True,
         num_decode_micro_batches: int = 2,
+        enable_timing: bool = False,
+        timing_mode: str = "cuda_events",
     ) -> torch.Tensor:
         """
         FFN node participation in generation.
@@ -679,6 +692,8 @@ class DisaggregatedQwenModel(nn.Module):
             decode_scheduler = DecodeDBOScheduler(
                 model=self,
                 num_micro_batches=num_decode_micro_batches,
+                enable_timing=enable_timing,
+                timing_mode=timing_mode,
             )
         
         # Decode loop: max_new_tokens - 1 iterations
@@ -705,6 +720,7 @@ class DisaggregatedQwenModel(nn.Module):
         # Log Decode DBO stats for FFN node
         if decode_scheduler is not None:
             logger.info(f"[FFN] Decode DBO stats: {decode_scheduler.get_stats()}")
+            self._last_decode_timing = decode_scheduler.get_timing_data()
         
         # FFN node doesn't return meaningful output
         return input_ids
