@@ -296,15 +296,35 @@ class DecodeDBOScheduler:
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
         return self.model.attention_worker.forward_lm_head(hidden_states)
 
+    def _post_irecvs(self, layer_idx: int, mb_sizes: List[int]) -> Tuple[List, List]:
+        """Post irecvs for all MBs of a given layer. Returns (handles, tensors)."""
+        handles = []
+        tensors = []
+        for mb_idx, mb_size in enumerate(mb_sizes):
+            tag = self._get_tag(layer_idx, mb_idx, "a2f")
+            recv_tensor = torch.empty(
+                mb_size, 1, self.model.hidden_size,
+                dtype=self.model.dtype, device=self.model.device,
+            )
+            handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
+            handles.append(handle)
+            tensors.append(recv_tensor)
+        return handles, tensors
+
     def _run_ffn_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
         """
-        FFN node: micro-batch DBO overlap.
-        
-        For each layer:
-        1. Post all irecvs upfront
-        2. For each MB: wait recv → compute FFN → isend result
-           Key: isend(MB_i) overlaps with compute(MB_{i+1})
-        3. Wait for all sends
+        FFN node: micro-batch DBO overlap with pre-posted irecvs.
+
+        Key optimization: irecvs for the NEXT layer are posted before the current
+        layer starts processing, so data arrives into buffers while we compute.
+        This eliminates the ~1.9ms/layer MB0 recv_wait bubble.
+
+        Flow:
+        1. Post L0 irecvs upfront
+        2. For each layer:
+           a. Post L+1 irecvs (if not last layer) — data arrives during compute
+           b. For each MB: wait recv → compute → isend
+        3. Wait all sends at the end
         """
         assert self.model.ffn_worker is not None
 
@@ -312,28 +332,27 @@ class DecodeDBOScheduler:
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
 
+        # Pre-post L0 irecvs before any processing
+        curr_recv_handles, curr_recv_tensors = self._post_irecvs(0, mb_sizes)
+
+        all_send_handles = []
+
         for layer_idx in range(num_layers):
-            # Post all irecvs upfront (non-blocking)
-            recv_handles = []
-            recv_tensors = []
-            for mb_idx, mb_size in enumerate(mb_sizes):
-                tag = self._get_tag(layer_idx, mb_idx, "a2f")
-                recv_tensor = torch.empty(
-                    mb_size, 1, self.model.hidden_size,
-                    dtype=self.model.dtype, device=self.model.device,
+            # Post NEXT layer's irecvs early (double-buffer)
+            # Data arrives into these buffers while we process current layer
+            next_recv_handles, next_recv_tensors = None, None
+            if layer_idx + 1 < num_layers:
+                next_recv_handles, next_recv_tensors = self._post_irecvs(
+                    layer_idx + 1, mb_sizes
                 )
-                handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-                recv_handles.append(handle)
-                recv_tensors.append(recv_tensor)
 
             # Process each MB: wait recv → compute → isend
-            send_handles = []
             for mb_idx in range(num_mb):
                 # Wait for this MB's data from attention
                 if tracker:
                     tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
                 recv_start = time.perf_counter()
-                recv_handles[mb_idx].wait()
+                curr_recv_handles[mb_idx].wait()
                 recv_end = time.perf_counter()
                 if tracker:
                     tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
@@ -345,7 +364,7 @@ class DecodeDBOScheduler:
                 compute_start = time.perf_counter()
                 output = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
-                    hidden_states=recv_tensors[mb_idx],
+                    hidden_states=curr_recv_tensors[mb_idx],
                 )
                 if isinstance(output, tuple):
                     output = output[0]
@@ -358,18 +377,22 @@ class DecodeDBOScheduler:
                 self.stats.ffn_compute_time += compute_time
 
                 # Send result back immediately (async)
-                # Next MB's compute will overlap with this send!
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 send_start = time.perf_counter()
                 handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append(handle)
+                all_send_handles.append(handle)
                 if self._send_monitor:
                     self._send_monitor.start_monitoring(
                         handle, send_start, layer_idx, mb_idx, "f2a")
 
-            # Wait for all sends to complete
-            for handle in send_handles:
-                handle.wait()
+            # Swap to next layer's pre-posted irecvs
+            if next_recv_handles is not None:
+                curr_recv_handles = next_recv_handles
+                curr_recv_tensors = next_recv_tensors
+
+        # Wait for all sends to complete at the end
+        for handle in all_send_handles:
+            handle.wait()
 
         # Collect send monitor results for accurate timing
         if self._send_monitor and tracker:
