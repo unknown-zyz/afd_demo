@@ -1,1309 +1,2173 @@
 {
   "node": "attention",
   "num_layers": 48,
-  "num_micro_batches": 1,
-  "total_time_ms": 195.48883102834225,
-  "total_compute_ms": 107.87850767374036,
-  "total_recv_wait_ms": 8.46677552908659,
+  "num_micro_batches": 2,
+  "total_time_ms": 595.6588741391897,
+  "total_compute_ms": 135.35913079977036,
+  "total_recv_wait_ms": 17.971389926970005,
   "total_moe_router_ms": 0.0,
   "total_moe_experts_ms": 0.0,
   "total_moe_shared_or_dense_ms": 0.0,
-  "compute_ratio": 0.5518397501599464,
+  "compute_ratio": 0.22724269993523258,
   "events": [
     {
+      "type": "attn_compute",
+      "layer": 0,
+      "mb": 0,
+      "start": 0.0008600028231739998,
+      "end": 0.0035254284739494324,
+      "duration_ms": 2.6654256507754326,
+      "node": "attention"
+    },
+    {
       "type": "send_transfer",
       "layer": 0,
       "mb": 0,
-      "start": 0.002491018734872341,
-      "end": 0.0026987139135599136,
-      "duration_ms": 0.20769517868757248,
+      "start": 0.003587239421904087,
+      "end": 0.00395035557448864,
+      "duration_ms": 0.36311615258455276,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 0,
+      "mb": 1,
+      "start": 0.003797914832830429,
+      "end": 0.003980293869972229,
+      "duration_ms": 0.18237903714179993,
       "node": "attention"
     },
     {
       "type": "recv_wait",
       "layer": 0,
       "mb": 0,
-      "start": 0.002730011008679867,
-      "end": 0.002904830500483513,
-      "duration_ms": 0.1748194918036461,
+      "start": 0.003989517688751221,
+      "end": 0.004172147251665592,
+      "duration_ms": 0.1826295629143715,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 0,
+      "mb": 1,
+      "start": 0.004181234166026115,
+      "end": 0.004417054355144501,
+      "duration_ms": 0.23582018911838531,
+      "node": "attention"
+    },
+    {
+      "type": "attn_compute",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.01322628278285265,
+      "end": 0.015773271210491657,
+      "duration_ms": 2.5469884276390076,
       "node": "attention"
     },
     {
       "type": "send_transfer",
       "layer": 1,
       "mb": 0,
-      "start": 0.004687252454459667,
-      "end": 0.004871295765042305,
-      "duration_ms": 0.1840433105826378,
+      "start": 0.015819669701159,
+      "end": 0.016154590994119644,
+      "duration_ms": 0.33492129296064377,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 1,
+      "mb": 1,
+      "start": 0.016001561656594276,
+      "end": 0.016174419783055782,
+      "duration_ms": 0.1728581264615059,
       "node": "attention"
     },
     {
       "type": "recv_wait",
       "layer": 1,
       "mb": 0,
-      "start": 0.004884609952569008,
-      "end": 0.005046880804002285,
-      "duration_ms": 0.16227085143327713,
+      "start": 0.01618813630193472,
+      "end": 0.01644948124885559,
+      "duration_ms": 0.26134494692087173,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 1,
+      "mb": 1,
+      "start": 0.016457507386803627,
+      "end": 0.016639623790979385,
+      "duration_ms": 0.18211640417575836,
+      "node": "attention"
+    },
+    {
+      "type": "attn_compute",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.025379161350429058,
+      "end": 0.027907206676900387,
+      "duration_ms": 2.5280453264713287,
       "node": "attention"
     },
     {
       "type": "send_transfer",
       "layer": 2,
       "mb": 0,
-      "start": 0.006882351823151112,
-      "end": 0.007061690092086792,
-      "duration_ms": 0.1793382689356804,
+      "start": 0.027950892224907875,
+      "end": 0.028275666758418083,
+      "duration_ms": 0.32477453351020813,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 2,
+      "mb": 1,
+      "start": 0.028136391192674637,
+      "end": 0.028295024298131466,
+      "duration_ms": 0.15863310545682907,
       "node": "attention"
     },
     {
       "type": "recv_wait",
       "layer": 2,
       "mb": 0,
-      "start": 0.007074245251715183,
-      "end": 0.007295779883861542,
-      "duration_ms": 0.2215346321463585,
+      "start": 0.028308788314461708,
+      "end": 0.028486138209700584,
+      "duration_ms": 0.17734989523887634,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 2,
+      "mb": 1,
+      "start": 0.02849428541958332,
+      "end": 0.028653212822973728,
+      "duration_ms": 0.15892740339040756,
+      "node": "attention"
+    },
+    {
+      "type": "attn_compute",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.03751732502132654,
+      "end": 0.04004402831196785,
+      "duration_ms": 2.526703290641308,
       "node": "attention"
     },
     {
       "type": "send_transfer",
       "layer": 3,
       "mb": 0,
-      "start": 0.009144462645053864,
-      "end": 0.009322215802967548,
-      "duration_ms": 0.17775315791368484,
+      "start": 0.0400870107114315,
+      "end": 0.04041904490441084,
+      "duration_ms": 0.3320341929793358,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 3,
+      "mb": 1,
+      "start": 0.04027474485337734,
+      "end": 0.040437787771224976,
+      "duration_ms": 0.16304291784763336,
       "node": "attention"
     },
     {
       "type": "recv_wait",
       "layer": 3,
       "mb": 0,
-      "start": 0.009333118796348572,
-      "end": 0.009493212215602398,
-      "duration_ms": 0.16009341925382614,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 4,
-      "mb": 0,
-      "start": 0.01133784931153059,
-      "end": 0.011518645100295544,
-      "duration_ms": 0.1807957887649536,
+      "start": 0.040451422333717346,
+      "end": 0.04071076586842537,
+      "duration_ms": 0.25934353470802307,
       "node": "attention"
     },
     {
       "type": "recv_wait",
-      "layer": 4,
-      "mb": 0,
-      "start": 0.011530036106705666,
-      "end": 0.01168914046138525,
-      "duration_ms": 0.1591043546795845,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 5,
-      "mb": 0,
-      "start": 0.013538082130253315,
-      "end": 0.01371677964925766,
-      "duration_ms": 0.17869751900434494,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 5,
-      "mb": 0,
-      "start": 0.013727910816669464,
-      "end": 0.01390276663005352,
-      "duration_ms": 0.1748558133840561,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 6,
-      "mb": 0,
-      "start": 0.01573305483907461,
-      "end": 0.015913610346615314,
-      "duration_ms": 0.18055550754070282,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 6,
-      "mb": 0,
-      "start": 0.015924573875963688,
-      "end": 0.016095168888568878,
-      "duration_ms": 0.17059501260519028,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 7,
-      "mb": 0,
-      "start": 0.017947308719158173,
-      "end": 0.018126887269318104,
-      "duration_ms": 0.17957855015993118,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 7,
-      "mb": 0,
-      "start": 0.018138019368052483,
-      "end": 0.018299125134944916,
-      "duration_ms": 0.16110576689243317,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 8,
-      "mb": 0,
-      "start": 0.020143141970038414,
-      "end": 0.02035786770284176,
-      "duration_ms": 0.21472573280334473,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 8,
-      "mb": 0,
-      "start": 0.020369048230350018,
-      "end": 0.020643197000026703,
-      "duration_ms": 0.27414876967668533,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 9,
-      "mb": 0,
-      "start": 0.022487289272248745,
-      "end": 0.022672713734209538,
-      "duration_ms": 0.18542446196079254,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 9,
-      "mb": 0,
-      "start": 0.02268385887145996,
-      "end": 0.022852826863527298,
-      "duration_ms": 0.16896799206733704,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 10,
-      "mb": 0,
-      "start": 0.024703257717192173,
-      "end": 0.024881227873265743,
-      "duration_ms": 0.17797015607357025,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 10,
-      "mb": 0,
-      "start": 0.024891991168260574,
-      "end": 0.025053714402019978,
-      "duration_ms": 0.16172323375940323,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 11,
-      "mb": 0,
-      "start": 0.026893666945397854,
-      "end": 0.02706726174801588,
-      "duration_ms": 0.17359480261802673,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 11,
-      "mb": 0,
-      "start": 0.02707885392010212,
-      "end": 0.027277671732008457,
-      "duration_ms": 0.19881781190633774,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 12,
-      "mb": 0,
-      "start": 0.029131347313523293,
-      "end": 0.02930961549282074,
-      "duration_ms": 0.1782681792974472,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 12,
-      "mb": 0,
-      "start": 0.029326490126550198,
-      "end": 0.029579510912299156,
-      "duration_ms": 0.2530207857489586,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 13,
-      "mb": 0,
-      "start": 0.03141146246343851,
-      "end": 0.03159669227898121,
-      "duration_ms": 0.1852298155426979,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 13,
-      "mb": 0,
-      "start": 0.03160838782787323,
-      "end": 0.03177728969603777,
-      "duration_ms": 0.16890186816453934,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 14,
-      "mb": 0,
-      "start": 0.03362729772925377,
-      "end": 0.03380669932812452,
-      "duration_ms": 0.17940159887075424,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 14,
-      "mb": 0,
-      "start": 0.03381765075027943,
-      "end": 0.03398002311587334,
-      "duration_ms": 0.16237236559391022,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 15,
-      "mb": 0,
-      "start": 0.03580551780760288,
-      "end": 0.035978296771645546,
-      "duration_ms": 0.17277896404266357,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 15,
-      "mb": 0,
-      "start": 0.03598903585225344,
-      "end": 0.03615933936089277,
-      "duration_ms": 0.17030350863933563,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 16,
-      "mb": 0,
-      "start": 0.03800336830317974,
-      "end": 0.038176869973540306,
-      "duration_ms": 0.17350167036056519,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 16,
-      "mb": 0,
-      "start": 0.03818821161985397,
-      "end": 0.03835440240800381,
-      "duration_ms": 0.16619078814983368,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 17,
-      "mb": 0,
-      "start": 0.040179830975830555,
-      "end": 0.04034953471273184,
-      "duration_ms": 0.16970373690128326,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 17,
-      "mb": 0,
-      "start": 0.040360367856919765,
-      "end": 0.040529677644371986,
-      "duration_ms": 0.16930978745222092,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 18,
-      "mb": 0,
-      "start": 0.042350987903773785,
-      "end": 0.042532578110694885,
-      "duration_ms": 0.18159020692110062,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 18,
-      "mb": 0,
-      "start": 0.04254358168691397,
-      "end": 0.04270356148481369,
-      "duration_ms": 0.15997979789972305,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 19,
-      "mb": 0,
-      "start": 0.044531130231916904,
-      "end": 0.04470938164740801,
-      "duration_ms": 0.17825141549110413,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 19,
-      "mb": 0,
-      "start": 0.04472050443291664,
-      "end": 0.04488550778478384,
-      "duration_ms": 0.16500335186719894,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 20,
-      "mb": 0,
-      "start": 0.046710552647709846,
-      "end": 0.04687852133065462,
-      "duration_ms": 0.16796868294477463,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 20,
-      "mb": 0,
-      "start": 0.046889958903193474,
-      "end": 0.04705899488180876,
-      "duration_ms": 0.16903597861528397,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 21,
-      "mb": 0,
-      "start": 0.04888920485973358,
-      "end": 0.04906211048364639,
-      "duration_ms": 0.17290562391281128,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 21,
-      "mb": 0,
-      "start": 0.04907298553735018,
-      "end": 0.049231153912842274,
-      "duration_ms": 0.15816837549209595,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 22,
-      "mb": 0,
-      "start": 0.05104444548487663,
-      "end": 0.051223015412688255,
-      "duration_ms": 0.17856992781162262,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 22,
-      "mb": 0,
-      "start": 0.05123392678797245,
-      "end": 0.05139362812042236,
-      "duration_ms": 0.15970133244991302,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 23,
-      "mb": 0,
-      "start": 0.053234269842505455,
-      "end": 0.05340826138854027,
-      "duration_ms": 0.17399154603481293,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 23,
-      "mb": 0,
-      "start": 0.05341909918934107,
-      "end": 0.05358865763992071,
+      "layer": 3,
+      "mb": 1,
+      "start": 0.04071848373860121,
+      "end": 0.04088804218918085,
       "duration_ms": 0.16955845057964325,
       "node": "attention"
     },
     {
-      "type": "send_transfer",
-      "layer": 24,
-      "mb": 0,
-      "start": 0.05590602196753025,
-      "end": 0.05607606843113899,
-      "duration_ms": 0.17004646360874176,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 24,
-      "mb": 0,
-      "start": 0.056086656637489796,
-      "end": 0.056249761022627354,
-      "duration_ms": 0.16310438513755798,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 25,
-      "mb": 0,
-      "start": 0.058534267358481884,
-      "end": 0.058708999305963516,
-      "duration_ms": 0.17473194748163223,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 25,
-      "mb": 0,
-      "start": 0.05871963780373335,
-      "end": 0.0588860847055912,
-      "duration_ms": 0.16644690185785294,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 26,
-      "mb": 0,
-      "start": 0.061163704842329025,
-      "end": 0.06133601162582636,
-      "duration_ms": 0.17230678349733353,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 26,
-      "mb": 0,
-      "start": 0.061348384246230125,
-      "end": 0.061526079662144184,
-      "duration_ms": 0.17769541591405869,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 27,
-      "mb": 0,
-      "start": 0.0637888116762042,
-      "end": 0.06395972799509764,
-      "duration_ms": 0.17091631889343262,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 27,
-      "mb": 0,
-      "start": 0.06397069152444601,
-      "end": 0.06414137408137321,
-      "duration_ms": 0.17068255692720413,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 28,
-      "mb": 0,
-      "start": 0.066420903429389,
-      "end": 0.06659912224858999,
-      "duration_ms": 0.17821881920099258,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 28,
-      "mb": 0,
-      "start": 0.06660972721874714,
-      "end": 0.06678044889122248,
-      "duration_ms": 0.17072167247533798,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 29,
-      "mb": 0,
-      "start": 0.06904654484242201,
-      "end": 0.06922288984060287,
-      "duration_ms": 0.17634499818086624,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 29,
-      "mb": 0,
-      "start": 0.06923369318246841,
-      "end": 0.06940139923244715,
-      "duration_ms": 0.16770604997873306,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 30,
-      "mb": 0,
-      "start": 0.07164739351719618,
-      "end": 0.07181854266673326,
-      "duration_ms": 0.1711491495370865,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 30,
-      "mb": 0,
-      "start": 0.07182935252785683,
-      "end": 0.07200560253113508,
-      "duration_ms": 0.17625000327825546,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 31,
-      "mb": 0,
-      "start": 0.07425548043102026,
-      "end": 0.07442937698215246,
-      "duration_ms": 0.17389655113220215,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 31,
-      "mb": 0,
-      "start": 0.07444016728550196,
-      "end": 0.07461312506347895,
-      "duration_ms": 0.17295777797698975,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 32,
-      "mb": 0,
-      "start": 0.0768689289689064,
-      "end": 0.07704340294003487,
-      "duration_ms": 0.17447397112846375,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 32,
-      "mb": 0,
-      "start": 0.07705494947731495,
-      "end": 0.07724319770932198,
-      "duration_ms": 0.18824823200702667,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 33,
-      "mb": 0,
-      "start": 0.07950019091367722,
-      "end": 0.07974941749125719,
-      "duration_ms": 0.24922657757997513,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 33,
-      "mb": 0,
-      "start": 0.07976029627025127,
-      "end": 0.07995613291859627,
-      "duration_ms": 0.1958366483449936,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 34,
-      "mb": 0,
-      "start": 0.08220788650214672,
-      "end": 0.08239507302641869,
-      "duration_ms": 0.18718652427196503,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 34,
-      "mb": 0,
-      "start": 0.08240606542676687,
-      "end": 0.08257748279720545,
-      "duration_ms": 0.17141737043857574,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 35,
-      "mb": 0,
-      "start": 0.08486324734985828,
-      "end": 0.08503941167145967,
-      "duration_ms": 0.17616432160139084,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 35,
-      "mb": 0,
-      "start": 0.08505031652748585,
-      "end": 0.08522297069430351,
-      "duration_ms": 0.1726541668176651,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 36,
-      "mb": 0,
-      "start": 0.08746201917529106,
-      "end": 0.08763951249420643,
-      "duration_ms": 0.17749331891536713,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 36,
-      "mb": 0,
-      "start": 0.08765020873397589,
-      "end": 0.08782986365258694,
-      "duration_ms": 0.17965491861104965,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 37,
-      "mb": 0,
-      "start": 0.09009692445397377,
-      "end": 0.09026992972940207,
-      "duration_ms": 0.17300527542829514,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 37,
-      "mb": 0,
-      "start": 0.09028077777475119,
-      "end": 0.0904443459585309,
-      "duration_ms": 0.1635681837797165,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 38,
-      "mb": 0,
-      "start": 0.09270134381949902,
-      "end": 0.09288035426288843,
-      "duration_ms": 0.17901044338941574,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 38,
-      "mb": 0,
-      "start": 0.09289222117513418,
-      "end": 0.09306053165346384,
-      "duration_ms": 0.1683104783296585,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 39,
-      "mb": 0,
-      "start": 0.0953107699751854,
-      "end": 0.09548123646527529,
-      "duration_ms": 0.17046649008989334,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 39,
-      "mb": 0,
-      "start": 0.09549224562942982,
-      "end": 0.09566378779709339,
-      "duration_ms": 0.17154216766357422,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 40,
-      "mb": 0,
-      "start": 0.09792365413159132,
-      "end": 0.0981009230017662,
-      "duration_ms": 0.1772688701748848,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 40,
-      "mb": 0,
-      "start": 0.09811177663505077,
-      "end": 0.09828885551542044,
-      "duration_ms": 0.17707888036966324,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 41,
-      "mb": 0,
-      "start": 0.1550334393978119,
-      "end": 0.15530080161988735,
-      "duration_ms": 0.26736222207546234,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 41,
-      "mb": 0,
-      "start": 0.15531248971819878,
-      "end": 0.155509396456182,
-      "duration_ms": 0.19690673798322678,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 42,
-      "mb": 0,
-      "start": 0.1616769339889288,
-      "end": 0.16187028121203184,
-      "duration_ms": 0.19334722310304642,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 42,
-      "mb": 0,
-      "start": 0.1618811609223485,
-      "end": 0.16205993201583624,
-      "duration_ms": 0.17877109348773956,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 43,
-      "mb": 0,
-      "start": 0.16831084340810776,
-      "end": 0.16858062520623207,
-      "duration_ms": 0.26978179812431335,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 43,
-      "mb": 0,
-      "start": 0.16859168745577335,
-      "end": 0.16877353005111217,
-      "duration_ms": 0.1818425953388214,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 44,
-      "mb": 0,
-      "start": 0.17493806034326553,
-      "end": 0.17520430963486433,
-      "duration_ms": 0.26624929159879684,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 44,
-      "mb": 0,
-      "start": 0.1752154277637601,
-      "end": 0.17540304735302925,
-      "duration_ms": 0.18761958926916122,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 45,
-      "mb": 0,
-      "start": 0.1815612856298685,
-      "end": 0.18173796869814396,
-      "duration_ms": 0.17668306827545166,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 45,
-      "mb": 0,
-      "start": 0.18174891453236341,
-      "end": 0.1819146415218711,
-      "duration_ms": 0.16572698950767517,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 46,
-      "mb": 0,
-      "start": 0.18819541949778795,
-      "end": 0.18836847133934498,
-      "duration_ms": 0.1730518415570259,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 46,
-      "mb": 0,
-      "start": 0.1883803177624941,
-      "end": 0.18855610862374306,
-      "duration_ms": 0.17579086124897003,
-      "node": "attention"
-    },
-    {
-      "type": "send_transfer",
-      "layer": 47,
-      "mb": 0,
-      "start": 0.19482673797756433,
-      "end": 0.1949958959594369,
-      "duration_ms": 0.1691579818725586,
-      "node": "attention"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 47,
-      "mb": 0,
-      "start": 0.19500670675188303,
-      "end": 0.19517336506396532,
-      "duration_ms": 0.16665831208229065,
-      "node": "attention"
-    },
-    {
-      "type": "attn_compute",
-      "layer": 0,
-      "mb": 0,
-      "start": 0.0006514880061149598,
-      "end": 0.00296012806892395,
-      "duration_ms": 2.3086400628089905,
-      "node": "attention"
-    },
-    {
-      "type": "attn_compute",
-      "layer": 1,
-      "mb": 0,
-      "start": 0.007195744037628174,
-      "end": 0.009296832084655761,
-      "duration_ms": 2.1010880470275874,
-      "node": "attention"
-    },
-    {
-      "type": "attn_compute",
-      "layer": 2,
-      "mb": 0,
-      "start": 0.013550111770629883,
-      "end": 0.01564956760406494,
-      "duration_ms": 2.0994558334350573,
-      "node": "attention"
-    },
-    {
-      "type": "attn_compute",
-      "layer": 3,
-      "mb": 0,
-      "start": 0.019884096145629884,
-      "end": 0.021984031677246094,
-      "duration_ms": 2.09993553161621,
-      "node": "attention"
-    },
-    {
       "type": "attn_compute",
       "layer": 4,
       "mb": 0,
-      "start": 0.026232032775878905,
-      "end": 0.02833443260192871,
-      "duration_ms": 2.1023998260498065,
+      "start": 0.04963498096913099,
+      "end": 0.05215745884925127,
+      "duration_ms": 2.5224778801202774,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.05220097862184048,
+      "end": 0.052524919621646404,
+      "duration_ms": 0.3239409998059273,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 4,
+      "mb": 1,
+      "start": 0.05238932650536299,
+      "end": 0.0525434035807848,
+      "duration_ms": 0.15407707542181015,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.05255716573446989,
+      "end": 0.052739919163286686,
+      "duration_ms": 0.18275342881679535,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 4,
+      "mb": 1,
+      "start": 0.05274787079542875,
+      "end": 0.052916559390723705,
+      "duration_ms": 0.1686885952949524,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 5,
       "mb": 0,
-      "start": 0.032575584411621096,
-      "end": 0.0346956787109375,
-      "duration_ms": 2.120094299316401,
+      "start": 0.06177511066198349,
+      "end": 0.06429191678762436,
+      "duration_ms": 2.516806125640869,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.06433457601815462,
+      "end": 0.06465093605220318,
+      "duration_ms": 0.3163600340485573,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 5,
+      "mb": 1,
+      "start": 0.06451293732970953,
+      "end": 0.06467460002750158,
+      "duration_ms": 0.16166269779205322,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.06468893401324749,
+      "end": 0.06486444734036922,
+      "duration_ms": 0.17551332712173462,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 5,
+      "mb": 1,
+      "start": 0.06487228628247976,
+      "end": 0.06503389403223991,
+      "duration_ms": 0.1616077497601509,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 6,
       "mb": 0,
-      "start": 0.03893743896484375,
-      "end": 0.04105654525756836,
-      "duration_ms": 2.119106292724611,
+      "start": 0.07388651371002197,
+      "end": 0.07640618644654751,
+      "duration_ms": 2.5196727365255356,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.07644912227988243,
+      "end": 0.0767656909301877,
+      "duration_ms": 0.31656865030527115,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 6,
+      "mb": 1,
+      "start": 0.07663136534392834,
+      "end": 0.07678410224616528,
+      "duration_ms": 0.15273690223693848,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.07679810374975204,
+      "end": 0.07697215117514133,
+      "duration_ms": 0.17404742538928986,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 6,
+      "mb": 1,
+      "start": 0.07698047533631325,
+      "end": 0.07713775523006916,
+      "duration_ms": 0.15727989375591278,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 7,
       "mb": 0,
-      "start": 0.04530537414550781,
-      "end": 0.047422401428222655,
-      "duration_ms": 2.117027282714845,
+      "start": 0.08599776402115822,
+      "end": 0.08851758018136024,
+      "duration_ms": 2.5198161602020264,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.0885604489594698,
+      "end": 0.08887911029160023,
+      "duration_ms": 0.31866133213043213,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 7,
+      "mb": 1,
+      "start": 0.08874417189508677,
+      "end": 0.08889729343354702,
+      "duration_ms": 0.15312153846025467,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.08891068305820227,
+      "end": 0.08908405900001526,
+      "duration_ms": 0.1733759418129921,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 7,
+      "mb": 1,
+      "start": 0.08909182250499725,
+      "end": 0.08924988843500614,
+      "duration_ms": 0.15806593000888824,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 8,
       "mb": 0,
-      "start": 0.051656959533691406,
-      "end": 0.05377545547485352,
-      "duration_ms": 2.1184959411621116,
+      "start": 0.09813815075904131,
+      "end": 0.10066346172243357,
+      "duration_ms": 2.5253109633922577,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.10070628020912409,
+      "end": 0.10102210845798254,
+      "duration_ms": 0.31582824885845184,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 8,
+      "mb": 1,
+      "start": 0.10088730324059725,
+      "end": 0.10104050766676664,
+      "duration_ms": 0.15320442616939545,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.10105410404503345,
+      "end": 0.10123127792030573,
+      "duration_ms": 0.17717387527227402,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 8,
+      "mb": 1,
+      "start": 0.1012389613315463,
+      "end": 0.10196185763925314,
+      "duration_ms": 0.7228963077068329,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 9,
       "mb": 0,
-      "start": 0.05801475143432617,
-      "end": 0.0601091537475586,
-      "duration_ms": 2.094402313232428,
+      "start": 0.11025345977395773,
+      "end": 0.11278463527560234,
+      "duration_ms": 2.5311755016446114,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.11282931827008724,
+      "end": 0.11313590221107006,
+      "duration_ms": 0.3065839409828186,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 9,
+      "mb": 1,
+      "start": 0.1130029633641243,
+      "end": 0.1131543992087245,
+      "duration_ms": 0.15143584460020065,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.11316771246492863,
+      "end": 0.11335942801088095,
+      "duration_ms": 0.1917155459523201,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 9,
+      "mb": 1,
+      "start": 0.11336750537157059,
+      "end": 0.11358390748500824,
+      "duration_ms": 0.2164021134376526,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 10,
       "mb": 0,
-      "start": 0.06434947204589844,
-      "end": 0.06644057464599609,
-      "duration_ms": 2.0911026000976496,
+      "start": 0.12238714285194874,
+      "end": 0.12488954421132803,
+      "duration_ms": 2.5024013593792915,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.12493218295276165,
+      "end": 0.12525249272584915,
+      "duration_ms": 0.3203097730875015,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 10,
+      "mb": 1,
+      "start": 0.1251142993569374,
+      "end": 0.12527105398476124,
+      "duration_ms": 0.15675462782382965,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.1252855323255062,
+      "end": 0.1254655234515667,
+      "duration_ms": 0.17999112606048584,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 10,
+      "mb": 1,
+      "start": 0.12547348346561193,
+      "end": 0.12564875278621912,
+      "duration_ms": 0.17526932060718536,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 11,
       "mb": 0,
-      "start": 0.07068396759033203,
-      "end": 0.07277049255371094,
-      "duration_ms": 2.0865249633789107,
+      "start": 0.13454808574169874,
+      "end": 0.13705075066536665,
+      "duration_ms": 2.5026649236679077,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.13709348067641258,
+      "end": 0.13749343063682318,
+      "duration_ms": 0.39994996041059494,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 11,
+      "mb": 1,
+      "start": 0.13734711799770594,
+      "end": 0.13751169573515654,
+      "duration_ms": 0.16457773745059967,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.13752607814967632,
+      "end": 0.13772067613899708,
+      "duration_ms": 0.194597989320755,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 11,
+      "mb": 1,
+      "start": 0.13772850297391415,
+      "end": 0.13791006803512573,
+      "duration_ms": 0.181565061211586,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 12,
       "mb": 0,
-      "start": 0.07701081848144531,
-      "end": 0.07912761688232423,
-      "duration_ms": 2.1167984008789165,
+      "start": 0.14670908357948065,
+      "end": 0.14921271987259388,
+      "duration_ms": 2.5036362931132317,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.14925513975322247,
+      "end": 0.14957400225102901,
+      "duration_ms": 0.3188624978065491,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 12,
+      "mb": 1,
+      "start": 0.14943382423371077,
+      "end": 0.14959265105426311,
+      "duration_ms": 0.1588268205523491,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.1496061384677887,
+      "end": 0.14979966171085835,
+      "duration_ms": 0.19352324306964874,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 12,
+      "mb": 1,
+      "start": 0.14980800542980433,
+      "end": 0.149977570399642,
+      "duration_ms": 0.16956496983766556,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 13,
       "mb": 0,
-      "start": 0.08337490844726562,
-      "end": 0.08548162841796875,
-      "duration_ms": 2.106719970703122,
+      "start": 0.15882197674363852,
+      "end": 0.1613240521401167,
+      "duration_ms": 2.502075396478176,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.16136650368571281,
+      "end": 0.16167491115629673,
+      "duration_ms": 0.3084074705839157,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 13,
+      "mb": 1,
+      "start": 0.16153964400291443,
+      "end": 0.1616937918588519,
+      "duration_ms": 0.15414785593748093,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.16170729976147413,
+      "end": 0.1618839055299759,
+      "duration_ms": 0.17660576850175858,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 13,
+      "mb": 1,
+      "start": 0.16189221292734146,
+      "end": 0.16205756831914186,
+      "duration_ms": 0.1653553918004036,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 14,
       "mb": 0,
-      "start": 0.08971161651611329,
-      "end": 0.09181587219238281,
-      "duration_ms": 2.104255676269526,
+      "start": 0.17196415271610022,
+      "end": 0.1744861276820302,
+      "duration_ms": 2.521974965929985,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.17452992964535952,
+      "end": 0.1748665077611804,
+      "duration_ms": 0.3365781158208847,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 14,
+      "mb": 1,
+      "start": 0.17472174670547247,
+      "end": 0.17488480359315872,
+      "duration_ms": 0.1630568876862526,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.17489878926426172,
+      "end": 0.1750903893262148,
+      "duration_ms": 0.19160006195306778,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 14,
+      "mb": 1,
+      "start": 0.17509851604700089,
+      "end": 0.17534444481134415,
+      "duration_ms": 0.24592876434326172,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 15,
       "mb": 0,
-      "start": 0.09606377410888672,
-      "end": 0.09815379333496094,
-      "duration_ms": 2.0900192260742134,
+      "start": 0.18408725690096617,
+      "end": 0.18659469299018383,
+      "duration_ms": 2.507436089217663,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.18663848098367453,
+      "end": 0.1869632713496685,
+      "duration_ms": 0.3247903659939766,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 15,
+      "mb": 1,
+      "start": 0.18682186119258404,
+      "end": 0.1869825692847371,
+      "duration_ms": 0.16070809215307236,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.1869959458708763,
+      "end": 0.18717539682984352,
+      "duration_ms": 0.17945095896720886,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 15,
+      "mb": 1,
+      "start": 0.18718363903462887,
+      "end": 0.18734575528651476,
+      "duration_ms": 0.16211625188589096,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 16,
       "mb": 0,
-      "start": 0.10238902282714844,
-      "end": 0.10449078369140626,
-      "duration_ms": 2.1017608642578125,
+      "start": 0.1961931912228465,
+      "end": 0.19869953952729702,
+      "duration_ms": 2.506348304450512,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.1987425647675991,
+      "end": 0.1990649737417698,
+      "duration_ms": 0.3224089741706848,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 16,
+      "mb": 1,
+      "start": 0.19892576429992914,
+      "end": 0.19908311776816845,
+      "duration_ms": 0.1573534682393074,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.1990963676944375,
+      "end": 0.1992700481787324,
+      "duration_ms": 0.17368048429489136,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 16,
+      "mb": 1,
+      "start": 0.1992782298475504,
+      "end": 0.19944413658231497,
+      "duration_ms": 0.16590673476457596,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 17,
       "mb": 0,
-      "start": 0.108720703125,
-      "end": 0.11082601928710938,
-      "duration_ms": 2.1053161621093777,
+      "start": 0.2082998724654317,
+      "end": 0.21080627758055925,
+      "duration_ms": 2.5064051151275635,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.2108508050441742,
+      "end": 0.2111697643995285,
+      "duration_ms": 0.3189593553543091,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 17,
+      "mb": 1,
+      "start": 0.21103408001363277,
+      "end": 0.21118822414427996,
+      "duration_ms": 0.15414413064718246,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.21120150946080685,
+      "end": 0.21137424651533365,
+      "duration_ms": 0.17273705452680588,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 17,
+      "mb": 1,
+      "start": 0.21138220932334661,
+      "end": 0.2115449644625187,
+      "duration_ms": 0.16275513917207718,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 18,
       "mb": 0,
-      "start": 0.11507465362548829,
-      "end": 0.11717686462402344,
-      "duration_ms": 2.1022109985351505,
+      "start": 0.2204317646101117,
+      "end": 0.22293394804000854,
+      "duration_ms": 2.5021834298968315,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.22297698631882668,
+      "end": 0.22329840436577797,
+      "duration_ms": 0.32141804695129395,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 18,
+      "mb": 1,
+      "start": 0.22315702494233847,
+      "end": 0.22331672254949808,
+      "duration_ms": 0.15969760715961456,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.22333124373108149,
+      "end": 0.2235053451731801,
+      "duration_ms": 0.17410144209861755,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 18,
+      "mb": 1,
+      "start": 0.22351326327770948,
+      "end": 0.2236934332177043,
+      "duration_ms": 0.180169939994812,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 19,
       "mb": 0,
-      "start": 0.12141632080078125,
-      "end": 0.12350701141357422,
-      "duration_ms": 2.0906906127929616,
+      "start": 0.23254638072103262,
+      "end": 0.2350569711998105,
+      "duration_ms": 2.5105904787778854,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.23509944416582584,
+      "end": 0.23542596586048603,
+      "duration_ms": 0.32652169466018677,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 19,
+      "mb": 1,
+      "start": 0.23528499621897936,
+      "end": 0.2354441788047552,
+      "duration_ms": 0.1591825857758522,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.23545806668698788,
+      "end": 0.2356396783143282,
+      "duration_ms": 0.18161162734031677,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 19,
+      "mb": 1,
+      "start": 0.23564761970192194,
+      "end": 0.23580576665699482,
+      "duration_ms": 0.1581469550728798,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 20,
       "mb": 0,
-      "start": 0.127746337890625,
-      "end": 0.1298474578857422,
-      "duration_ms": 2.1011199951171955,
+      "start": 0.2446610713377595,
+      "end": 0.24717120453715324,
+      "duration_ms": 2.5101331993937492,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.24721405562013388,
+      "end": 0.247528912499547,
+      "duration_ms": 0.3148568794131279,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 20,
+      "mb": 1,
+      "start": 0.2473920313641429,
+      "end": 0.24754712264984846,
+      "duration_ms": 0.1550912857055664,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.24756058026105165,
+      "end": 0.24773529917001724,
+      "duration_ms": 0.17471890896558762,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 20,
+      "mb": 1,
+      "start": 0.24774337653070688,
+      "end": 0.24790525995194912,
+      "duration_ms": 0.1618834212422371,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 21,
       "mb": 0,
-      "start": 0.13409397888183594,
-      "end": 0.1362021484375,
-      "duration_ms": 2.1081695556640634,
+      "start": 0.25676373671740294,
+      "end": 0.25929034501314163,
+      "duration_ms": 2.526608295738697,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.25933321192860603,
+      "end": 0.2596527496352792,
+      "duration_ms": 0.3195377066731453,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 21,
+      "mb": 1,
+      "start": 0.2595142014324665,
+      "end": 0.2596708321943879,
+      "duration_ms": 0.1566307619214058,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.259684051387012,
+      "end": 0.2598590599372983,
+      "duration_ms": 0.17500855028629303,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 21,
+      "mb": 1,
+      "start": 0.2598678879439831,
+      "end": 0.26002576760947704,
+      "duration_ms": 0.15787966549396515,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 22,
       "mb": 0,
-      "start": 0.14043807983398438,
-      "end": 0.14253202819824218,
-      "duration_ms": 2.0939483642578027,
+      "start": 0.26887276861816645,
+      "end": 0.27139491494745016,
+      "duration_ms": 2.5221463292837143,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.27143734879791737,
+      "end": 0.2717654788866639,
+      "duration_ms": 0.3281300887465477,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 22,
+      "mb": 1,
+      "start": 0.2716180980205536,
+      "end": 0.271783790551126,
+      "duration_ms": 0.1656925305724144,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.2717968709766865,
+      "end": 0.27196963783353567,
+      "duration_ms": 0.17276685684919357,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 22,
+      "mb": 1,
+      "start": 0.27197778038680553,
+      "end": 0.2721423888579011,
+      "duration_ms": 0.16460847109556198,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 23,
       "mb": 0,
-      "start": 0.14677247619628905,
-      "end": 0.1488709716796875,
-      "duration_ms": 2.0984954833984384,
+      "start": 0.2809778805822134,
+      "end": 0.28349463548511267,
+      "duration_ms": 2.5167549028992653,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.2835372518748045,
+      "end": 0.2838588133454323,
+      "duration_ms": 0.32156147062778473,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 23,
+      "mb": 1,
+      "start": 0.28371963556855917,
+      "end": 0.2838771129027009,
+      "duration_ms": 0.15747733414173126,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.2838902659714222,
+      "end": 0.2840719651430845,
+      "duration_ms": 0.18169917166233063,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 23,
+      "mb": 1,
+      "start": 0.28407992515712976,
+      "end": 0.284237933345139,
+      "duration_ms": 0.15800818800926208,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 24,
       "mb": 0,
-      "start": 0.15309954833984374,
-      "end": 0.15548214721679687,
-      "duration_ms": 2.3825988769531348,
+      "start": 0.29309152252972126,
+      "end": 0.2963262377306819,
+      "duration_ms": 3.234715200960636,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.29637084156274796,
+      "end": 0.29669132735580206,
+      "duration_ms": 0.32048579305410385,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 24,
+      "mb": 1,
+      "start": 0.2965526282787323,
+      "end": 0.2967099640518427,
+      "duration_ms": 0.1573357731103897,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.29672324005514383,
+      "end": 0.29689803160727024,
+      "duration_ms": 0.17479155212640762,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 24,
+      "mb": 1,
+      "start": 0.2969062440097332,
+      "end": 0.29706148989498615,
+      "duration_ms": 0.15524588525295258,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 25,
       "mb": 0,
-      "start": 0.15979090881347657,
-      "end": 0.16215426635742186,
-      "duration_ms": 2.363357543945288,
+      "start": 0.3062103474512696,
+      "end": 0.3092934172600508,
+      "duration_ms": 3.083069808781147,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.30933846067637205,
+      "end": 0.30964537151157856,
+      "duration_ms": 0.30691083520650864,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 25,
+      "mb": 1,
+      "start": 0.309511074796319,
+      "end": 0.30966378189623356,
+      "duration_ms": 0.15270709991455078,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.3096773363649845,
+      "end": 0.309873653575778,
+      "duration_ms": 0.19631721079349518,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 25,
+      "mb": 1,
+      "start": 0.30988831631839275,
+      "end": 0.31007038801908493,
+      "duration_ms": 0.18207170069217682,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 26,
       "mb": 0,
-      "start": 0.16641871643066405,
-      "end": 0.16879446411132812,
-      "duration_ms": 2.3757476806640643,
+      "start": 0.31915565952658653,
+      "end": 0.322224386036396,
+      "duration_ms": 3.068726509809494,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.32226869370788336,
+      "end": 0.32261510845273733,
+      "duration_ms": 0.3464147448539734,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 26,
+      "mb": 1,
+      "start": 0.3224613480269909,
+      "end": 0.32263373490422964,
+      "duration_ms": 0.17238687723875046,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.32264708913862705,
+      "end": 0.3228373406454921,
+      "duration_ms": 0.19025150686502457,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 26,
+      "mb": 1,
+      "start": 0.3228456024080515,
+      "end": 0.32300793658941984,
+      "duration_ms": 0.16233418136835098,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 27,
       "mb": 0,
-      "start": 0.17304115295410155,
-      "end": 0.17542906188964844,
-      "duration_ms": 2.387908935546884,
+      "start": 0.33210166078060865,
+      "end": 0.3351681400090456,
+      "duration_ms": 3.066479228436947,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.33521201089024544,
+      "end": 0.33554135635495186,
+      "duration_ms": 0.3293454647064209,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 27,
+      "mb": 1,
+      "start": 0.3353935368359089,
+      "end": 0.33555989153683186,
+      "duration_ms": 0.166354700922966,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.33557297103106976,
+      "end": 0.3357502305880189,
+      "duration_ms": 0.17725955694913864,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 27,
+      "mb": 1,
+      "start": 0.33575819339603186,
+      "end": 0.3359756385907531,
+      "duration_ms": 0.21744519472122192,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 28,
       "mb": 0,
-      "start": 0.17967372131347656,
-      "end": 0.18205906677246095,
-      "duration_ms": 2.385345458984389,
+      "start": 0.3450142899528146,
+      "end": 0.34807897359132767,
+      "duration_ms": 3.0646836385130882,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.3481233287602663,
+      "end": 0.3484487561509013,
+      "duration_ms": 0.3254273906350136,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 28,
+      "mb": 1,
+      "start": 0.348302804864943,
+      "end": 0.3484670091420412,
+      "duration_ms": 0.16420427709817886,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.3484811233356595,
+      "end": 0.3487295154482126,
+      "duration_ms": 0.24839211255311966,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 28,
+      "mb": 1,
+      "start": 0.34873784333467484,
+      "end": 0.3489250708371401,
+      "duration_ms": 0.1872275024652481,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 29,
       "mb": 0,
-      "start": 0.1863059844970703,
-      "end": 0.18868357849121092,
-      "duration_ms": 2.3775939941406143,
+      "start": 0.357927767559886,
+      "end": 0.3609781302511692,
+      "duration_ms": 3.050362691283226,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.36102198623120785,
+      "end": 0.36134820617735386,
+      "duration_ms": 0.32621994614601135,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 29,
+      "mb": 1,
+      "start": 0.3612043661996722,
+      "end": 0.3613663464784622,
+      "duration_ms": 0.1619802787899971,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.36137968115508556,
+      "end": 0.3615548936650157,
+      "duration_ms": 0.17521250993013382,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 29,
+      "mb": 1,
+      "start": 0.3615632215514779,
+      "end": 0.36172915901988745,
+      "duration_ms": 0.16593746840953827,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 30,
       "mb": 0,
-      "start": 0.19293110656738283,
-      "end": 0.19532278442382814,
-      "duration_ms": 2.3916778564453125,
+      "start": 0.3708404917269945,
+      "end": 0.3738781725987792,
+      "duration_ms": 3.037680871784687,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.37392180878669024,
+      "end": 0.37423091381788254,
+      "duration_ms": 0.3091050311923027,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 30,
+      "mb": 1,
+      "start": 0.3740928638726473,
+      "end": 0.374249717220664,
+      "duration_ms": 0.1568533480167389,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.37426332104951143,
+      "end": 0.37445448245853186,
+      "duration_ms": 0.1911614090204239,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 30,
+      "mb": 1,
+      "start": 0.37446287646889687,
+      "end": 0.37463249266147614,
+      "duration_ms": 0.1696161925792694,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 31,
       "mb": 0,
-      "start": 0.19956527709960936,
-      "end": 0.20195315551757811,
-      "duration_ms": 2.3878784179687527,
+      "start": 0.3837262075394392,
+      "end": 0.3867658106610179,
+      "duration_ms": 3.0396031215786934,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.38681090623140335,
+      "end": 0.3871307922527194,
+      "duration_ms": 0.3198860213160515,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 31,
+      "mb": 1,
+      "start": 0.38699128944426775,
+      "end": 0.38714904244989157,
+      "duration_ms": 0.15775300562381744,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.38716230262070894,
+      "end": 0.3873393973335624,
+      "duration_ms": 0.1770947128534317,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 31,
+      "mb": 1,
+      "start": 0.3873476814478636,
+      "end": 0.3875065930187702,
+      "duration_ms": 0.1589115709066391,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 32,
       "mb": 0,
-      "start": 0.20619241333007812,
-      "end": 0.20857554626464844,
-      "duration_ms": 2.38313293457032,
+      "start": 0.39659719727933407,
+      "end": 0.39966737665235996,
+      "duration_ms": 3.070179373025894,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.39971111435443163,
+      "end": 0.40002902038395405,
+      "duration_ms": 0.317906029522419,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 32,
+      "mb": 1,
+      "start": 0.39988993015140295,
+      "end": 0.4000473953783512,
+      "duration_ms": 0.15746522694826126,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.40006081387400627,
+      "end": 0.4002514062449336,
+      "duration_ms": 0.19059237092733383,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 32,
+      "mb": 1,
+      "start": 0.40025956463068724,
+      "end": 0.40042972937226295,
+      "duration_ms": 0.17016474157571793,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 33,
       "mb": 0,
-      "start": 0.2128357391357422,
-      "end": 0.2152097930908203,
-      "duration_ms": 2.374053955078115,
+      "start": 0.40952465683221817,
+      "end": 0.41259544901549816,
+      "duration_ms": 3.070792183279991,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.41264094319194555,
+      "end": 0.41296549793332815,
+      "duration_ms": 0.3245547413825989,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 33,
+      "mb": 1,
+      "start": 0.4128233352676034,
+      "end": 0.41298407316207886,
+      "duration_ms": 0.16073789447546005,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.41299739200621843,
+      "end": 0.41317169182002544,
+      "duration_ms": 0.17429981380701065,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 33,
+      "mb": 1,
+      "start": 0.41318016592413187,
+      "end": 0.41333808936178684,
+      "duration_ms": 0.15792343765497208,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 34,
       "mb": 0,
-      "start": 0.21946482849121093,
-      "end": 0.22185218811035157,
-      "duration_ms": 2.387359619140633,
+      "start": 0.4224908947944641,
+      "end": 0.4268611101433635,
+      "duration_ms": 4.3702153488993645,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.42690663132816553,
+      "end": 0.4273288119584322,
+      "duration_ms": 0.4221806302666664,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 34,
+      "mb": 1,
+      "start": 0.4271000474691391,
+      "end": 0.4273472400382161,
+      "duration_ms": 0.24719256907701492,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.42737360298633575,
+      "end": 0.4276434928178787,
+      "duration_ms": 0.26988983154296875,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 34,
+      "mb": 1,
+      "start": 0.4276518616825342,
+      "end": 0.427836524322629,
+      "duration_ms": 0.18466264009475708,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 35,
       "mb": 0,
-      "start": 0.22610211181640624,
-      "end": 0.22848626708984374,
-      "duration_ms": 2.384155273437494,
+      "start": 0.4367399448528886,
+      "end": 0.43977908324450254,
+      "duration_ms": 3.0391383916139603,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.43982297740876675,
+      "end": 0.44014870934188366,
+      "duration_ms": 0.32573193311691284,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 35,
+      "mb": 1,
+      "start": 0.44000787381082773,
+      "end": 0.44016680773347616,
+      "duration_ms": 0.15893392264842987,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.44017997197806835,
+      "end": 0.4403549339622259,
+      "duration_ms": 0.17496198415756226,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 35,
+      "mb": 1,
+      "start": 0.440363054163754,
+      "end": 0.44060483295470476,
+      "duration_ms": 0.24177879095077515,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 36,
       "mb": 0,
-      "start": 0.23273829650878905,
-      "end": 0.23512409973144532,
-      "duration_ms": 2.385803222656274,
+      "start": 0.4496187912300229,
+      "end": 0.4526784596964717,
+      "duration_ms": 3.059668466448784,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.4527225736528635,
+      "end": 0.453042171895504,
+      "duration_ms": 0.3195982426404953,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 36,
+      "mb": 1,
+      "start": 0.4528996292501688,
+      "end": 0.4530605925247073,
+      "duration_ms": 0.160963274538517,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.4530739337205887,
+      "end": 0.45326094795018435,
+      "duration_ms": 0.18701422959566116,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 36,
+      "mb": 1,
+      "start": 0.45326905883848667,
+      "end": 0.45342636853456497,
+      "duration_ms": 0.15730969607830048,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 37,
       "mb": 0,
-      "start": 0.2393764190673828,
-      "end": 0.24176856994628906,
-      "duration_ms": 2.392150878906263,
+      "start": 0.46252703573554754,
+      "end": 0.4655626751482487,
+      "duration_ms": 3.03563941270113,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.46560692600905895,
+      "end": 0.4659268641844392,
+      "duration_ms": 0.31993817538022995,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 37,
+      "mb": 1,
+      "start": 0.46578230895102024,
+      "end": 0.46594561636447906,
+      "duration_ms": 0.16330741345882416,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.465959201566875,
+      "end": 0.46622443664819,
+      "duration_ms": 0.2652350813150406,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 37,
+      "mb": 1,
+      "start": 0.46623289305716753,
+      "end": 0.46642992086708546,
+      "duration_ms": 0.1970278099179268,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 38,
       "mb": 0,
-      "start": 0.24601565551757812,
-      "end": 0.248389892578125,
-      "duration_ms": 2.374237060546874,
+      "start": 0.4753858521580696,
+      "end": 0.478428459726274,
+      "duration_ms": 3.042607568204403,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.4784732861444354,
+      "end": 0.4787969896569848,
+      "duration_ms": 0.32370351254940033,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 38,
+      "mb": 1,
+      "start": 0.4786553243175149,
+      "end": 0.4788158033043146,
+      "duration_ms": 0.16047898679971695,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.47882920131087303,
+      "end": 0.4790114499628544,
+      "duration_ms": 0.18224865198135376,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 38,
+      "mb": 1,
+      "start": 0.4790198318660259,
+      "end": 0.4791829213500023,
+      "duration_ms": 0.16308948397636414,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 39,
       "mb": 0,
-      "start": 0.2526329650878906,
-      "end": 0.25503208923339843,
-      "duration_ms": 2.3991241455078027,
+      "start": 0.48824153281748295,
+      "end": 0.4913291037082672,
+      "duration_ms": 3.0875708907842636,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.49137330520898104,
+      "end": 0.491706277243793,
+      "duration_ms": 0.33297203481197357,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 39,
+      "mb": 1,
+      "start": 0.49156188778579235,
+      "end": 0.49172467086464167,
+      "duration_ms": 0.16278307884931564,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.49173800088465214,
+      "end": 0.49191113095730543,
+      "duration_ms": 0.1731300726532936,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 39,
+      "mb": 1,
+      "start": 0.49191929399967194,
+      "end": 0.4920830000191927,
+      "duration_ms": 0.16370601952075958,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 40,
       "mb": 0,
-      "start": 0.259288818359375,
-      "end": 0.2616771240234375,
-      "duration_ms": 2.3883056640625067,
+      "start": 0.5011769812554121,
+      "end": 0.5042380541563034,
+      "duration_ms": 3.061072900891304,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.5042850812897086,
+      "end": 0.5046084001660347,
+      "duration_ms": 0.32331887632608414,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 40,
+      "mb": 1,
+      "start": 0.5044692009687424,
+      "end": 0.5046269204467535,
+      "duration_ms": 0.1577194780111313,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.5046406229957938,
+      "end": 0.5048160450533032,
+      "duration_ms": 0.1754220575094223,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 40,
+      "mb": 1,
+      "start": 0.5048240777105093,
+      "end": 0.5049835350364447,
+      "duration_ms": 0.15945732593536377,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 41,
       "mb": 0,
-      "start": 0.26593325805664064,
-      "end": 0.26832562255859377,
-      "duration_ms": 2.392364501953126,
+      "start": 0.5140832206234336,
+      "end": 0.5171417249366641,
+      "duration_ms": 3.0585043132305145,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.5171860279515386,
+      "end": 0.5175060564652085,
+      "duration_ms": 0.32002851366996765,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 41,
+      "mb": 1,
+      "start": 0.5173696214333177,
+      "end": 0.5175245935097337,
+      "duration_ms": 0.15497207641601562,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.5175381917506456,
+      "end": 0.5177107928320765,
+      "duration_ms": 0.17260108143091202,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 41,
+      "mb": 1,
+      "start": 0.5177191598340869,
+      "end": 0.5178882228210568,
+      "duration_ms": 0.16906298696994781,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 42,
       "mb": 0,
-      "start": 0.27257952880859376,
-      "end": 0.27496444702148437,
-      "duration_ms": 2.3849182128906077,
+      "start": 0.5269849011674523,
+      "end": 0.5300342133268714,
+      "duration_ms": 3.0493121594190598,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.5300785517320037,
+      "end": 0.530409686267376,
+      "duration_ms": 0.33113453537225723,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 42,
+      "mb": 1,
+      "start": 0.5302461534738541,
+      "end": 0.530428571626544,
+      "duration_ms": 0.18241815268993378,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.5304423132911325,
+      "end": 0.5306274918839335,
+      "duration_ms": 0.18517859280109406,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 42,
+      "mb": 1,
+      "start": 0.5306358821690083,
+      "end": 0.5307960929349065,
+      "duration_ms": 0.1602107658982277,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 43,
       "mb": 0,
-      "start": 0.2792214050292969,
-      "end": 0.2816051635742188,
-      "duration_ms": 2.383758544921899,
+      "start": 0.5399004854261875,
+      "end": 0.542935942299664,
+      "duration_ms": 3.0354568734765053,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.5429803691804409,
+      "end": 0.5433037662878633,
+      "duration_ms": 0.32339710742235184,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 43,
+      "mb": 1,
+      "start": 0.5431631663814187,
+      "end": 0.543322179466486,
+      "duration_ms": 0.1590130850672722,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.5433354210108519,
+      "end": 0.5435142107307911,
+      "duration_ms": 0.17878971993923187,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 43,
+      "mb": 1,
+      "start": 0.5435224156826735,
+      "end": 0.5436850395053625,
+      "duration_ms": 0.1626238226890564,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 44,
       "mb": 0,
-      "start": 0.2858731384277344,
-      "end": 0.28825811767578124,
-      "duration_ms": 2.38497924804687,
+      "start": 0.5527869649231434,
+      "end": 0.5558346845209599,
+      "duration_ms": 3.0477195978164673,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.555878589861095,
+      "end": 0.5562018007040024,
+      "duration_ms": 0.32321084290742874,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 44,
+      "mb": 1,
+      "start": 0.5560609381645918,
+      "end": 0.5562202669680119,
+      "duration_ms": 0.15932880342006683,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.5562336007133126,
+      "end": 0.5564109040424228,
+      "duration_ms": 0.17730332911014557,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 44,
+      "mb": 1,
+      "start": 0.5564190847799182,
+      "end": 0.5565766487270594,
+      "duration_ms": 0.1575639471411705,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 45,
       "mb": 0,
-      "start": 0.29251248168945315,
-      "end": 0.294897216796875,
-      "duration_ms": 2.3847351074218204,
+      "start": 0.5656557315960526,
+      "end": 0.56871697306633,
+      "duration_ms": 3.0612414702773094,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.5687607796862721,
+      "end": 0.5690789893269539,
+      "duration_ms": 0.3182096406817436,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 45,
+      "mb": 1,
+      "start": 0.5689403088763356,
+      "end": 0.569097213447094,
+      "duration_ms": 0.15690457075834274,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.5691106850281358,
+      "end": 0.5692868148908019,
+      "duration_ms": 0.17612986266613007,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 45,
+      "mb": 1,
+      "start": 0.5692951679229736,
+      "end": 0.5694525111466646,
+      "duration_ms": 0.15734322369098663,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 46,
       "mb": 0,
-      "start": 0.2991434020996094,
-      "end": 0.30151458740234377,
-      "duration_ms": 2.371185302734391,
+      "start": 0.578567236661911,
+      "end": 0.5816122395917773,
+      "duration_ms": 3.045002929866314,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.5816562790423632,
+      "end": 0.5819788463413715,
+      "duration_ms": 0.32256729900836945,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 46,
+      "mb": 1,
+      "start": 0.5818353118374944,
+      "end": 0.5819974914193153,
+      "duration_ms": 0.1621795818209648,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.5820209207013249,
+      "end": 0.582220240496099,
+      "duration_ms": 0.19931979477405548,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 46,
+      "mb": 1,
+      "start": 0.5822285357862711,
+      "end": 0.5824259128421545,
+      "duration_ms": 0.1973770558834076,
       "node": "attention"
     },
     {
       "type": "attn_compute",
       "layer": 47,
       "mb": 0,
-      "start": 0.305767333984375,
-      "end": 0.30814569091796873,
-      "duration_ms": 2.3783569335937282,
+      "start": 0.5914574973285198,
+      "end": 0.5944934040307999,
+      "duration_ms": 3.0359067022800446,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.5945386318489909,
+      "end": 0.5948578333482146,
+      "duration_ms": 0.3192014992237091,
+      "node": "attention"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 47,
+      "mb": 1,
+      "start": 0.5947184329852462,
+      "end": 0.5948761915788054,
+      "duration_ms": 0.15775859355926514,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.5948895439505577,
+      "end": 0.5950631834566593,
+      "duration_ms": 0.17363950610160828,
+      "node": "attention"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 47,
+      "mb": 1,
+      "start": 0.5950713437050581,
+      "end": 0.5952405435964465,
+      "duration_ms": 0.1691998913884163,
       "node": "attention"
     }
   ]
