@@ -45,7 +45,8 @@ def setup_logging(verbose: bool = False):
     """Configure logging level."""
     level = logging.DEBUG if verbose else logging.INFO
     
-    # Suppress noisy loggers
+    # Suppress noisy loggers (keep src.model and src.pipeline at WARNING
+    # so important init/config messages are visible)
     for name in [
         "transformers",
         "torch.distributed",
@@ -54,10 +55,10 @@ def setup_logging(verbose: bool = False):
         "httpcore",
         "urllib3",
         "src.distributed",
-        "src.model",
-        "src.pipeline",
     ]:
         logging.getLogger(name).setLevel(logging.WARNING if verbose else logging.ERROR)
+    for name in ["src.model", "src.pipeline"]:
+        logging.getLogger(name).setLevel(logging.DEBUG if verbose else logging.INFO)
     
     logging.basicConfig(
         level=level,

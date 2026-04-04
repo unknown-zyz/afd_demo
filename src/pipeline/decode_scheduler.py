@@ -1,13 +1,13 @@
 """
 Decode DBO Scheduler - Pipeline for decode phase with micro-batch overlap.
 
-Implements the same DBO (Dual Batch Overlap) principle as the prefill scheduler:
+Implements the DBO (Dual Batch Overlap) principle on BOTH attention and FFN sides:
+- Attention side: per-MB attention → isend(MB_i) || attention(MB_{i+1})
 - FFN side: compute(MB0) → isend(MB0) || compute(MB1) → isend(MB1)
-- The isend of one micro-batch overlaps with the compute of the next
 
-Key difference from prefill: attention computation is full-batch because
-KV cache is shared across all batch entries and cannot be split. Only the
-FFN communication and computation are micro-batched.
+KV cache (DynamicCache) stores tensors as [batch, heads, seq, dim], so the batch
+dimension is naturally sliceable. Each micro-batch runs attention with its own
+batch slice of the KV cache, then the updated slices are merged back.
 """
 
 import logging
@@ -20,6 +20,7 @@ import torch.distributed as dist
 
 from ..distributed import get_distributed_context
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
+from .async_scheduler import SendTransferMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +67,12 @@ class DecodeDBOScheduler:
     Decode phase scheduler with micro-batch DBO overlap.
 
     DBO pattern per layer:
-    - Attention node: full-batch attention → split output → isend micro-batches to FFN
+    - Attention node: for each MB: attention(MB_i) → isend(MB_i)
+      Key overlap: isend(MB_i) || attention(MB_{i+1})
+      KV cache is batch-sliced so each MB only touches its own batch range.
     - FFN node: irecv all MBs → for each: wait recv → compute → isend result
       Key overlap: isend(MB_i result) || compute(MB_{i+1})
-    - Attention node: recv all MB results → merge
-
-    Attention is always full-batch because the KV cache is shared across
-    all batch entries. The micro-batch overlap happens on the FFN side.
+    - Attention node: recv all MB results → merge → next layer
     """
 
     def __init__(
@@ -92,6 +92,8 @@ class DecodeDBOScheduler:
         # Track timing on step 1 (skip step 0 warmup)
         self._timing_step = 1
         self._current_step = 0
+        # Send monitor for accurate async send timing
+        self._send_monitor: Optional[SendTransferMonitor] = None
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
         )
@@ -136,6 +138,9 @@ class DecodeDBOScheduler:
                 num_micro_batches=actual_num_mb,
                 mode=self.timing_mode,
             )
+            self._send_monitor = SendTransferMonitor(poll_interval=0.0001)
+        else:
+            self._send_monitor = None
 
         if self.ctx.is_attention_node:
             result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
@@ -159,7 +164,16 @@ class DecodeDBOScheduler:
         tracker: Optional[TimingTracker] = None,
     ) -> torch.Tensor:
         """
-        Attention node: full-batch attention → split → isend micro-batches → recv results.
+        Attention node: per-MB attention with batch-sliced KV cache.
+
+        For each layer:
+        1. Snapshot the current layer's KV cache tensors
+        2. For each micro-batch:
+           a. Set cache to this MB's batch slice
+           b. Run attention (updates the sliced cache in-place)
+           c. isend result immediately (overlaps with next MB's compute)
+        3. Merge all MB cache updates back into the full KV cache
+        4. Recv FFN results for all MBs
         """
         assert self.model.attention_worker is not None
 
@@ -167,6 +181,13 @@ class DecodeDBOScheduler:
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
+
+        # Precompute batch offsets for each MB
+        mb_offsets = []
+        offset = 0
+        for s in mb_sizes:
+            mb_offsets.append(offset)
+            offset += s
 
         hidden_states = self.model.attention_worker.embed(input_ids)
         position_embeddings = self.model.attention_worker.get_position_embeddings(
@@ -177,47 +198,77 @@ class DecodeDBOScheduler:
         attention_mask = self.model._make_causal_mask(batch_size, 1, total_len)
 
         for layer_idx in range(num_layers):
-            # Full-batch attention (KV cache requires full batch)
-            if tracker:
-                torch.cuda.current_stream().synchronize()
-            compute_start = time.perf_counter()
-            attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
-                layer_idx=layer_idx,
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                position_embeddings=position_embeddings,
-                use_cache=True,
-                past_key_value=kv_cache,
-            )
-            packed = (attn_output + residual).contiguous()
-            if tracker:
-                torch.cuda.current_stream().synchronize()
-            compute_end = time.perf_counter()
-            compute_time = compute_end - compute_start
-            self.stats.compute_time += compute_time
-            self.stats.attn_compute_time += compute_time
-            if tracker:
-                tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, 0,
-                                    compute_start, compute_end)
+            cache_layer = kv_cache.layers[layer_idx]
+            orig_keys = cache_layer.keys
+            orig_values = cache_layer.values
 
-            # Split output into micro-batches and async send
-            chunks = packed.split(mb_sizes, dim=0)
+            mb_updated_keys = []
+            mb_updated_values = []
             send_handles = []
-            for mb_idx, chunk in enumerate(chunks):
+
+            for mb_idx in range(num_mb):
+                start = mb_offsets[mb_idx]
+                end = start + mb_sizes[mb_idx]
+
+                if tracker:
+                    torch.cuda.current_stream().synchronize()
+                compute_start = time.perf_counter()
+
+                # Temporarily set cache to this MB's batch slice
+                cache_layer.keys = orig_keys[start:end]
+                cache_layer.values = orig_values[start:end]
+
+                # Slice inputs for this micro-batch
+                mb_hidden = hidden_states[start:end]
+                mb_mask = attention_mask[start:end]
+                mb_pos_ids = position_ids[start:end]
+                mb_pos_emb = None
+                if position_embeddings is not None:
+                    cos, sin = position_embeddings
+                    mb_pos_emb = (cos[start:end], sin[start:end])
+
+                attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=mb_hidden,
+                    attention_mask=mb_mask,
+                    position_ids=mb_pos_ids,
+                    position_embeddings=mb_pos_emb,
+                    use_cache=True,
+                    past_key_value=kv_cache,
+                )
+
+                # Collect updated KV (attention appended 1 new token for this MB's batch slice)
+                mb_updated_keys.append(cache_layer.keys)
+                mb_updated_values.append(cache_layer.values)
+
+                packed = (attn_output + residual).contiguous()
+
+                if tracker:
+                    torch.cuda.current_stream().synchronize()
+                compute_end = time.perf_counter()
+                compute_time = compute_end - compute_start
+                self.stats.compute_time += compute_time
+                self.stats.attn_compute_time += compute_time
+                if tracker:
+                    tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
+                                        compute_start, compute_end)
+
+                # Async send immediately — next MB's attention overlaps with this send
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "a2f")
-                handle = dist.isend(chunk.contiguous(), dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append((handle, send_start, mb_idx))
+                handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
+                send_handles.append(handle)
+                if self._send_monitor:
+                    self._send_monitor.start_monitoring(
+                        handle, send_start, layer_idx, mb_idx, "a2f")
+
+            # Reconstruct full KV cache for this layer from all MB updates
+            cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
+            cache_layer.values = torch.cat(mb_updated_values, dim=0)
 
             # Wait for all sends
-            for handle, send_start, mb_idx in send_handles:
+            for handle in send_handles:
                 handle.wait()
-                send_end = time.perf_counter()
-                if tracker:
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
-                self.stats.a2f_comm_time += send_end - send_start
 
             # Receive micro-batch results from FFN
             recv_chunks = []
@@ -237,6 +288,12 @@ class DecodeDBOScheduler:
                 self.stats.f2a_comm_time += recv_end - recv_start
 
             hidden_states = torch.cat(recv_chunks, dim=0)
+
+        # Collect send monitor results for accurate timing
+        if self._send_monitor and tracker:
+            for layer_idx, mb_idx, direction, start, end in self._send_monitor.collect_results():
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx, start, end)
+                self.stats.a2f_comm_time += end - start
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
         return self.model.attention_worker.forward_lm_head(hidden_states)
@@ -309,16 +366,20 @@ class DecodeDBOScheduler:
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 send_start = time.perf_counter()
                 handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append((handle, send_start, mb_idx))
+                send_handles.append(handle)
+                if self._send_monitor:
+                    self._send_monitor.start_monitoring(
+                        handle, send_start, layer_idx, mb_idx, "f2a")
 
             # Wait for all sends to complete
-            for handle, send_start, mb_idx in send_handles:
+            for handle in send_handles:
                 handle.wait()
-                send_end = time.perf_counter()
-                if tracker:
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
-                self.stats.f2a_comm_time += send_end - send_start
+
+        # Collect send monitor results for accurate timing
+        if self._send_monitor and tracker:
+            for layer_idx, mb_idx, direction, start, end in self._send_monitor.collect_results():
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx, start, end)
+                self.stats.f2a_comm_time += end - start
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
 

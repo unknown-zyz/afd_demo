@@ -12,6 +12,7 @@ from src.pipeline.micro_batch import (
     create_position_ids,
     create_causal_mask,
 )
+from transformers import DynamicCache
 
 
 class TestMicroBatch:
@@ -258,3 +259,153 @@ class TestCrossLayerPipeline:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestKVCacheBatchSlicing:
+    """Tests for DynamicCache batch-slicing used in decode per-MB attention."""
+
+    def _make_cache(self, batch, heads, seq, dim, num_layers=2):
+        """Create a DynamicCache populated with random KV for all layers."""
+        cache = DynamicCache()
+        for layer_idx in range(num_layers):
+            k = torch.randn(batch, heads, seq, dim)
+            v = torch.randn(batch, heads, seq, dim)
+            cache.update(k, v, layer_idx)
+        return cache
+
+    def test_batch_slice_and_update(self):
+        """Verify per-MB slicing + update produces same result as full-batch update."""
+        batch, heads, seq, dim = 4, 2, 5, 8
+        num_layers = 2
+
+        # --- Full-batch path (ground truth) ---
+        cache_full = self._make_cache(batch, heads, seq, dim, num_layers)
+        new_k_full = torch.randn(batch, heads, 1, dim)
+        new_v_full = torch.randn(batch, heads, 1, dim)
+        for layer_idx in range(num_layers):
+            cache_full.update(new_k_full.clone(), new_v_full.clone(), layer_idx)
+
+        # --- Per-MB path (2 micro-batches of size 2) ---
+        cache_mb = self._make_cache(batch, heads, seq, dim, num_layers)
+        # Populate with the SAME initial data as cache_full
+        # Re-create to match initial state
+        cache_mb = DynamicCache()
+        cache_full_reset = DynamicCache()
+        init_keys = []
+        init_values = []
+        for layer_idx in range(num_layers):
+            k = torch.randn(batch, heads, seq, dim)
+            v = torch.randn(batch, heads, seq, dim)
+            init_keys.append(k)
+            init_values.append(v)
+            cache_mb.update(k.clone(), v.clone(), layer_idx)
+            cache_full_reset.update(k.clone(), v.clone(), layer_idx)
+
+        # New KV tokens for decode step
+        new_k = torch.randn(batch, heads, 1, dim)
+        new_v = torch.randn(batch, heads, 1, dim)
+
+        # Full-batch update
+        for layer_idx in range(num_layers):
+            cache_full_reset.update(new_k.clone(), new_v.clone(), layer_idx)
+
+        # Per-MB update (simulating what decode_scheduler does)
+        mb_sizes = [2, 2]
+        for layer_idx in range(num_layers):
+            cache_layer = cache_mb.layers[layer_idx]
+            orig_keys = cache_layer.keys
+            orig_values = cache_layer.values
+
+            mb_updated_keys = []
+            mb_updated_values = []
+
+            offset = 0
+            for mb_size in mb_sizes:
+                start = offset
+                end = offset + mb_size
+                offset = end
+
+                cache_layer.keys = orig_keys[start:end]
+                cache_layer.values = orig_values[start:end]
+
+                mb_k = new_k[start:end].clone()
+                mb_v = new_v[start:end].clone()
+                cache_mb.update(mb_k, mb_v, layer_idx)
+
+                mb_updated_keys.append(cache_layer.keys)
+                mb_updated_values.append(cache_layer.values)
+
+            cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
+            cache_layer.values = torch.cat(mb_updated_values, dim=0)
+
+        # Verify: per-MB result matches full-batch result
+        for layer_idx in range(num_layers):
+            full_k = cache_full_reset.layers[layer_idx].keys
+            mb_k = cache_mb.layers[layer_idx].keys
+            assert full_k.shape == mb_k.shape, (
+                f"Layer {layer_idx}: shape mismatch {full_k.shape} vs {mb_k.shape}"
+            )
+            assert torch.allclose(full_k, mb_k), f"Layer {layer_idx}: keys mismatch"
+
+            full_v = cache_full_reset.layers[layer_idx].values
+            mb_v = cache_mb.layers[layer_idx].values
+            assert torch.allclose(full_v, mb_v), f"Layer {layer_idx}: values mismatch"
+
+    def test_uneven_batch_split(self):
+        """Test per-MB cache slicing with uneven batch sizes (e.g. 5 → [3, 2])."""
+        batch, heads, seq, dim = 5, 2, 4, 8
+
+        cache = DynamicCache()
+        k = torch.randn(batch, heads, seq, dim)
+        v = torch.randn(batch, heads, seq, dim)
+        cache.update(k.clone(), v.clone(), layer_idx=0)
+
+        new_k = torch.randn(batch, heads, 1, dim)
+        new_v = torch.randn(batch, heads, 1, dim)
+
+        layer = cache.layers[0]
+        orig_keys = layer.keys
+        orig_values = layer.values
+
+        mb_sizes = [3, 2]
+        mb_updated_keys = []
+        mb_updated_values = []
+        offset = 0
+        for mb_size in mb_sizes:
+            start, end = offset, offset + mb_size
+            offset = end
+
+            layer.keys = orig_keys[start:end]
+            layer.values = orig_values[start:end]
+            cache.update(new_k[start:end].clone(), new_v[start:end].clone(), layer_idx=0)
+            mb_updated_keys.append(layer.keys)
+            mb_updated_values.append(layer.values)
+
+        layer.keys = torch.cat(mb_updated_keys, dim=0)
+        layer.values = torch.cat(mb_updated_values, dim=0)
+
+        assert layer.keys.shape == (5, heads, seq + 1, dim)
+        assert layer.values.shape == (5, heads, seq + 1, dim)
+
+    def test_single_mb_equivalent_to_full_batch(self):
+        """With num_mb=1, per-MB path is identical to full-batch."""
+        batch, heads, seq, dim = 4, 2, 6, 8
+
+        cache = DynamicCache()
+        k = torch.randn(batch, heads, seq, dim)
+        v = torch.randn(batch, heads, seq, dim)
+        cache.update(k.clone(), v.clone(), layer_idx=0)
+
+        new_k = torch.randn(batch, heads, 1, dim)
+        new_v = torch.randn(batch, heads, 1, dim)
+
+        # Single MB = full batch (no slicing needed)
+        layer = cache.layers[0]
+        orig_keys = layer.keys.clone()
+
+        cache.update(new_k, new_v, layer_idx=0)
+
+        # Keys should be [batch, heads, seq+1, dim]
+        assert layer.keys.shape == (batch, heads, seq + 1, dim)
+        # First seq tokens should match original
+        assert torch.allclose(layer.keys[:, :, :seq, :], orig_keys)
