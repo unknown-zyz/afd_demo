@@ -2,9 +2,27 @@
 # v3 全量实验: Decode + Prefill × DBO On/Off, push until OOM
 # 使用 run_single.sh 确保 timing 文件命名一致
 # 输出: results/experiments_qwen3_v3/{decode,prefill}/
-set -e
+set -eo pipefail
 cd "$(dirname "$0")/.."
 source venv/bin/activate
+
+# Kill ALL python src.main processes (including from rogue agents)
+kill_all_experiments() {
+    local pids
+    pids=$(ps -eo pid,args | grep "python.*src\.main" | grep -v grep | awk '{print $1}' 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        echo "  ⚠ Killing lingering processes: $pids"
+        for p in $pids; do
+            kill -9 "$p" 2>/dev/null || true
+        done
+        sleep 3
+    fi
+}
+trap kill_all_experiments EXIT
+
+# Clean old timing files to avoid confusion
+echo "[INFO] Cleaning old timing files..."
+rm -f results/prefill_dbo/timing_*_local_*.json results/prefill_dbo/timing_*_serial_*.json
 
 V3_DIR="results/experiments_qwen3_v3"
 PREFILL_DBO_DIR="results/prefill_dbo"
@@ -12,16 +30,13 @@ PREFILL_DBO_DIR="results/prefill_dbo"
 mkdir -p "$V3_DIR/decode" "$V3_DIR/prefill" "$V3_DIR/logs"
 
 PORT_COUNTER=0
-next_port() {
-    PORT_COUNTER=$((PORT_COUNTER + 1))
-    echo $((29700 + PORT_COUNTER))
-}
 
 # Run a single experiment via run_single.sh
 # Usage: run_one <phase_dir> <batch> <seq> <tokens> <dbo|no-dbo> [--generate]
 run_one() {
+    PORT_COUNTER=$((PORT_COUNTER + 1))
+    local port=$((29800 + PORT_COUNTER))
     local phase_dir="$1" batch="$2" seq="$3" tokens="$4" dbo_flag="$5" gen_flag="${6:-}"
-    local port=$(next_port)
     local dbo_label="dbo"
     local extra=""
 
@@ -34,14 +49,21 @@ run_one() {
     fi
 
     local suffix="b${batch}_s${seq}_${dbo_label}"
+    local logfile="$V3_DIR/logs/${phase_dir}_${suffix}.log"
 
     echo ""
-    echo "──── $phase_dir | batch=$batch seq=$seq tokens=$tokens | $dbo_label ────"
+    echo "──── $phase_dir | batch=$batch seq=$seq tokens=$tokens | $dbo_label (port=$port) ────"
 
-    if MASTER_PORT=$port timeout 600 bash scripts/run_single.sh local "$batch" "$seq" \
-        --tokens "$tokens" $extra 2>&1 | tee "$V3_DIR/logs/${phase_dir}_${suffix}.log" | tail -5; then
+    # Pre-flight: kill any competing processes (from rogue agents etc.)
+    kill_all_experiments
 
-        echo "  ✓ Success"
+    # Run experiment, capture full output to log file (not piped through tee)
+    if MASTER_PORT=$port timeout 900 bash scripts/run_single.sh local "$batch" "$seq" \
+        --tokens "$tokens" $extra > "$logfile" 2>&1; then
+
+        echo "  ✓ Completed"
+        # Show key info from log
+        grep -E "Generated|prefill_time|timing saved|Timing saved|tokens/s|tok/s" "$logfile" | tail -3 || true
 
         # Copy timing files from prefill_dbo/ to v3 dir
         local role_suffix="local_b${batch}_s${seq}_t${tokens}"
@@ -67,12 +89,17 @@ run_one() {
                 --start-layer 1 --num-layers 3 2>/dev/null && \
                 echo "  ✓ Pipeline image" || echo "  ⚠ Pipeline image failed"
         fi
-        sleep 3
+        sleep 8  # Longer cooldown to avoid port TIME_WAIT
         return 0
     else
         local ec=$?
-        echo "  ✗ FAILED (exit=$ec, likely OOM or timeout)"
-        sleep 3
+        echo "  ✗ FAILED (exit=$ec)"
+        tail -5 "$logfile" 2>/dev/null || true
+        # Check for OOM vs other errors
+        if grep -q "OutOfMemory\|CUDA out of memory\|OOM" "$logfile" 2>/dev/null; then
+            echo "  → OOM detected"
+        fi
+        sleep 8
         return 1
     fi
 }

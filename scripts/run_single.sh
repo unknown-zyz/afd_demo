@@ -30,9 +30,15 @@
 #   results/prefill_dbo/timing_ffn_<suffix>.json
 #   results/prefill_dbo/dbo_pipeline_<suffix>.png  (with --visualize)
 
-set -e
+# set -e disabled: errors are handled explicitly
 cd "$(dirname "$0")/.."
 source venv/bin/activate
+
+# Avoid CUDA memory fragmentation on tight-memory GPUs (V100-32GB)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Reduce NCCL GPU memory overhead to leave room for large MoE model weights
+export NCCL_BUFFSIZE=1048576
+export NCCL_NCHANNELS_PER_NET_PEER=1
 
 # ── Positional arguments ──────────────────────────────────────────
 DEPLOYMENT="$1"
@@ -108,7 +114,7 @@ if [ "$GENERATE" = true ]; then
 fi
 
 echo "========================================"
-echo "  ${NO_DBO:+Serial }Experiment: $SUFFIX"
+echo "  $([ "$NO_DBO" = true ] && echo 'Serial ' || echo '')Experiment: $SUFFIX"
 echo "========================================"
 echo "Deployment: $DEPLOYMENT"
 echo "Batch: $BATCH, Seq: $SEQ, Tokens: $TOKENS"
@@ -122,8 +128,18 @@ mkdir -p results/prefill_dbo/logs
 
 # ── run_local() ───────────────────────────────────────────────────
 run_local() {
-    # FFN 节点 (后台)
-    CUDA_VISIBLE_DEVICES=2,3 python -m src.main \
+    # Cleanup trap: kill FFN background process if attention exits/crashes
+    local FFN_PID=""
+    cleanup_ffn() {
+        if [ -n "$FFN_PID" ]; then
+            kill "$FFN_PID" 2>/dev/null || true
+            wait "$FFN_PID" 2>/dev/null || true
+        fi
+    }
+    trap cleanup_ffn EXIT
+
+    # FFN node (background, output to log file)
+    CUDA_VISIBLE_DEVICES=2,3 python -u -m src.main \
         --model-name "$MODEL_PATH" \
         --role ffn \
         --master-addr 127.0.0.1 \
@@ -135,12 +151,12 @@ run_local() {
         --max-new-tokens "$TOKENS" \
         --timing --timing-suffix "$SUFFIX" \
         --verbose $GENERATE_FLAG $DBO_FLAG \
-        2>&1 | tee "results/prefill_dbo/logs/ffn_${SUFFIX}.log" | sed 's/^/[FFN] /' &
+        > "results/prefill_dbo/logs/ffn_${SUFFIX}.log" 2>&1 &
     FFN_PID=$!
     sleep 5
 
-    # Attention 节点 (前台)
-    CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
+    # Attention node (foreground, output to log file)
+    CUDA_VISIBLE_DEVICES=0,1 python -u -m src.main \
         --model-name "$MODEL_PATH" \
         --role attention \
         --master-addr 127.0.0.1 \
@@ -153,9 +169,14 @@ run_local() {
         --prompt "Hello world, this is a test prompt for batch scaling experiments with a longer text." \
         --timing --timing-suffix "$SUFFIX" \
         --verbose $GENERATE_FLAG $DBO_FLAG \
-        2>&1 | tee "results/prefill_dbo/logs/attn_${SUFFIX}.log" | sed 's/^/[ATTN] /'
+        > "results/prefill_dbo/logs/attn_${SUFFIX}.log" 2>&1
 
     wait $FFN_PID 2>/dev/null || true
+
+    # Show summary from both logs
+    echo ""
+    echo "[ATTN] === Log tail ==="
+    tail -5 "results/prefill_dbo/logs/attn_${SUFFIX}.log" 2>/dev/null | sed 's/^/[ATTN] /'
 }
 
 # ── run_multinode() ───────────────────────────────────────────────
@@ -168,7 +189,7 @@ run_multinode() {
     # 远程 FFN 节点 (后台 SSH)
     ssh -p "$REMOTE_PORT" -i "$REMOTE_KEY" "${REMOTE_USER}@${REMOTE_HOST}" \
         "cd $REMOTE_PATH && source venv/bin/activate && \
-         CUDA_VISIBLE_DEVICES=2,3 python -m src.main \
+         CUDA_VISIBLE_DEVICES=2,3 python -u -m src.main \
          --model-name '$MODEL_PATH' \
          --role ffn \
          --master-addr $MASTER_ADDR \
@@ -185,7 +206,7 @@ run_multinode() {
     sleep 10
 
     # 本地 Attention 节点 (前台)
-    CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
+    CUDA_VISIBLE_DEVICES=0,1 python -u -m src.main \
         --model-name "$MODEL_PATH" \
         --role attention \
         --master-addr "$MASTER_ADDR" \

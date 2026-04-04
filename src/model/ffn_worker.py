@@ -159,9 +159,17 @@ class FFNWorker(nn.Module):
         
         # Extract FFN layers
         self.ffn_layers = nn.ModuleList()
-        layers_per_device = max(1, math.ceil(self.num_layers / len(self.role_devices)))
+        # Reserve ~6 GiB on GPU 0 for NCCL/communicator overhead by
+        # putting fewer layers on device 0 than device 1.
+        if len(self.role_devices) >= 2:
+            layers_on_dev0 = max(1, self.num_layers // len(self.role_devices) - 3)
+        else:
+            layers_on_dev0 = self.num_layers
         for idx, layer in enumerate(model.model.layers):
-            layer_device_idx = min(idx // layers_per_device, len(self.role_devices) - 1)
+            if len(self.role_devices) >= 2:
+                layer_device_idx = 0 if idx < layers_on_dev0 else min(1, len(self.role_devices) - 1)
+            else:
+                layer_device_idx = 0
             layer_device = self.role_devices[layer_device_idx]
             ffn_layer = FFNLayer(
                 post_attention_layernorm=layer.post_attention_layernorm.to(device=layer_device, dtype=dtype),
