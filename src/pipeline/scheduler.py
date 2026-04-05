@@ -16,6 +16,7 @@ import torch.cuda
 from .micro_batch import MicroBatch, MicroBatchManager, MicroBatchState
 from ..distributed import get_distributed_context
 from ..distributed.communicator import AFDCommunicator
+from ..utils.timing import TimingTracker, PipelineTiming, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +302,8 @@ class SimplePipelineScheduler:
         self,
         model,  # DisaggregatedQwenModel
         num_micro_batches: int = 2,
+        enable_timing: bool = False,
+        timing_mode: str = "cuda_events",
     ):
         """
         Initialize simple scheduler.
@@ -308,15 +311,97 @@ class SimplePipelineScheduler:
         Args:
             model: DisaggregatedQwenModel instance
             num_micro_batches: Number of micro-batches
+            enable_timing: Whether to record detailed per-layer timing events
+            timing_mode: "cuda_events" (stream-level sync) or "sync" (device-level sync)
         """
         self.model = model
         self.ctx = get_distributed_context()
         self.num_micro_batches = num_micro_batches
+        self.enable_timing = enable_timing
+        self.timing_mode = timing_mode
+        self._timing_data: Optional[PipelineTiming] = None
         self.mb_manager = MicroBatchManager(
             num_micro_batches=num_micro_batches,
             device=model.device,
         )
     
+    def get_timing_data(self) -> Optional[PipelineTiming]:
+        """Get detailed timing data (if timing was enabled)."""
+        return self._timing_data
+
+    def _forward_layer_timed(
+        self,
+        layer_idx: int,
+        mb: MicroBatch,
+        mb_idx: int,
+        tracker: TimingTracker,
+    ) -> torch.Tensor:
+        """
+        Process one layer for one micro-batch with per-event timing.
+        
+        Replicates the logic of model.forward_layer_sync() but records
+        attn_compute, send_transfer, recv_wait, ffn_compute events.
+        """
+        assert self.model.communicator is not None
+        tag_base = layer_idx * 100
+
+        if self.ctx.is_attention_node:
+            assert self.model.attention_worker is not None
+
+            # 1. Attention compute
+            tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
+            attn_output, residual = self.model.attention_worker.forward_attention_layer(
+                layer_idx=layer_idx,
+                hidden_states=mb.hidden_states,
+                attention_mask=mb.attention_mask,
+                position_ids=mb.position_ids if hasattr(mb, 'position_ids') else None,
+                position_embeddings=mb.position_embeddings if hasattr(mb, 'position_embeddings') else None,
+            )
+            tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
+
+            # 2. A→F send (synchronous, measures actual transfer time)
+            batch_size, seq_len, _ = attn_output.shape
+            packed = (attn_output + residual).contiguous()
+            tracker.mark_start(EventType.SEND_TRANSFER, layer_idx, mb_idx)
+            self.model.communicator.send_sync(packed, tag=tag_base)
+            tracker.mark_end(EventType.SEND_TRANSFER, layer_idx, mb_idx)
+
+            # 3. F→A recv (wait for FFN result)
+            tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
+            output = self.model.communicator.recv_sync(
+                shape=(batch_size, seq_len, self.model.hidden_size),
+                tag=tag_base + 1,
+            )
+            tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
+
+            return output.clone()
+        else:
+            assert self.model.ffn_worker is not None
+            batch_size, seq_len, _ = mb.hidden_states.shape
+
+            # 1. A→F recv (wait for attention result)
+            tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
+            packed = self.model.communicator.recv_sync(
+                shape=(batch_size, seq_len, self.model.hidden_size),
+                tag=tag_base,
+            )
+            tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
+
+            # 2. FFN compute
+            tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+            output = self.model.ffn_worker.forward_ffn_layer(
+                layer_idx=layer_idx,
+                hidden_states=packed,
+            )
+            tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+
+            # 3. F→A send (synchronous)
+            tracker.mark_start(EventType.SEND_TRANSFER, layer_idx, mb_idx)
+            self.model.communicator.send_sync(output, tag=tag_base + 1)
+            tracker.mark_end(EventType.SEND_TRANSFER, layer_idx, mb_idx)
+
+            return output
+
     @torch.no_grad()
     def run(
         self,
@@ -395,17 +480,37 @@ class SimplePipelineScheduler:
                     device=self.model.device, dtype=self.model.dtype
                 )
         
+        # Initialize timing tracker if enabled
+        tracker = None
+        if self.enable_timing:
+            node_name = "attention" if self.ctx.is_attention_node else "ffn"
+            tracker = TimingTracker(
+                node=node_name,
+                num_layers=self.model.num_layers,
+                num_micro_batches=self.num_micro_batches,
+                mode=self.timing_mode,
+            )
+
         # Process each layer
         for layer_idx in range(self.model.num_layers):
             # Process micro-batches in ping-pong order
             for mb_idx, mb in enumerate(micro_batches):
-                mb.hidden_states = self.model.forward_layer_sync(
-                    layer_idx=layer_idx,
-                    hidden_states=mb.hidden_states,
-                    attention_mask=mb.attention_mask,
-                    position_ids=mb.position_ids if self.ctx.is_attention_node else None,
-                    position_embeddings=mb.position_embeddings if self.ctx.is_attention_node else None,
-                )
+                if tracker is not None:
+                    mb.hidden_states = self._forward_layer_timed(
+                        layer_idx, mb, mb_idx, tracker,
+                    )
+                else:
+                    mb.hidden_states = self.model.forward_layer_sync(
+                        layer_idx=layer_idx,
+                        hidden_states=mb.hidden_states,
+                        attention_mask=mb.attention_mask,
+                        position_ids=mb.position_ids if self.ctx.is_attention_node else None,
+                        position_embeddings=mb.position_embeddings if self.ctx.is_attention_node else None,
+                    )
+
+        # Finalize timing
+        if tracker is not None:
+            self._timing_data = tracker.finish()
         
         # Generate logits (attention node)
         if self.ctx.is_attention_node and self.model.attention_worker:

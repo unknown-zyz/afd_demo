@@ -338,9 +338,26 @@ def main():
         try:
             with open(args.serial_timing) as f:
                 serial_data = json.load(f)
-            args.serial_time = serial_data.get('total_time_ms')
-            if args.serial_time:
-                print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms)")
+            # Prefer per-layer events scoped to the visualized range
+            serial_events = serial_data.get('events', [])
+            if serial_events:
+                end_layer = args.start_layer + args.num_layers
+                range_duration = sum(
+                    e['duration_ms'] for e in serial_events
+                    if args.start_layer <= e['layer'] < end_layer
+                )
+                if range_duration > 0:
+                    args.serial_time = range_duration
+                    print(f"  Serial timing (L{args.start_layer}-{end_layer - 1}): "
+                          f"{args.serial_timing} ({args.serial_time:.1f}ms from events)")
+                else:
+                    args.serial_time = serial_data.get('total_time_ms')
+                    if args.serial_time:
+                        print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms total)")
+            else:
+                args.serial_time = serial_data.get('total_time_ms')
+                if args.serial_time:
+                    print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms total)")
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
     
