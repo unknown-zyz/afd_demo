@@ -26,6 +26,11 @@ source venv/bin/activate
 # Use Chinese HuggingFace mirror
 export HF_ENDPOINT=${HF_ENDPOINT:-"https://hf-mirror.com"}
 
+# NCCL buffer tuning: 32MB prevents A2F flow-control blocking in DBO pipeline
+export NCCL_BUFFSIZE=33554432
+export NCCL_NCHANNELS_PER_NET_PEER=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # --- Role (required first arg) ---
 ROLE="${1:?Usage: run_node.sh <attention|ffn> [master_addr] [master_port] [options]}"
 case "$ROLE" in

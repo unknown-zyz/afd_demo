@@ -36,8 +36,13 @@ source venv/bin/activate
 
 # Avoid CUDA memory fragmentation on tight-memory GPUs (V100-32GB)
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-# Reduce NCCL GPU memory overhead to leave room for large MoE model weights
-export NCCL_BUFFSIZE=1048576
+# NCCL buffer tuning for DBO pipeline:
+# - BUFFSIZE=32MB prevents flow-control blocking on A2F sends (MB0 send was
+#   blocking 15-24ms/layer when FFN hadn't drained the recv buffer, causing
+#   ~925ms waste across 47 layers).  32MB covers tensors up to batch=16,seq=256.
+# - NCHANNELS=1 limits per-peer channels to reduce GPU memory overhead.
+# Total NCCL buffer memory: ~2 × 32MB = 64MB (0.2% of V100-32GB).
+export NCCL_BUFFSIZE=33554432
 export NCCL_NCHANNELS_PER_NET_PEER=1
 
 # ── Positional arguments ──────────────────────────────────────────

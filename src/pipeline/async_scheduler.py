@@ -399,8 +399,13 @@ class AsyncPipelineScheduler:
         tracker = self._timing_tracker
         monitor = self._send_monitor
         
-        # === Layer 0: compute all MBs + send (无 recv 前置) ===
+        # === Layer 0: compute ALL MBs first, then send ===
+        # Deferred-send: compute all MBs before issuing any isend.
+        # This gives FFN time to finish initialization and post its irecv,
+        # preventing NCCL flow-control blocking on the first A2F sends.
+        # (Without this, MB0's send blocks 15-24ms waiting for FFN to drain.)
         prev_send_handles = []
+        layer0_outputs = []
         
         for mb_idx, mb in enumerate(micro_batches):
             # Stream sync for accurate timing (only sync compute stream, not NCCL)
@@ -427,17 +432,17 @@ class AsyncPipelineScheduler:
                 tracker.record_event(EventType.ATTN_COMPUTE, 0, mb_idx,
                                     compute_start, compute_end)
             
-            # Start async send immediately after compute
+            layer0_outputs.append(packed)
+        
+        # Now send all Layer 0 outputs (FFN has had time to post irecv)
+        for mb_idx, packed in enumerate(layer0_outputs):
             send_start = time.perf_counter()
             tag = self._get_tag(0, mb_idx, "attn_to_ffn")
             handle = self._send_async(packed, tag)
             prev_send_handles.append(handle)
             
-            # Start polling for actual transfer completion (if timing enabled)
             if monitor:
                 monitor.start_monitoring(handle, send_start, 0, mb_idx, "a2f")
-            
-            # The next MB's compute will overlap with this send!
         
         # === Layers 1 ~ num_layers-1: 交错 recv(prev_layer) + compute(curr_layer) ===
         for layer_idx in range(1, num_layers):

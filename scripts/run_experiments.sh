@@ -27,6 +27,12 @@ set -e
 cd "$(dirname "$0")/.."
 source venv/bin/activate
 
+# NCCL buffer tuning: 32MB prevents A2F flow-control blocking in DBO pipeline.
+# Default 4MB (or 1MB if reduced) causes 15-24ms stalls per layer on MB0 sends.
+export NCCL_BUFFSIZE=33554432
+export NCCL_NCHANNELS_PER_NET_PEER=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 PHASE="${1:-all}"
 MODEL="${MODEL_PATH:-"/data/Qwen/Qwen3-30B-A3B/"}"
 TOKENS_PREFILL=5

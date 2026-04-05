@@ -11,6 +11,11 @@ set -e
 cd "$(dirname "$0")/.."
 source venv/bin/activate
 
+# NCCL buffer tuning: 32MB prevents A2F flow-control blocking in DBO pipeline
+export NCCL_BUFFSIZE=33554432
+export NCCL_NCHANNELS_PER_NET_PEER=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 MAX_TOKENS="${1:-3}"
 BATCH_SIZE="${2:-1}"
 MODEL_PATH="${MODEL_PATH:-"/data/Qwen/Qwen3-30B-A3B/"}"
