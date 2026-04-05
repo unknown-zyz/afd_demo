@@ -64,15 +64,22 @@ class DecodeDBOStats:
 
 class DecodeDBOScheduler:
     """
-    Decode phase scheduler with micro-batch DBO overlap.
+    Decode phase scheduler with real micro-batch pipelining.
 
-    DBO pattern per layer:
-    - Attention node: for each MB: attention(MB_i) → isend(MB_i)
-      Key overlap: isend(MB_i) || attention(MB_{i+1})
-      KV cache is batch-sliced so each MB only touches its own batch range.
-    - FFN node: irecv all MBs → for each: wait recv → compute → isend result
-      Key overlap: isend(MB_i result) || compute(MB_{i+1})
-    - Attention node: recv all MB results → merge → next layer
+    Per layer, both nodes interleave communication with computation:
+
+    Attention node:
+      Send phase: compute(MB0) → isend(MB0) → compute(MB1) → wait(MB0_send)
+                  → isend(MB1) → wait(MB1_send)
+      Recv phase: irecv(MB0) → irecv(MB1) → wait(MB0_recv) → wait(MB1_recv)
+
+    FFN node:
+      irecv(MB0) → irecv(MB1) → wait(MB0_recv) → compute(MB0) → isend(MB0)
+      → wait(MB1_recv) → compute(MB1) → isend(MB1) → wait all sends
+
+    Key overlaps:
+    - Attention: compute(MB_{i+1}) overlaps with isend(MB_i) transfer
+    - FFN: isend(MB_i) transfer overlaps with wait(MB_{i+1}_recv) + compute(MB_{i+1})
     """
 
     def __init__(
@@ -131,6 +138,8 @@ class DecodeDBOScheduler:
         should_track = self.enable_timing and self._current_step == self._timing_step
         tracker = None
         if should_track:
+            # Synchronize both nodes so their TimingTracker baselines align
+            dist.barrier()
             actual_num_mb = min(self.num_micro_batches, batch_size)
             tracker = TimingTracker(
                 node=self.ctx.role,
@@ -164,16 +173,16 @@ class DecodeDBOScheduler:
         tracker: Optional[TimingTracker] = None,
     ) -> torch.Tensor:
         """
-        Attention node: per-MB attention with batch-sliced KV cache.
+        Attention node: pipelined micro-batch execution with real overlap.
 
-        For each layer:
-        1. Snapshot the current layer's KV cache tensors
-        2. For each micro-batch:
-           a. Set cache to this MB's batch slice
-           b. Run attention (updates the sliced cache in-place)
-           c. isend result immediately (overlaps with next MB's compute)
-        3. Merge all MB cache updates back into the full KV cache
-        4. Recv FFN results for all MBs
+        Per layer, two phases:
+          Send phase (interleaved compute/send):
+            compute(MB0) → isend(MB0) → compute(MB1) → wait(MB0_send)
+            → isend(MB1) → wait(MB1_send)
+          Recv phase (non-blocking):
+            irecv(MB0) → irecv(MB1) → wait(MB0_recv) → wait(MB1_recv)
+
+        KV cache is batch-sliced so each MB only touches its own batch range.
         """
         assert self.model.attention_worker is not None
 
@@ -204,7 +213,9 @@ class DecodeDBOScheduler:
 
             mb_updated_keys = []
             mb_updated_values = []
-            send_handles = []
+
+            # --- Send phase: compute(MB_i) overlaps with isend(MB_{i-1}) ---
+            prev_send_handle = None
 
             for mb_idx in range(num_mb):
                 start = mb_offsets[mb_idx]
@@ -214,11 +225,9 @@ class DecodeDBOScheduler:
                     tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
 
-                # Temporarily set cache to this MB's batch slice
                 cache_layer.keys = orig_keys[start:end]
                 cache_layer.values = orig_values[start:end]
 
-                # Slice inputs for this micro-batch
                 mb_hidden = hidden_states[start:end]
                 mb_mask = attention_mask[start:end]
                 mb_pos_ids = position_ids[start:end]
@@ -237,7 +246,6 @@ class DecodeDBOScheduler:
                     past_key_value=kv_cache,
                 )
 
-                # Collect updated KV (attention appended 1 new token for this MB's batch slice)
                 mb_updated_keys.append(cache_layer.keys)
                 mb_updated_values.append(cache_layer.values)
 
@@ -250,42 +258,50 @@ class DecodeDBOScheduler:
                 self.stats.compute_time += compute_time
                 self.stats.attn_compute_time += compute_time
 
-                # Async send immediately — next MB's attention overlaps with this send
+                # Wait for the *previous* MB's send before issuing the next one.
+                # This ordering ensures compute(MB_i) overlaps with isend(MB_{i-1}).
+                if prev_send_handle is not None:
+                    prev_send_handle.wait()
+
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "a2f")
-                handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
-                send_handles.append(handle)
+                prev_send_handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
                 if self._send_monitor:
                     self._send_monitor.start_monitoring(
-                        handle, send_start, layer_idx, mb_idx, "a2f")
+                        prev_send_handle, send_start, layer_idx, mb_idx, "a2f")
+
+            # Wait for the last MB's send
+            if prev_send_handle is not None:
+                prev_send_handle.wait()
 
             # Reconstruct full KV cache for this layer from all MB updates
             cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
             cache_layer.values = torch.cat(mb_updated_values, dim=0)
 
-            # Wait for all sends
-            for handle in send_handles:
-                handle.wait()
-
-            # Receive micro-batch results from FFN
-            recv_chunks = []
+            # --- Recv phase: post all irecvs, then wait in order ---
+            recv_handles = []
+            recv_tensors = []
             for mb_idx, mb_size in enumerate(mb_sizes):
-                if tracker:
-                    tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
-                recv_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 recv_tensor = torch.empty(
                     mb_size, 1, self.model.hidden_size,
                     dtype=self.model.dtype, device=self.model.device,
                 )
-                dist.recv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
+                handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
+                recv_handles.append(handle)
+                recv_tensors.append(recv_tensor)
+
+            for mb_idx in range(num_mb):
+                if tracker:
+                    tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
+                recv_start = time.perf_counter()
+                recv_handles[mb_idx].wait()
                 recv_end = time.perf_counter()
-                recv_chunks.append(recv_tensor)
                 if tracker:
                     tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
                 self.stats.f2a_comm_time += recv_end - recv_start
 
-            hidden_states = torch.cat(recv_chunks, dim=0)
+            hidden_states = torch.cat(recv_tensors, dim=0)
 
         # Collect send monitor results for accurate timing
         if self._send_monitor and tracker:
@@ -298,13 +314,15 @@ class DecodeDBOScheduler:
 
     def _run_ffn_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
         """
-        FFN node: micro-batch DBO overlap.
-        
-        For each layer:
-        1. Post all irecvs upfront
-        2. For each MB: wait recv → compute FFN → isend result
-           Key: isend(MB_i) overlaps with compute(MB_{i+1})
-        3. Wait for all sends
+        FFN node: pipelined micro-batch execution with real overlap.
+
+        Per layer:
+          irecv(MB0) → irecv(MB1)
+          → wait(MB0_recv) → compute(MB0) → isend(MB0)
+          → wait(MB1_recv) → compute(MB1) → isend(MB1)
+          → wait all sends
+
+        isend(MB_i) transfer overlaps with wait(MB_{i+1}_recv) + compute(MB_{i+1}).
         """
         assert self.model.ffn_worker is not None
 
@@ -313,7 +331,7 @@ class DecodeDBOScheduler:
         num_mb = len(mb_sizes)
 
         for layer_idx in range(num_layers):
-            # Post all irecvs upfront (non-blocking)
+            # Post all irecvs upfront so the network can start filling buffers
             recv_handles = []
             recv_tensors = []
             for mb_idx, mb_size in enumerate(mb_sizes):
@@ -327,9 +345,9 @@ class DecodeDBOScheduler:
                 recv_tensors.append(recv_tensor)
 
             # Process each MB: wait recv → compute → isend
+            # isend(MB_i) overlaps with the next iteration's recv-wait + compute
             send_handles = []
             for mb_idx in range(num_mb):
-                # Wait for this MB's data from attention
                 if tracker:
                     tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
                 recv_start = time.perf_counter()
@@ -339,7 +357,6 @@ class DecodeDBOScheduler:
                     tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
                 self.stats.a2f_comm_time += recv_end - recv_start
 
-                # Compute FFN
                 if tracker:
                     tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
@@ -357,8 +374,6 @@ class DecodeDBOScheduler:
                 self.stats.compute_time += compute_time
                 self.stats.ffn_compute_time += compute_time
 
-                # Send result back immediately (async)
-                # Next MB's compute will overlap with this send!
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 send_start = time.perf_counter()
                 handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
@@ -367,7 +382,7 @@ class DecodeDBOScheduler:
                     self._send_monitor.start_monitoring(
                         handle, send_start, layer_idx, mb_idx, "f2a")
 
-            # Wait for all sends to complete
+            # Ensure all sends complete before next layer
             for handle in send_handles:
                 handle.wait()
 
