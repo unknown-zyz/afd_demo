@@ -40,16 +40,26 @@ def _check_nvshmem_available() -> bool:
     global _nvshmem_available
     if _nvshmem_available is not None:
         return _nvshmem_available
-    try:
-        ctypes.CDLL("libnvshmem.so")
-        _nvshmem_available = True
-    except OSError:
-        _nvshmem_available = False
+    for path in _NVSHMEM_SEARCH_PATHS:
+        try:
+            ctypes.CDLL(path)
+            _nvshmem_available = True
+            return True
+        except OSError:
+            continue
+    _nvshmem_available = False
     return _nvshmem_available
 
 
+_NVSHMEM_SEARCH_PATHS = [
+    "libnvshmem.so",
+    "/usr/lib/x86_64-linux-gnu/nvshmem/12/libnvshmem.so",
+    "/usr/local/nvshmem/lib/libnvshmem.so",
+]
+
+
 def _get_nvshmem_lib():
-    """Load and cache NVSHMEM library handle."""
+    """Load and cache NVSHMEM library handle (supports NVSHMEM 3.x API)."""
     global _nvshmem_lib
     if _nvshmem_lib is not None:
         return _nvshmem_lib
@@ -57,20 +67,30 @@ def _get_nvshmem_lib():
     if not _check_nvshmem_available():
         raise RuntimeError(
             "NVSHMEM not available. Install via:\n"
-            "  1) NVIDIA HPC SDK: apt install nvhpc-*\n"
-            "  2) Standalone: https://developer.nvidia.com/nvshmem\n"
-            "  3) pip install nvidia-nvshmem (if available)"
+            "  sudo apt install libnvshmem3-cuda-12 libnvshmem-dev-cuda-12"
         )
 
-    lib = ctypes.CDLL("libnvshmem.so")
+    # Try multiple paths
+    lib = None
+    for path in _NVSHMEM_SEARCH_PATHS:
+        try:
+            lib = ctypes.CDLL(path)
+            logger.info(f"[NVSHMEM] loaded from: {path}")
+            break
+        except OSError:
+            continue
+    if lib is None:
+        raise RuntimeError("Could not load libnvshmem.so from any known path")
 
-    # nvshmem_init()
-    lib.nvshmem_init.argtypes = []
-    lib.nvshmem_init.restype = None
+    # --- NVSHMEM 3.x API bindings ---
 
-    # nvshmem_finalize()
-    lib.nvshmem_finalize.argtypes = []
-    lib.nvshmem_finalize.restype = None
+    # nvshmemx_hostlib_init_attr(unsigned int flags, void* attr) -> int
+    lib.nvshmemx_hostlib_init_attr.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    lib.nvshmemx_hostlib_init_attr.restype = ctypes.c_int
+
+    # nvshmemx_hostlib_finalize()
+    lib.nvshmemx_hostlib_finalize.argtypes = []
+    lib.nvshmemx_hostlib_finalize.restype = None
 
     # nvshmem_my_pe() -> int
     lib.nvshmem_my_pe.argtypes = []
@@ -118,11 +138,13 @@ def _get_nvshmem_lib():
     ]
     lib.nvshmem_uint64_p.restype = None
 
-    # nvshmem_uint64_wait_until(uint64_t* addr, int cmp, uint64_t val)
-    lib.nvshmem_uint64_wait_until.argtypes = [
-        ctypes.c_void_p, ctypes.c_int, ctypes.c_uint64
-    ]
-    lib.nvshmem_uint64_wait_until.restype = None
+    # nvshmem_uint64_g(uint64_t* src, int pe) -> uint64_t
+    lib.nvshmem_uint64_g.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.nvshmem_uint64_g.restype = ctypes.c_uint64
+
+    # nvshmem_uint64_atomic_fetch(uint64_t* src, int pe) -> uint64_t
+    lib.nvshmem_uint64_atomic_fetch.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.nvshmem_uint64_atomic_fetch.restype = ctypes.c_uint64
 
     _nvshmem_lib = lib
     return lib
@@ -158,12 +180,19 @@ class NVSHMEMWorkHandle:
 
         elif self._op_type == 'recv':
             slot = self._comm._slots[self._slot_idx]
-            # Wait for signal from sender
-            lib.nvshmem_uint64_wait_until(
-                slot['signal_ptr'],
-                NVSHMEM_CMP_GE,
-                ctypes.c_uint64(slot['expected_seq']),
-            )
+            # Poll local symmetric signal until sender writes expected seq
+            # (nvshmem_uint64_wait_until removed in 3.x; use atomic_fetch poll)
+            signal_ptr = slot['signal_ptr']
+            expected = slot['expected_seq']
+            my_pe = self._comm._my_pe
+            spin_count = 0
+            while True:
+                val = lib.nvshmem_uint64_atomic_fetch(signal_ptr, my_pe)
+                if val >= expected:
+                    break
+                spin_count += 1
+                if spin_count % 10000 == 0:
+                    time.sleep(0.0001)  # yield CPU every 10k spins
             # Copy from symmetric recv buffer to output tensor
             if self._tensor is not None:
                 nbytes = self._tensor.nelement() * self._tensor.element_size()
@@ -328,7 +357,7 @@ class NVSHMEMCommunicator:
         if self._sym_signal_ptr:
             self._lib.nvshmem_free(self._sym_signal_ptr)
             self._sym_signal_ptr = None
-        self._lib.nvshmem_finalize()
+        self._lib.nvshmemx_hostlib_finalize()
         logger.info("[NVSHMEM] finalized")
 
     def benchmark(self, peer_pe: int, sizes: Optional[List[int]] = None,
@@ -391,7 +420,10 @@ class NVSHMEMCommunicator:
         Requires MPI or PMI launcher (mpirun / srun).
         """
         lib = _get_nvshmem_lib()
-        lib.nvshmem_init()
+        # NVSHMEM 3.x: use hostlib_init_attr(flags=0, attr=NULL)
+        ret = lib.nvshmemx_hostlib_init_attr(0, None)
+        if ret != 0:
+            raise RuntimeError(f"nvshmemx_hostlib_init_attr failed with code {ret}")
         my_pe = lib.nvshmem_my_pe()
         n_pes = lib.nvshmem_n_pes()
         logger.info(f"[NVSHMEM] init: pe={my_pe}, n_pes={n_pes}")
