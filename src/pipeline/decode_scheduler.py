@@ -90,6 +90,7 @@ class DecodeDBOScheduler:
         num_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        keepalive=None,
     ):
         self.model = model
         self.ctx = get_distributed_context()
@@ -103,6 +104,8 @@ class DecodeDBOScheduler:
         self._current_step = 0
         # Send monitor for accurate async send timing
         self._send_monitor: Optional[SendTransferMonitor] = None
+        # P2P keepalive (optional)
+        self._keepalive = keepalive
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
         )
@@ -269,6 +272,8 @@ class DecodeDBOScheduler:
             if self._send_monitor:
                 self._send_monitor.start_monitoring(
                     prev_send_handle, send_start, layer_idx, mb_idx, "a2f")
+            if self._keepalive:
+                self._keepalive.notify_comm()
 
         if prev_send_handle is not None:
             prev_send_handle.wait()
@@ -359,6 +364,8 @@ class DecodeDBOScheduler:
                 if self._send_monitor:
                     self._send_monitor.start_monitoring(
                         prev_send_handle, send_start, layer_idx, mb_idx, "a2f")
+                if self._keepalive:
+                    self._keepalive.notify_comm()
 
             if prev_send_handle is not None:
                 prev_send_handle.wait()
@@ -465,6 +472,8 @@ class DecodeDBOScheduler:
                 if self._send_monitor:
                     self._send_monitor.start_monitoring(
                         handle, send_start, layer_idx, mb_idx, "f2a")
+                if self._keepalive:
+                    self._keepalive.notify_comm()
 
             # Post irecv for next layer BEFORE waiting current sends
             if layer_idx + 1 < num_layers:

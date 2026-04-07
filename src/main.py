@@ -132,7 +132,17 @@ def parse_args():
                         help="Top-p (nucleus) sampling")
     parser.add_argument("--greedy", action="store_true",
                         help="Use greedy decoding instead of sampling")
-    
+
+    # P2P warmup options
+    parser.add_argument('--warmup-p2p', action='store_true',
+                        help='Warmup NCCL P2P before inference')
+    parser.add_argument('--warmup-rounds', type=int, default=3,
+                        help='Number of warmup rounds')
+    parser.add_argument('--keepalive', action='store_true',
+                        help='Enable P2P keepalive heartbeats')
+    parser.add_argument('--keepalive-interval', type=float, default=0.5,
+                        help='Keepalive interval in seconds')
+
     return parser.parse_args()
 
 
@@ -205,7 +215,18 @@ def run_inference_demo(args):
         print_memory_stats()
     
     ctx.barrier()
-    
+
+    # P2P warmup (optional, to eliminate NCCL cold-start latency)
+    if args.warmup_p2p:
+        warmup_result = ctx.warmup(
+            num_rounds=args.warmup_rounds,
+            keepalive=args.keepalive,
+            keepalive_interval=getattr(args, 'keepalive_interval', 0.5),
+        )
+        if ctx.is_attention_node:
+            logger.info(f"P2P warmup: cold={warmup_result['cold_latency_ms']:.3f}ms, "
+                        f"warm={warmup_result['warm_latency_ms']:.3f}ms")
+
     # Tokenizer (attention node only)
     tokenizer = None
     if ctx.is_attention_node:
@@ -254,6 +275,7 @@ def run_inference_demo(args):
             model=model, num_micro_batches=args.num_micro_batches,
             use_cuda_streams=True, enable_timing=args.timing,
             timing_mode=args.timing_mode,
+            keepalive=getattr(ctx, '_keepalive', None),
         )
         scheduler_name = "DBO"
     else:
@@ -343,7 +365,18 @@ def run_generation_demo(args):
     )
     
     ctx.barrier()
-    
+
+    # P2P warmup (optional, to eliminate NCCL cold-start latency)
+    if args.warmup_p2p:
+        warmup_result = ctx.warmup(
+            num_rounds=args.warmup_rounds,
+            keepalive=args.keepalive,
+            keepalive_interval=getattr(args, 'keepalive_interval', 0.5),
+        )
+        if ctx.is_attention_node:
+            logger.info(f"P2P warmup: cold={warmup_result['cold_latency_ms']:.3f}ms, "
+                        f"warm={warmup_result['warm_latency_ms']:.3f}ms")
+
     # Tokenizer
     tokenizer = None
     if ctx.is_attention_node:

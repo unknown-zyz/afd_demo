@@ -609,11 +609,13 @@ class DisaggregatedQwenModel(nn.Module):
         decode_scheduler = None
         if use_decode_dbo and batch_size >= num_decode_micro_batches:
             from ..pipeline import DecodeDBOScheduler
+            ctx = get_distributed_context()
             decode_scheduler = DecodeDBOScheduler(
                 model=self,
                 num_micro_batches=num_decode_micro_batches,
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
+                keepalive=getattr(ctx, '_keepalive', None),
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
         
@@ -689,11 +691,13 @@ class DisaggregatedQwenModel(nn.Module):
         decode_scheduler = None
         if use_decode_dbo and batch_size >= num_decode_micro_batches:
             from ..pipeline import DecodeDBOScheduler
+            ctx = get_distributed_context()
             decode_scheduler = DecodeDBOScheduler(
                 model=self,
                 num_micro_batches=num_decode_micro_batches,
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
+                keepalive=getattr(ctx, '_keepalive', None),
             )
         
         # Decode loop: max_new_tokens - 1 iterations
