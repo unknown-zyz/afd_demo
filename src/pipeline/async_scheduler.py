@@ -235,6 +235,10 @@ class AsyncPipelineScheduler:
 
         # P2P keepalive (optional)
         self._keepalive = keepalive
+        
+        # Proxy keepalive: tiny tensor to keep NCCL send proxy active during recv_wait
+        self._proxy_dummy = torch.zeros(1, dtype=torch.float16, device=model.device)
+        self._proxy_recv_dummy = torch.empty(1, dtype=torch.float16, device=model.device)
 
         logger.info(f"AsyncPipelineScheduler initialized: num_mb={num_micro_batches}, "
                     f"use_cuda_streams={use_cuda_streams}, timing={enable_timing}")
@@ -243,6 +247,10 @@ class AsyncPipelineScheduler:
         """Get unique tag for send/recv matching."""
         dir_code = 0 if direction == "attn_to_ffn" else 1
         return layer_idx * 1000 + mb_idx * 10 + dir_code
+    
+    def _get_proxy_keepalive_tag(self, layer_idx: int) -> int:
+        """Tag for proxy keepalive dummy sends (avoids collision with data tags)."""
+        return layer_idx * 1000 + 9  # mb_idx slot 0 uses +0, slot 1 uses +10; +9 is safe
     
     def _send_async(self, tensor: torch.Tensor, tag: int) -> dist.Work:
         """Non-blocking send."""
@@ -472,6 +480,11 @@ class AsyncPipelineScheduler:
             for handle in prev_send_handles:
                 handle.wait()
             
+            # Proxy keepalive: send tiny dummy to keep send proxy active during recv_wait.
+            # Without this, proxy sleeps ~20-30ms between layers, causing MB0 cold-start.
+            ka_tag = self._get_proxy_keepalive_tag(layer_idx)
+            ka_handle = dist.isend(self._proxy_dummy, dst=self.ctx.peer_rank, tag=ka_tag)
+            
             # Collect and record real transfer times from monitor
             if monitor and tracker:
                 for result in monitor.collect_results():
@@ -519,6 +532,10 @@ class AsyncPipelineScheduler:
                 if tracker:
                     tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
                                         compute_start, compute_end)
+                
+                # Ensure proxy keepalive is done before real send
+                if mb_idx == 0:
+                    ka_handle.wait()
                 
                 # Send async — next MB's recv.wait will overlap with this send
                 send_start = time.perf_counter()
@@ -603,6 +620,11 @@ class AsyncPipelineScheduler:
             cur_recv_handles.append(recv_handle)
             cur_recv_tensors.append(recv_tensor)
             cur_recv_post_times.append(recv_post_start)
+        
+        # Pre-post irecv for L1's proxy keepalive (ATT sends it before L1 MB0)
+        if self.model.num_layers > 1:
+            ka_tag = self._get_proxy_keepalive_tag(1)
+            dist.irecv(self._proxy_recv_dummy, src=self.ctx.peer_rank, tag=ka_tag)
 
         for layer_idx in range(self.model.num_layers):
             # Use pre-posted recv handles (posted before loop or at end of prev iteration)
@@ -716,6 +738,12 @@ class AsyncPipelineScheduler:
                     cur_recv_handles.append(recv_handle)
                     cur_recv_tensors.append(recv_tensor)
                     cur_recv_post_times.append(recv_post_start)
+                
+                # Post irecv for ATT's proxy keepalive dummy (keeps ATT send proxy alive)
+                # Pre-loop already posted ka for L1; here we post for layer_idx+2
+                if layer_idx + 2 < self.model.num_layers:
+                    ka_tag = self._get_proxy_keepalive_tag(layer_idx + 2)
+                    dist.irecv(self._proxy_recv_dummy, src=self.ctx.peer_rank, tag=ka_tag)
             
             # Wait for all sends (next layer's irecv already posted!)
             for mb_idx, handle in enumerate(send_handles):

@@ -106,6 +106,9 @@ class DecodeDBOScheduler:
         self._send_monitor: Optional[SendTransferMonitor] = None
         # P2P keepalive (optional)
         self._keepalive = keepalive
+        # Proxy keepalive: tiny tensor to keep NCCL send proxy active between layers
+        self._proxy_dummy = torch.zeros(1, dtype=torch.float16, device=model.device)
+        self._proxy_recv_dummy = torch.empty(1, dtype=torch.float16, device=model.device)
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
         )
@@ -114,6 +117,10 @@ class DecodeDBOScheduler:
         """Unique tag per (layer, micro-batch, direction)."""
         dir_offset = 0 if direction == "a2f" else 1
         return 10000 + layer_idx * (self.num_micro_batches * 2) + mb_idx * 2 + dir_offset
+
+    def _get_proxy_keepalive_tag(self, layer_idx: int) -> int:
+        """Tag for proxy keepalive dummy sends."""
+        return 50000 + layer_idx
 
     def _compute_mb_sizes(self, batch_size: int) -> List[int]:
         """Compute micro-batch sizes (handles uneven splits)."""
@@ -286,6 +293,11 @@ class DecodeDBOScheduler:
 
         if prev_send_handle is not None:
             prev_send_handle.wait()
+        
+        # Proxy keepalive: keep send proxy active during L0 F2A recv_wait
+        if num_layers > 1:
+            ka_tag = self._get_proxy_keepalive_tag(0)
+            ka_handle_l0 = dist.isend(self._proxy_dummy, dst=self.ctx.peer_rank, tag=ka_tag)
 
         cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
         cache_layer.values = torch.cat(mb_updated_values, dim=0)
@@ -378,6 +390,11 @@ class DecodeDBOScheduler:
 
             if prev_send_handle is not None:
                 prev_send_handle.wait()
+            
+            # Proxy keepalive: keep send proxy active during F2A recv_wait
+            if layer_idx + 1 < num_layers:
+                ka_tag = self._get_proxy_keepalive_tag(layer_idx)
+                ka_handle = dist.isend(self._proxy_dummy, dst=self.ctx.peer_rank, tag=ka_tag)
 
             cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
             cache_layer.values = torch.cat(mb_updated_values, dim=0)
@@ -444,6 +461,11 @@ class DecodeDBOScheduler:
             a2f_recv_handles.append(handle)
             a2f_recv_tensors.append(recv_tensor)
 
+        # Pre-post irecv for L0 proxy keepalive from ATT
+        if num_layers > 1:
+            ka_tag = self._get_proxy_keepalive_tag(0)
+            dist.irecv(self._proxy_recv_dummy, src=self.ctx.peer_rank, tag=ka_tag)
+
         for layer_idx in range(num_layers):
             # Process each MB: wait recv → compute → isend
             send_handles = []
@@ -497,6 +519,10 @@ class DecodeDBOScheduler:
                     handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
                     a2f_recv_handles.append(handle)
                     a2f_recv_tensors.append(recv_tensor)
+                # Post proxy keepalive irecv for next layer
+                if layer_idx + 2 < num_layers:
+                    ka_tag = self._get_proxy_keepalive_tag(layer_idx + 1)
+                    dist.irecv(self._proxy_recv_dummy, src=self.ctx.peer_rank, tag=ka_tag)
 
             # Wait all sends complete
             for handle in send_handles:
