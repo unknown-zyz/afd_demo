@@ -63,6 +63,10 @@ NO_DBO=false
 VISUALIZE=false
 VERBOSE=false
 GENERATE=false
+WARMUP_P2P=false
+WARMUP_ROUNDS=3
+KEEPALIVE=false
+KEEPALIVE_INTERVAL=0.5
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -85,6 +89,22 @@ while [ $# -gt 0 ]; do
         --generate)
             GENERATE=true
             shift
+            ;;
+        --warmup-p2p)
+            WARMUP_P2P=true
+            shift
+            ;;
+        --warmup-rounds)
+            WARMUP_ROUNDS="$2"
+            shift 2
+            ;;
+        --keepalive)
+            KEEPALIVE=true
+            shift
+            ;;
+        --keepalive-interval)
+            KEEPALIVE_INTERVAL="$2"
+            shift 2
             ;;
         *)
             echo "ERROR: Unknown option: $1"
@@ -116,6 +136,15 @@ fi
 GENERATE_FLAG="--no-generate"
 if [ "$GENERATE" = true ]; then
     GENERATE_FLAG=""
+fi
+
+WARMUP_FLAGS=""
+if [ "$WARMUP_P2P" = true ]; then
+    WARMUP_FLAGS="--warmup-p2p --warmup-rounds $WARMUP_ROUNDS"
+    SUFFIX="warmup_${SUFFIX}"
+fi
+if [ "$KEEPALIVE" = true ]; then
+    WARMUP_FLAGS="$WARMUP_FLAGS --keepalive --keepalive-interval $KEEPALIVE_INTERVAL"
 fi
 
 echo "========================================"
@@ -155,7 +184,7 @@ run_local() {
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS" \
         --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG \
+        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS \
         > "results/prefill_dbo/logs/ffn_${SUFFIX}.log" 2>&1 &
     FFN_PID=$!
     sleep 5
@@ -173,7 +202,7 @@ run_local() {
         --max-new-tokens "$TOKENS" \
         --prompt "Hello world, this is a test prompt for batch scaling experiments with a longer text." \
         --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG \
+        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS \
         > "results/prefill_dbo/logs/attn_${SUFFIX}.log" 2>&1
 
     wait $FFN_PID 2>/dev/null || true

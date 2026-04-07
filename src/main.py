@@ -258,6 +258,11 @@ def run_inference_demo(args):
     
     def run_with_scheduler(scheduler):
         """Run inference with timing."""
+        # Pause keepalive before any NCCL ops to prevent deadlock between
+        # heartbeat P2P and collective operations (barrier/broadcast).
+        _keepalive = getattr(ctx, '_keepalive', None)
+        if _keepalive and hasattr(_keepalive, 'pause'):
+            _keepalive.pause()
         ctx.barrier()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -266,6 +271,8 @@ def run_inference_demo(args):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
+        if _keepalive and hasattr(_keepalive, 'resume'):
+            _keepalive.resume()
         return output, elapsed
     
     # Select scheduler based on --no-dbo flag
@@ -402,6 +409,10 @@ def run_generation_demo(args):
         meta_tensor = torch.zeros(2, dtype=torch.long, device=device)
     
     import torch.distributed as dist
+    # Pause keepalive before any NCCL collective/P2P ops
+    _keepalive_gen = getattr(ctx, '_keepalive', None)
+    if _keepalive_gen and hasattr(_keepalive_gen, 'pause'):
+        _keepalive_gen.pause()
     dist.broadcast(meta_tensor, src=0)
     batch_size = meta_tensor[0].item()
     prompt_len = meta_tensor[1].item()

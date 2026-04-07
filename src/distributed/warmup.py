@@ -77,6 +77,10 @@ class P2PKeepalive:
     保活线程：定期发送心跳防止 NCCL proxy thread 休眠。
 
     如果通信间隔超过 interval_s，自动发送小消息保持通道活跃。
+
+    Thread-safety: Use pause()/resume() around inference to prevent
+    heartbeat NCCL ops from conflicting with scheduler NCCL ops.
+    pause() blocks until any in-flight heartbeat completes.
     """
 
     def __init__(
@@ -100,10 +104,15 @@ class P2PKeepalive:
         self._thread: threading.Thread | None = None
         self._heartbeat_count = 0
         self._lock = threading.Lock()
+        # Gate lock: heartbeat acquires during NCCL ops; pause() acquires to
+        # block until in-flight heartbeat finishes, then holds to prevent new ones.
+        self._gate = threading.Lock()
+        self._paused = False
 
     def start(self):
         """启动保活线程。"""
         self._stop_event.clear()
+        self._paused = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         logger.info(
@@ -114,8 +123,23 @@ class P2PKeepalive:
         """停止保活线程。"""
         self._stop_event.set()
         if self._thread:
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=5.0)
         logger.info(f"[Keepalive] stopped: sent {self._heartbeat_count} heartbeats")
+
+    def pause(self):
+        """Pause heartbeats. Blocks until any in-flight heartbeat completes."""
+        self._gate.acquire()
+        self._paused = True
+
+    def resume(self):
+        """Resume heartbeats after inference."""
+        with self._lock:
+            self._last_comm_time = time.monotonic()
+        self._paused = False
+        try:
+            self._gate.release()
+        except RuntimeError:
+            pass
 
     def notify_comm(self):
         """通知保活线程：刚刚发生了一次正常通信。"""
@@ -124,20 +148,25 @@ class P2PKeepalive:
 
     def _run(self):
         """后台线程：检查是否需要发送心跳。"""
-        # Use unique tag range for heartbeats (avoid collision with scheduler tags)
-        # Scheduler uses: prefill tags = layer*1000+mb*10+dir, decode tags = 10000+...
-        # Heartbeat uses tag = 99999
         heartbeat_tag = 99999
         rank = dist.get_rank()
 
         while not self._stop_event.is_set():
             self._stop_event.wait(self.interval_s / 2)
 
+            if self._paused or self._stop_event.is_set():
+                continue
+
             with self._lock:
                 idle_time = time.monotonic() - self._last_comm_time
 
             if idle_time >= self.interval_s and not self._stop_event.is_set():
+                if not self._gate.acquire(timeout=0.01):
+                    continue
                 try:
+                    if self._paused or self._stop_event.is_set():
+                        continue
+
                     send_t = torch.zeros(
                         self.num_elements, dtype=self.dtype, device=self.device
                     )
@@ -159,4 +188,7 @@ class P2PKeepalive:
                         self._last_comm_time = time.monotonic()
                         self._heartbeat_count += 1
                 except Exception as e:
-                    logger.warning(f"[Keepalive] heartbeat failed: {e}")
+                    if not self._stop_event.is_set():
+                        logger.warning(f"[Keepalive] heartbeat failed: {e}")
+                finally:
+                    self._gate.release()

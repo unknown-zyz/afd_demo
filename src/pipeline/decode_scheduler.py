@@ -138,6 +138,10 @@ class DecodeDBOScheduler:
         start_time = time.perf_counter()
         batch_size = input_ids.shape[0]
 
+        # Pause keepalive during inference to avoid NCCL contention
+        if self._keepalive and hasattr(self._keepalive, 'pause'):
+            self._keepalive.pause()
+
         self.stats = DecodeDBOStats(num_tokens=batch_size)
 
         should_track = self.enable_timing and self._current_step == self._timing_step
@@ -168,6 +172,11 @@ class DecodeDBOScheduler:
         self.stats.total_time = time.perf_counter() - start_time
         self.stats.num_layers = self.model.num_layers
         self._current_step += 1
+
+        # Resume keepalive after inference
+        if self._keepalive and hasattr(self._keepalive, 'resume'):
+            self._keepalive.resume()
+
         return result
 
     def _run_attention_decode(
