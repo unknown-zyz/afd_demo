@@ -118,6 +118,9 @@ def parse_args():
                         help="Disable DBO for both prefill and decode (AF separation only)")
     parser.add_argument("--num-micro-batches", type=int, default=2,
                         help="Number of micro-batches for DBO pipeline")
+    parser.add_argument("--comm-backend", type=str, choices=["nccl", "nvshmem"],
+                        default="nccl",
+                        help="P2P communication backend (nccl or nvshmem)")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -205,6 +208,16 @@ def run_inference_demo(args):
         print_memory_stats()
     
     ctx.barrier()
+    
+    # Initialize NVSHMEM communicator if requested
+    nvshmem_comm = None
+    if getattr(args, 'comm_backend', 'nccl') == 'nvshmem':
+        from .distributed.nvshmem_communicator import NVSHMEMCommunicator
+        if NVSHMEMCommunicator.is_available():
+            nvshmem_comm = NVSHMEMCommunicator.initialize(device=device)
+            logger.info(f"[NVSHMEM] communicator initialized on {device}")
+        else:
+            logger.warning("[NVSHMEM] not available, falling back to NCCL")
     
     # Tokenizer (attention node only)
     tokenizer = None
