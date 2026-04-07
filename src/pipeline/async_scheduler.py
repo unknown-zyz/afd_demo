@@ -580,25 +580,28 @@ class AsyncPipelineScheduler:
         tracker = self._timing_tracker
         monitor = self._send_monitor
         
+        # Pre-post irecv for layer 0 so ATT's early sends find a ready receiver
+        cur_recv_handles = []
+        cur_recv_tensors = []
+        cur_recv_post_times = []
+        for mb_idx, mb in enumerate(micro_batches):
+            batch_size = getattr(mb, '_actual_batch_size', mb.batch_size)
+            seq_len = getattr(mb, '_actual_seq_len', mb.seq_len)
+            recv_post_start = time.perf_counter()
+            tag = self._get_tag(0, mb_idx, "attn_to_ffn")
+            recv_handle, recv_tensor = self._recv_async(
+                (batch_size, seq_len, self.model.hidden_size),
+                tag
+            )
+            cur_recv_handles.append(recv_handle)
+            cur_recv_tensors.append(recv_tensor)
+            cur_recv_post_times.append(recv_post_start)
+
         for layer_idx in range(self.model.num_layers):
-            # First, post all receives (async)
-            recv_handles = []
-            recv_tensors = []
-            recv_post_times = []
-            
-            for mb_idx, mb in enumerate(micro_batches):
-                batch_size = getattr(mb, '_actual_batch_size', mb.batch_size)
-                seq_len = getattr(mb, '_actual_seq_len', mb.seq_len)
-                
-                recv_post_start = time.perf_counter()
-                tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
-                recv_handle, recv_tensor = self._recv_async(
-                    (batch_size, seq_len, self.model.hidden_size),
-                    tag
-                )
-                recv_handles.append(recv_handle)
-                recv_tensors.append(recv_tensor)
-                recv_post_times.append(recv_post_start)
+            # Use pre-posted recv handles (posted before loop or at end of prev iteration)
+            recv_handles = cur_recv_handles
+            recv_tensors = cur_recv_tensors
+            recv_post_times = cur_recv_post_times
             
             # Process each MB: wait for recv, compute, send immediately
             send_handles = []
@@ -687,7 +690,27 @@ class AsyncPipelineScheduler:
                 if monitor:
                     monitor.start_monitoring(handle, send_start, layer_idx, mb_idx, "f2a")
             
-            # Wait for all sends
+            # Pre-post irecv for NEXT layer BEFORE waiting for current sends.
+            # This eliminates MB0 A2F blocking: ATT can isend layer N+1 data
+            # while we're still waiting for layer N sends to complete.
+            if layer_idx + 1 < self.model.num_layers:
+                cur_recv_handles = []
+                cur_recv_tensors = []
+                cur_recv_post_times = []
+                for mb_idx, mb in enumerate(micro_batches):
+                    batch_size = getattr(mb, '_actual_batch_size', mb.batch_size)
+                    seq_len = getattr(mb, '_actual_seq_len', mb.seq_len)
+                    recv_post_start = time.perf_counter()
+                    tag = self._get_tag(layer_idx + 1, mb_idx, "attn_to_ffn")
+                    recv_handle, recv_tensor = self._recv_async(
+                        (batch_size, seq_len, self.model.hidden_size),
+                        tag
+                    )
+                    cur_recv_handles.append(recv_handle)
+                    cur_recv_tensors.append(recv_tensor)
+                    cur_recv_post_times.append(recv_post_start)
+            
+            # Wait for all sends (next layer's irecv already posted!)
             for mb_idx, handle in enumerate(send_handles):
                 handle.wait()
             
