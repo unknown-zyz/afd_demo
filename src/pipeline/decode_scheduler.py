@@ -20,7 +20,7 @@ import torch.distributed as dist
 
 from ..distributed import get_distributed_context
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
-from .async_scheduler import SendTransferMonitor
+from .async_scheduler import _measure_send_transfer
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +102,9 @@ class DecodeDBOScheduler:
         # Track timing on step 1 (skip step 0 warmup)
         self._timing_step = 1
         self._current_step = 0
-        # Send monitor for accurate async send timing
-        self._send_monitor: Optional[SendTransferMonitor] = None
+        # Send transfer uses direct handle.wait() timing (no monitor needed)
         # P2P keepalive (optional)
         self._keepalive = keepalive
-        # Proxy keepalive: tiny tensor to keep NCCL send proxy active between layers
-        self._proxy_dummy = torch.zeros(1, dtype=torch.float16, device=model.device)
-        self._proxy_recv_dummy = torch.empty(1, dtype=torch.float16, device=model.device)
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
         )
@@ -117,10 +113,6 @@ class DecodeDBOScheduler:
         """Unique tag per (layer, micro-batch, direction)."""
         dir_offset = 0 if direction == "a2f" else 1
         return 10000 + layer_idx * (self.num_micro_batches * 2) + mb_idx * 2 + dir_offset
-
-    def _get_proxy_keepalive_tag(self, layer_idx: int) -> int:
-        """Tag for proxy keepalive dummy sends."""
-        return 50000 + layer_idx
 
     def _compute_mb_sizes(self, batch_size: int) -> List[int]:
         """Compute micro-batch sizes (handles uneven splits)."""
@@ -163,9 +155,7 @@ class DecodeDBOScheduler:
                 num_micro_batches=actual_num_mb,
                 mode=self.timing_mode,
             )
-            self._send_monitor = SendTransferMonitor(poll_interval=0.0001)
-        else:
-            self._send_monitor = None
+            # Direct timing approach: handle.wait() after each isend
 
         if self.ctx.is_attention_node:
             result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
@@ -285,19 +275,15 @@ class DecodeDBOScheduler:
             send_start = time.perf_counter()
             tag = self._get_tag(layer_idx, mb_idx, "a2f")
             prev_send_handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
-            if self._send_monitor:
-                self._send_monitor.start_monitoring(
-                    prev_send_handle, send_start, layer_idx, mb_idx, "a2f")
+            if tracker:
+                send_end = _measure_send_transfer(prev_send_handle, send_start)
+                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
+                                    send_start, send_end)
             if self._keepalive:
                 self._keepalive.notify_comm()
 
         if prev_send_handle is not None:
             prev_send_handle.wait()
-        
-        # Proxy keepalive: keep send proxy active during L0 F2A recv_wait
-        if num_layers > 1:
-            ka_tag = self._get_proxy_keepalive_tag(0)
-            ka_handle_l0 = dist.isend(self._proxy_dummy, dst=self.ctx.peer_rank, tag=ka_tag)
 
         cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
         cache_layer.values = torch.cat(mb_updated_values, dim=0)
@@ -382,19 +368,15 @@ class DecodeDBOScheduler:
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "a2f")
                 prev_send_handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
-                if self._send_monitor:
-                    self._send_monitor.start_monitoring(
-                        prev_send_handle, send_start, layer_idx, mb_idx, "a2f")
+                if tracker:
+                    send_end = _measure_send_transfer(prev_send_handle, send_start)
+                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
+                                        send_start, send_end)
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
             if prev_send_handle is not None:
                 prev_send_handle.wait()
-            
-            # Proxy keepalive: keep send proxy active during F2A recv_wait
-            if layer_idx + 1 < num_layers:
-                ka_tag = self._get_proxy_keepalive_tag(layer_idx)
-                ka_handle = dist.isend(self._proxy_dummy, dst=self.ctx.peer_rank, tag=ka_tag)
 
             cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
             cache_layer.values = torch.cat(mb_updated_values, dim=0)
@@ -425,12 +407,6 @@ class DecodeDBOScheduler:
 
         hidden_states = torch.cat(f2a_recv_tensors, dim=0)
 
-        # Collect send monitor results for accurate timing
-        if self._send_monitor and tracker:
-            for layer_idx, mb_idx, direction, start, end in self._send_monitor.collect_results():
-                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx, start, end)
-                self.stats.a2f_comm_time += end - start
-
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
         return self.model.attention_worker.forward_lm_head(hidden_states)
 
@@ -460,11 +436,6 @@ class DecodeDBOScheduler:
             handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
             a2f_recv_handles.append(handle)
             a2f_recv_tensors.append(recv_tensor)
-
-        # Pre-post irecv for L0 proxy keepalive from ATT
-        if num_layers > 1:
-            ka_tag = self._get_proxy_keepalive_tag(0)
-            dist.irecv(self._proxy_recv_dummy, src=self.ctx.peer_rank, tag=ka_tag)
 
         for layer_idx in range(num_layers):
             # Process each MB: wait recv → compute → isend
@@ -499,10 +470,11 @@ class DecodeDBOScheduler:
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 send_start = time.perf_counter()
                 handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
+                if tracker:
+                    send_end = _measure_send_transfer(handle, send_start)
+                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
+                                        send_start, send_end)
                 send_handles.append(handle)
-                if self._send_monitor:
-                    self._send_monitor.start_monitoring(
-                        handle, send_start, layer_idx, mb_idx, "f2a")
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
@@ -519,20 +491,10 @@ class DecodeDBOScheduler:
                     handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
                     a2f_recv_handles.append(handle)
                     a2f_recv_tensors.append(recv_tensor)
-                # Post proxy keepalive irecv for next layer
-                if layer_idx + 2 < num_layers:
-                    ka_tag = self._get_proxy_keepalive_tag(layer_idx + 1)
-                    dist.irecv(self._proxy_recv_dummy, src=self.ctx.peer_rank, tag=ka_tag)
 
-            # Wait all sends complete
+            # Wait all sends complete (no-op if already waited via timing)
             for handle in send_handles:
                 handle.wait()
-
-        # Collect send monitor results for accurate timing
-        if self._send_monitor and tracker:
-            for layer_idx, mb_idx, direction, start, end in self._send_monitor.collect_results():
-                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx, start, end)
-                self.stats.f2a_comm_time += end - start
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
 
