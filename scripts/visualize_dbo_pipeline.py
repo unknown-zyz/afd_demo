@@ -213,11 +213,27 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     
     # 计算改进的性能指标
     num_mb = attn_data.get('num_micro_batches', 2)
-    attn_total = attn_data.get('total_time_ms', 0)
-    ffn_total = ffn_data.get('total_time_ms', 0)
-    
-    # 总推理时间 = 两个节点中较大的
-    total_inference_time = max(attn_total, ffn_total)
+
+    # Compute DBO critical path time for ONLY the visualized layers
+    end_layer = start_layer + num_layers
+    all_events_in_range = []
+    for e in attn_data.get('events', []):
+        if start_layer <= e['layer'] < end_layer:
+            all_events_in_range.append(e)
+    for e in ffn_data.get('events', []):
+        if start_layer <= e['layer'] < end_layer:
+            all_events_in_range.append(e)
+
+    if all_events_in_range:
+        min_start_s = min(e['start'] for e in all_events_in_range)
+        max_end_s = max(e['start'] + e['duration_ms'] / 1000.0 for e in all_events_in_range)
+        total_inference_time = (max_end_s - min_start_s) * 1000.0
+    else:
+        # Fallback: scale total by layer ratio
+        total_inference_time = max(attn_data.get('total_time_ms', 0), ffn_data.get('total_time_ms', 0))
+        total_layers = attn_data.get('num_layers', 48)
+        if total_layers > 0:
+            total_inference_time = total_inference_time * num_layers / total_layers
     
     # 计算时间 (从事件中精确计算, 仅统计可视化范围内的层)
     attn_events = attn_data.get('events', [])
@@ -267,7 +283,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     end_layer = start_layer + num_layers - 1
     layer_note = " (L0 skipped)" if start_layer > 0 else ""
     line1 = f'DBO Pipeline — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
-    line2 = f"DBO: {total_inference_time:.1f}ms | {serial_label} | Speedup: {speedup:.2f}x"
+    line2 = f"DBO: {total_inference_time:.1f}ms (L{start_layer}-{start_layer+num_layers-1}) | {serial_label} | Speedup: {speedup:.2f}x"
     line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
     
     ax.set_title(f'{line1}\n{line2}\n{line3}', fontsize=10, pad=10)
@@ -355,8 +371,18 @@ def main():
                     if args.serial_time:
                         print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms total)")
             else:
-                args.serial_time = serial_data.get('total_time_ms')
-                if args.serial_time:
+                total_ms = serial_data.get('total_time_ms')
+                max_tokens = serial_data.get('max_new_tokens', 1)
+                total_layers = serial_data.get('num_layers', 48)
+                if total_layers == 0:
+                    total_layers = 48
+                if total_ms and max_tokens > 1:
+                    per_token = total_ms / max_tokens
+                    args.serial_time = per_token * args.num_layers / total_layers
+                    print(f"  Serial timing: {args.serial_timing} "
+                          f"({args.serial_time:.1f}ms, scaled from {total_ms:.0f}ms/{max_tokens}tok/{total_layers}L)")
+                elif total_ms:
+                    args.serial_time = total_ms
                     print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms total)")
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
