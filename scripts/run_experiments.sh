@@ -37,7 +37,7 @@ PHASE="${1:-all}"
 MODEL="${MODEL_PATH:-"/data/Qwen/Qwen3-30B-A3B/"}"
 TOKENS_PREFILL=5
 TOKENS_DECODE=20
-BASE_DIR="results/experiments_qwen3_v2"
+BASE_DIR="results/experiments_qwen3_v6"
 PREFILL_DIR="$BASE_DIR/prefill"
 DECODE_DIR="$BASE_DIR/decode"
 TIMING_DIR="results/prefill_dbo"
@@ -81,7 +81,7 @@ run_prefill_experiment() {
     local PORT
     PORT=$(next_port)
 
-    local DBO_FLAG="" SUFFIX MB_SUFFIX=""
+    local DBO_FLAG="" SUFFIX MB_SUFFIX="" WARMUP_FLAGS=""
     if [ "$NUM_MB" -ne 2 ]; then
         MB_SUFFIX="_mb${NUM_MB}"
     fi
@@ -91,6 +91,7 @@ run_prefill_experiment() {
         SUFFIX="serial_b${BATCH}_s${SEQ}${MB_SUFFIX}"
     else
         SUFFIX="dbo_b${BATCH}_s${SEQ}${MB_SUFFIX}"
+        WARMUP_FLAGS="--warmup-p2p --warmup-rounds 3"
     fi
 
     log_info "Prefill: batch=$BATCH seq=$SEQ DBO=$DBO micro_batches=$NUM_MB (port=$PORT)"
@@ -99,7 +100,7 @@ run_prefill_experiment() {
     local FFN_LOG="$PREFILL_DIR/logs/ffn_${SUFFIX}.log"
 
     # FFN 节点（后台）
-    CUDA_VISIBLE_DEVICES=2,3 python -m src.main \
+    CUDA_VISIBLE_DEVICES=2,3 python -u -m src.main \
         --model-name "$MODEL" \
         --role ffn \
         --master-addr 127.0.0.1 \
@@ -111,7 +112,7 @@ run_prefill_experiment() {
         --max-new-tokens "$TOKENS_PREFILL" \
         --num-micro-batches "$NUM_MB" \
         --timing --timing-suffix "qwen3_${SUFFIX}" \
-        --no-generate $DBO_FLAG \
+        --no-generate $DBO_FLAG $WARMUP_FLAGS \
         > "$FFN_LOG" 2>&1 &
     local FFN_PID=$!
     sleep "$MODEL_LOAD_SLEEP"
@@ -127,7 +128,7 @@ run_prefill_experiment() {
     fi
 
     # Attention 节点（前台，带超时）
-    timeout 600 env CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
+    timeout 600 env CUDA_VISIBLE_DEVICES=0,1 python -u -m src.main \
         --model-name "$MODEL" \
         --role attention \
         --master-addr 127.0.0.1 \
@@ -140,7 +141,7 @@ run_prefill_experiment() {
         --num-micro-batches "$NUM_MB" \
         --prompt "Hello world, this is a test prompt for scaling experiments." \
         --timing --timing-suffix "qwen3_${SUFFIX}" \
-        --no-generate $DBO_FLAG \
+        --no-generate $DBO_FLAG $WARMUP_FLAGS \
         > "$ATTN_LOG" 2>&1
 
     wait $FFN_PID 2>/dev/null || true
@@ -173,10 +174,14 @@ run_prefill_experiment() {
     log_ok "Prefill $SUFFIX: ${TIME_MS}ms"
     echo "$SUFFIX,prefill,$BATCH,$SEQ,$DBO,$TIME_MS," >> "$BASE_DIR/summary.csv"
 
+    # Archive timing files to experiment directory
+    local ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_${SUFFIX}.json"
+    local FFN_TIMING="$TIMING_DIR/timing_ffn_qwen3_${SUFFIX}.json"
+    [ -f "$ATTN_TIMING" ] && cp "$ATTN_TIMING" "$PREFILL_DIR/"
+    [ -f "$FFN_TIMING" ] && cp "$FFN_TIMING" "$PREFILL_DIR/"
+
     # DBO 模式下生成 pipeline 可视化
     if [ "$DBO" = "on" ]; then
-        local ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_${SUFFIX}.json"
-        local FFN_TIMING="$TIMING_DIR/timing_ffn_qwen3_${SUFFIX}.json"
         # 查找对应的 serial timing 文件
         local SERIAL_SUFFIX="serial_b${BATCH}_s${SEQ}"
         local SERIAL_ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_${SERIAL_SUFFIX}.json"
@@ -209,13 +214,14 @@ run_decode_experiment() {
     local PORT
     PORT=$(next_port)
 
-    local DBO_FLAG=""
+    local DBO_FLAG="" WARMUP_FLAGS=""
     local SUFFIX
     if [ "$DBO" = "off" ]; then
         DBO_FLAG="--no-dbo"
         SUFFIX="serial_b${BATCH}_s${SEQ}"
     else
         SUFFIX="dbo_b${BATCH}_s${SEQ}"
+        WARMUP_FLAGS="--warmup-p2p --warmup-rounds 3"
     fi
 
     log_info "Decode: batch=$BATCH seq=$SEQ DBO=$DBO tokens=$TOKENS_DECODE (port=$PORT)"
@@ -228,7 +234,7 @@ run_decode_experiment() {
     PROMPT=$(python -c "print('Test ' * ($SEQ // 5))")
 
     # FFN 节点（后台）
-    CUDA_VISIBLE_DEVICES=2,3 python -m src.main \
+    CUDA_VISIBLE_DEVICES=2,3 python -u -m src.main \
         --model-name "$MODEL" \
         --role ffn \
         --master-addr 127.0.0.1 \
@@ -239,7 +245,7 @@ run_decode_experiment() {
         --max-new-tokens "$TOKENS_DECODE" \
         --greedy \
         --timing --timing-suffix "qwen3_decode_${SUFFIX}" \
-        $DBO_FLAG \
+        $DBO_FLAG $WARMUP_FLAGS \
         > "$FFN_LOG" 2>&1 &
     local FFN_PID=$!
     sleep "$MODEL_LOAD_SLEEP"
@@ -255,7 +261,7 @@ run_decode_experiment() {
     fi
 
     # Attention 节点（前台，带超时）
-    timeout 600 env CUDA_VISIBLE_DEVICES=0,1 python -m src.main \
+    timeout 600 env CUDA_VISIBLE_DEVICES=0,1 python -u -m src.main \
         --model-name "$MODEL" \
         --role attention \
         --master-addr 127.0.0.1 \
@@ -267,7 +273,7 @@ run_decode_experiment() {
         --prompt "$PROMPT" \
         --greedy \
         --timing --timing-suffix "qwen3_decode_${SUFFIX}" \
-        $DBO_FLAG \
+        $DBO_FLAG $WARMUP_FLAGS \
         > "$ATTN_LOG" 2>&1
 
     wait $FFN_PID 2>/dev/null || true
@@ -300,10 +306,14 @@ run_decode_experiment() {
     log_ok "Decode $SUFFIX: ${TIME_MS}ms, ${TOK_S} tok/s"
     echo "$SUFFIX,decode,$BATCH,$SEQ,$DBO,$TIME_MS,$TOK_S" >> "$BASE_DIR/summary.csv"
 
+    # Archive timing files to experiment directory
+    local ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_decode_${SUFFIX}.json"
+    local FFN_TIMING="$TIMING_DIR/timing_ffn_qwen3_decode_${SUFFIX}.json"
+    [ -f "$ATTN_TIMING" ] && cp "$ATTN_TIMING" "$DECODE_DIR/"
+    [ -f "$FFN_TIMING" ] && cp "$FFN_TIMING" "$DECODE_DIR/"
+
     # DBO 模式下生成 pipeline 可视化
     if [ "$DBO" = "on" ]; then
-        local ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_decode_${SUFFIX}.json"
-        local FFN_TIMING="$TIMING_DIR/timing_ffn_qwen3_decode_${SUFFIX}.json"
         local SERIAL_SUFFIX="serial_b${BATCH}_s${SEQ}"
         local SERIAL_ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_decode_${SERIAL_SUFFIX}.json"
         local SERIAL_FLAG=""
@@ -439,6 +449,32 @@ run_prefill_multimb() {
 }
 
 # ============================================================
+# Phase: V6 — warmup 分支全面重测 (精选配置)
+# ============================================================
+run_v6() {
+    log_phase "V6: Prefill Seq 扩展 (batch=4)"
+    for SEQ in 128 256 512 1024; do
+        run_prefill_experiment 4 "$SEQ" "off" || true
+        run_prefill_experiment 4 "$SEQ" "on"  || true
+        sleep 2
+    done
+
+    log_phase "V6: Prefill Batch 扩展 (seq=128)"
+    for BATCH in 8 64; do
+        run_prefill_experiment "$BATCH" 128 "off" || true
+        run_prefill_experiment "$BATCH" 128 "on"  || true
+        sleep 2
+    done
+
+    log_phase "V6: Decode Batch 扩展 (20 tokens)"
+    for BATCH in 2 4 8 16 32; do
+        run_decode_experiment "$BATCH" 128 "off" || true
+        run_decode_experiment "$BATCH" 128 "on"  || true
+        sleep 2
+    done
+}
+
+# ============================================================
 # 主流程
 # ============================================================
 log_phase "Qwen3-30B-A3B DBO 综合实验"
@@ -452,6 +488,10 @@ case "$PHASE" in
     prefill-batch)    run_prefill_batch ;;
     prefill-seq)      run_prefill_seq ;;
     prefill-multimb)  run_prefill_multimb ;;
+    v6)
+        echo "name,phase,batch_size,seq_len,dbo,time_ms,tok_s" > "$BASE_DIR/summary.csv"
+        run_v6
+        ;;
     all)
         echo "name,phase,batch_size,seq_len,dbo,time_ms,tok_s" > "$BASE_DIR/summary.csv"
         run_decode_batch
@@ -459,7 +499,7 @@ case "$PHASE" in
         run_prefill_seq
         ;;
     *)
-        echo "Usage: $0 [decode|decode-large|prefill-batch|prefill-seq|prefill-multimb|all]"
+        echo "Usage: $0 [decode|decode-large|prefill-batch|prefill-seq|prefill-multimb|v6|all]"
         exit 1
         ;;
 esac
