@@ -252,6 +252,8 @@ class AsyncPipelineScheduler:
         
         # Initialize timing tracker if enabled
         if self.enable_timing:
+            # Synchronize both nodes so their TimingTracker baselines align
+            dist.barrier()
             node_name = "attention" if self.ctx.is_attention_node else "ffn"
             self._timing_tracker = TimingTracker(
                 node=node_name,
@@ -259,7 +261,6 @@ class AsyncPipelineScheduler:
                 num_micro_batches=self.num_micro_batches,
                 mode=self.timing_mode,
             )
-            # Direct timing approach: handle.wait() after each isend (no monitor needed)
         
         # Split into micro-batches
         micro_batches = self.mb_manager.split_batch(input_ids, attention_mask)

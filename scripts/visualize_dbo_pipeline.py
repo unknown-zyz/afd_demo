@@ -60,6 +60,9 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     """
     加载并组织 timing 数据，提取指定范围的层。
     
+    自动对齐 ATT 和 FFN 进程的时钟差异（不同进程 perf_counter 基准不同）。
+    使用 A→F 通信边界作为锚点：ATT send_transfer 结束 ≈ FFN recv_wait 开始。
+    
     Args:
         attn_path: Attention timing JSON 文件路径
         ffn_path: FFN timing JSON 文件路径
@@ -68,12 +71,6 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     
     Returns:
         dict: 按泳道组织的事件数据
-        {
-            'A': [(start_ms, duration_ms, layer, mb), ...],
-            'A2F': [...],
-            'F': [...],
-            'F2A': [...],
-        }
     """
     with open(attn_path) as f:
         attn_data = json.load(f)
@@ -83,49 +80,89 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     
     end_layer = start_layer + num_layers
     
-    # 组织数据到各个泳道
+    # === Step 1: 计算 ATT-FFN 时钟偏移 ===
+    # 使用 A→F 通信边界对齐：ATT send_transfer end ≈ FFN recv_wait start
+    # 当 recv_wait ≈ 0 时，两者几乎同时，偏移 = ffn_recv_start - attn_send_end
+    
+    # Build lookup: (layer, mb) -> ATT send_transfer end time
+    attn_send_ends = {}
+    for event in attn_data['events']:
+        if event['type'] == 'send_transfer':
+            key = (event['layer'], event['mb'])
+            attn_send_ends[key] = event['start'] * 1000 + event['duration_ms']
+    
+    # Build lookup: (layer, mb) -> FFN recv_wait start time
+    ffn_recv_starts = {}
+    for event in ffn_data['events']:
+        if event['type'] == 'recv_wait':
+            key = (event['layer'], event['mb'])
+            ffn_recv_starts[key] = (event['start'] * 1000, event['duration_ms'])
+    
+    # Compute offset from layers in visualization range (using low recv_wait as reliable anchors)
+    offsets = []
+    for layer in range(start_layer, end_layer):
+        for mb in range(2):  # MB 0 and 1
+            key = (layer, mb)
+            if key in attn_send_ends and key in ffn_recv_starts:
+                ffn_start, recv_dur = ffn_recv_starts[key]
+                attn_end = attn_send_ends[key]
+                if recv_dur < 5.0:  # recv_wait < 5ms = reliable anchor
+                    offsets.append(ffn_start - attn_end)
+    
+    if offsets:
+        # Use median for robustness against outliers
+        offsets.sort()
+        clock_offset = offsets[len(offsets) // 2]
+        print(f"  Clock offset (FFN-ATT): {clock_offset:.2f}ms (from {len(offsets)} anchors)")
+    else:
+        clock_offset = 0
+        print(f"  Warning: No reliable clock anchors found, using offset=0")
+    
+    # === Step 2: 提取事件到各泳道 ===
     lanes_data = {
         'A': [],      # Attention compute
-        'A2F': [],    # Attention send
+        'A2F': [],    # Attention send (A→F)
         'F': [],      # FFN compute
-        'F2A': [],    # FFN send
+        'F2A': [],    # FFN send (F→A)
     }
     
-    # 找到起始时间偏移 (使图从 0 开始)
+    # 找到起始时间偏移 (使图从 0 开始) — 只用 ATT 事件确定 (单一时钟)
     min_start = float('inf')
     for event in attn_data['events']:
         if start_layer <= event['layer'] < end_layer:
             min_start = min(min_start, event['start'] * 1000)
+    # Also consider aligned FFN events
     for event in ffn_data['events']:
         if start_layer <= event['layer'] < end_layer:
-            min_start = min(min_start, event['start'] * 1000)
+            aligned_start = event['start'] * 1000 - clock_offset
+            min_start = min(min_start, aligned_start)
     
     if min_start == float('inf'):
         min_start = 0
     
-    # 提取 Attention 节点事件
+    # 提取 Attention 节点事件 (使用 ATT 时钟，无需调整)
     for event in attn_data['events']:
         layer = event['layer']
         if layer < start_layer or layer >= end_layer:
             continue
         
-        start_ms = event['start'] * 1000 - min_start  # 相对时间
+        start_ms = event['start'] * 1000 - min_start
         duration_ms = event['duration_ms']
         mb = event['mb']
-        display_layer = layer - start_layer  # 显示用的层号 (从 0 开始)
+        display_layer = layer - start_layer
         
         if event['type'] == 'attn_compute':
             lanes_data['A'].append((start_ms, duration_ms, display_layer, mb))
         elif event['type'] == 'send_transfer':
             lanes_data['A2F'].append((start_ms, duration_ms, display_layer, mb))
     
-    # 提取 FFN 节点事件
+    # 提取 FFN 节点事件 (应用时钟偏移对齐到 ATT 时间线)
     for event in ffn_data['events']:
         layer = event['layer']
         if layer < start_layer or layer >= end_layer:
             continue
         
-        start_ms = event['start'] * 1000 - min_start
+        start_ms = event['start'] * 1000 - clock_offset - min_start  # Align to ATT clock
         duration_ms = event['duration_ms']
         mb = event['mb']
         display_layer = layer - start_layer
@@ -341,12 +378,14 @@ def main():
                 serial_data = json.load(f)
             total_ms = serial_data.get('total_time_ms')
             max_tokens = serial_data.get('max_new_tokens', 1)
+            is_decode = 'decode' in str(args.serial_timing).lower()
             if total_ms:
-                if max_tokens > 1:
-                    # Decode: per-step time
+                if is_decode and max_tokens > 1:
+                    # Decode: DBO timing JSON records per-step, so serial also needs per-step
                     args.serial_time = total_ms / max_tokens
                     print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms per step, from {total_ms:.0f}ms/{max_tokens}tok)")
                 else:
+                    # Prefill: both serial and DBO total_time_ms are full E2E time
                     args.serial_time = total_ms
                     print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms)")
         except Exception as e:
