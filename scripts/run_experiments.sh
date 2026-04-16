@@ -316,16 +316,27 @@ run_decode_experiment() {
     if [ "$DBO" = "on" ]; then
         local SERIAL_SUFFIX="serial_b${BATCH}_s${SEQ}"
         local SERIAL_ATTN_TIMING="$TIMING_DIR/timing_attention_qwen3_decode_${SERIAL_SUFFIX}.json"
-        local SERIAL_FLAG=""
-        if [ -f "$SERIAL_ATTN_TIMING" ]; then
-            SERIAL_FLAG="--serial-timing $SERIAL_ATTN_TIMING"
+
+        # Look up serial E2E time from summary.csv for consistent speedup
+        local SERIAL_E2E=""
+        SERIAL_E2E=$(grep "${SERIAL_SUFFIX},decode" "$BASE_DIR/summary.csv" 2>/dev/null | tail -1 | cut -d, -f6)
+
+        local E2E_FLAGS=""
+        if [ -n "$SERIAL_E2E" ] && [ "$SERIAL_E2E" != "N/A" ] && [ "$SERIAL_E2E" != "OOM" ]; then
+            E2E_FLAGS="--serial-time $SERIAL_E2E"
+        elif [ -f "$SERIAL_ATTN_TIMING" ]; then
+            E2E_FLAGS="--serial-timing $SERIAL_ATTN_TIMING"
         fi
+        if [ -n "$TIME_MS" ] && [ "$TIME_MS" != "N/A" ]; then
+            E2E_FLAGS="$E2E_FLAGS --dbo-e2e-time $TIME_MS"
+        fi
+
         if [ -f "$ATTN_TIMING" ] && [ -f "$FFN_TIMING" ]; then
             python scripts/visualize_dbo_pipeline.py \
                 --attn-timing "$ATTN_TIMING" \
                 --ffn-timing "$FFN_TIMING" \
                 --output "$DECODE_DIR/pipeline_${SUFFIX}.png" \
-                --start-layer 1 --num-layers 4 $SERIAL_FLAG 2>/dev/null && \
+                --start-layer 1 --num-layers 4 $E2E_FLAGS 2>/dev/null && \
                 log_ok "Pipeline 图: pipeline_${SUFFIX}.png" || \
                 log_warn "可视化生成失败"
         fi

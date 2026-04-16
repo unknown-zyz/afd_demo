@@ -53,7 +53,8 @@ class DistributedContext:
             return
         self.config: Optional[DistributedConfig] = None
         self._initialized = False
-        self._comm_group = None
+        self._a2f_group = None   # ATT→FFN directional group
+        self._f2a_group = None   # FFN→ATT directional group
         self._warmup_result: Optional[dict] = None
         self._keepalive = None
         
@@ -102,10 +103,15 @@ class DistributedContext:
                 device_id=device_id,
             )
         
-        # Create communication group between attention and FFN nodes
-        self._comm_group = dist.new_group(
-            ranks=[config.attn_node_rank, config.ffn_node_rank]
-        )
+        # Create directional NCCL process groups for cross-layer pipelining.
+        # Default group: reserved for warmup/keepalive/control-plane.
+        # Directional groups use separate NCCL communicators to break FIFO:
+        #   - a2f_group: ATT isend → FFN irecv (Attention-to-FFN direction)
+        #   - f2a_group: FFN isend → ATT irecv (FFN-to-Attention direction)
+        # This allows irecv(F2A) to be posted without blocking isend(A2F).
+        comm_ranks = [config.attn_node_rank, config.ffn_node_rank]
+        self._a2f_group = dist.new_group(ranks=comm_ranks)
+        self._f2a_group = dist.new_group(ranks=comm_ranks)
         
         self._initialized = True
         logger.info(
@@ -180,15 +186,23 @@ class DistributedContext:
             return self.config.attn_node_rank
     
     @property
-    def comm_group(self):
-        """Get the communication group between attention and FFN."""
-        return self._comm_group
+    def a2f_group(self):
+        """Get the ATT→FFN directional NCCL group."""
+        return self._a2f_group
+    
+    @property
+    def f2a_group(self):
+        """Get the FFN→ATT directional NCCL group."""
+        return self._f2a_group
     
     def warmup(self, num_rounds=3, keepalive=False, keepalive_interval=0.5):
         """预热 P2P 通道并可选启动保活。"""
         from .warmup import warmup_p2p, P2PKeepalive
 
-        result = warmup_p2p(self.peer_rank, self.device, num_rounds=num_rounds)
+        result = warmup_p2p(
+            self.peer_rank, self.device, num_rounds=num_rounds,
+            extra_groups=[self._a2f_group, self._f2a_group],
+        )
         self._warmup_result = result
 
         if keepalive:
@@ -219,7 +233,8 @@ class DistributedContext:
                 )
             else:
                 dist.destroy_process_group()
-            self._comm_group = None
+            self._a2f_group = None
+            self._f2a_group = None
         self._initialized = False
         logger.info("Distributed context cleaned up")
 

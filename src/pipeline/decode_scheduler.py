@@ -184,17 +184,22 @@ class DecodeDBOScheduler:
         tracker: Optional[TimingTracker] = None,
     ) -> torch.Tensor:
         """
-        Attention node: cross-layer micro-batch pipeline.
+        Attention node: cross-layer micro-batch pipeline with directional groups.
+
+        Uses two separate NCCL process groups to break FIFO constraint:
+          - a2f_group: ATT isend → FFN irecv (A2F direction)
+          - f2a_group: FFN isend → ATT irecv (F2A direction)
+
+        This allows posting F2A irecv per-MB immediately after each A2F isend,
+        without blocking subsequent A2F sends (they're on different communicators).
 
         Layer 0 (warmup):
-          compute+send all MBs with interleaved overlap, then post irecv
-          for F2A results.
+          compute+send each MB, post F2A irecv per-MB right after send.
 
         Layers 1+:
-          Per MB: wait THIS MB's F2A from prev layer → compute → isend.
-          MB0's layer L+1 starts without waiting for MB1's layer L F2A.
-
-        KV cache is batch-sliced so each MB only touches its own batch range.
+          Per MB: wait(F2A[L-1, mb]) → compute → isend(A2F[L, mb]) →
+                  irecv(F2A[L, mb]). F2A irecv is posted ~(num_mb-1)*mb_time
+                  earlier than the old "post all after layer" approach.
         """
         assert self.model.attention_worker is not None
 
@@ -202,6 +207,9 @@ class DecodeDBOScheduler:
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
+        peer = self.ctx.peer_rank
+        a2f_group = self.ctx.a2f_group
+        f2a_group = self.ctx.f2a_group
 
         # Precompute batch offsets for each MB
         mb_offsets = []
@@ -219,6 +227,10 @@ class DecodeDBOScheduler:
         attention_mask = self.model._make_causal_mask(batch_size, 1, total_len)
 
         # ── Layer 0: warmup — compute and send all MBs ──
+        # FIFO invariant: both a2f_group and f2a_group see operations in
+        # layer-major/MB-major order: [L0MB0, L0MB1, L1MB0, L1MB1, ...].
+        # ATT side enqueues: isend(a2f), irecv(f2a) per-MB in this order.
+        # FFN side enqueues: irecv(a2f), isend(f2a) per-MB in this order.
         layer_idx = 0
         cache_layer = kv_cache.layers[layer_idx]
         orig_keys = cache_layer.keys
@@ -226,6 +238,9 @@ class DecodeDBOScheduler:
         mb_updated_keys = []
         mb_updated_values = []
         prev_send_handle = None
+        # Per-MB F2A irecv handles (posted right after each send)
+        f2a_recv_handles: List[Optional[dist.Work]] = [None] * num_mb
+        f2a_recv_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
 
         for mb_idx in range(num_mb):
             start = mb_offsets[mb_idx]
@@ -274,7 +289,7 @@ class DecodeDBOScheduler:
 
             send_start = time.perf_counter()
             tag = self._get_tag(layer_idx, mb_idx, "a2f")
-            prev_send_handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
+            prev_send_handle = dist.isend(packed, dst=peer, tag=tag, group=a2f_group)
             if tracker:
                 send_end = _measure_send_transfer(prev_send_handle, send_start)
                 tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
@@ -282,26 +297,24 @@ class DecodeDBOScheduler:
             if self._keepalive:
                 self._keepalive.notify_comm()
 
+            # Post F2A irecv per-MB on f2a_group (doesn't block a2f_group sends)
+            f2a_tag = self._get_tag(0, mb_idx, "f2a")
+            recv_tensor = torch.empty(
+                mb_sizes[mb_idx], 1, self.model.hidden_size,
+                dtype=self.model.dtype, device=self.model.device,
+            )
+            f2a_recv_handles[mb_idx] = dist.irecv(
+                recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
+            )
+            f2a_recv_tensors[mb_idx] = recv_tensor
+
         if prev_send_handle is not None:
             prev_send_handle.wait()
 
         cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
         cache_layer.values = torch.cat(mb_updated_values, dim=0)
 
-        # Post irecv for layer 0 F2A
-        f2a_recv_handles: List[dist.Work] = []
-        f2a_recv_tensors: List[torch.Tensor] = []
-        for mb_idx, mb_size in enumerate(mb_sizes):
-            tag = self._get_tag(0, mb_idx, "f2a")
-            recv_tensor = torch.empty(
-                mb_size, 1, self.model.hidden_size,
-                dtype=self.model.dtype, device=self.model.device,
-            )
-            handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-            f2a_recv_handles.append(handle)
-            f2a_recv_tensors.append(recv_tensor)
-
-        # ── Layers 1+: cross-layer pipeline ──
+        # ── Layers 1+: cross-layer pipeline with per-MB irecv posting ──
         for layer_idx in range(1, num_layers):
             cache_layer = kv_cache.layers[layer_idx]
             orig_keys = cache_layer.keys
@@ -309,6 +322,8 @@ class DecodeDBOScheduler:
             mb_updated_keys = []
             mb_updated_values = []
             prev_send_handle = None
+            next_f2a_handles: List[Optional[dist.Work]] = [None] * num_mb
+            next_f2a_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
 
             for mb_idx in range(num_mb):
                 start = mb_offsets[mb_idx]
@@ -367,7 +382,7 @@ class DecodeDBOScheduler:
 
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "a2f")
-                prev_send_handle = dist.isend(packed, dst=self.ctx.peer_rank, tag=tag)
+                prev_send_handle = dist.isend(packed, dst=peer, tag=tag, group=a2f_group)
                 if tracker:
                     send_end = _measure_send_transfer(prev_send_handle, send_start)
                     tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
@@ -375,24 +390,26 @@ class DecodeDBOScheduler:
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
+                # Post F2A irecv for THIS layer per-MB on f2a_group
+                f2a_tag = self._get_tag(layer_idx, mb_idx, "f2a")
+                recv_tensor = torch.empty(
+                    mb_sizes[mb_idx], 1, self.model.hidden_size,
+                    dtype=self.model.dtype, device=self.model.device,
+                )
+                next_f2a_handles[mb_idx] = dist.irecv(
+                    recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
+                )
+                next_f2a_tensors[mb_idx] = recv_tensor
+
             if prev_send_handle is not None:
                 prev_send_handle.wait()
 
             cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
             cache_layer.values = torch.cat(mb_updated_values, dim=0)
 
-            # Post irecv for this layer's F2A
-            f2a_recv_handles = []
-            f2a_recv_tensors = []
-            for mb_idx, mb_size in enumerate(mb_sizes):
-                tag = self._get_tag(layer_idx, mb_idx, "f2a")
-                recv_tensor = torch.empty(
-                    mb_size, 1, self.model.hidden_size,
-                    dtype=self.model.dtype, device=self.model.device,
-                )
-                handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-                f2a_recv_handles.append(handle)
-                f2a_recv_tensors.append(recv_tensor)
+            # Swap handles for next layer iteration
+            f2a_recv_handles = next_f2a_handles
+            f2a_recv_tensors = next_f2a_tensors
 
         # ── Wait final layer F2A ──
         for mb_idx in range(num_mb):
@@ -412,34 +429,42 @@ class DecodeDBOScheduler:
 
     def _run_ffn_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
         """
-        FFN node: cross-layer micro-batch pipeline.
+        FFN node: cross-layer micro-batch pipeline with directional groups.
 
-        Pre-posts irecv for layer 0.  Per layer: wait(A2F[mb]) → compute
-        → isend, then post next layer irecv BEFORE waiting current sends,
-        allowing the ATT node to start sending next-layer data immediately.
+        Uses a2f_group for irecv (receiving from ATT) and f2a_group for isend
+        (sending back to ATT). Posts next-layer A2F irecv per-MB right after
+        each MB's compute+isend, allowing the ATT node to start sending
+        next-layer data before the current layer finishes.
         """
         assert self.model.ffn_worker is not None
 
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
+        peer = self.ctx.peer_rank
+        a2f_group = self.ctx.a2f_group
+        f2a_group = self.ctx.f2a_group
 
-        # Pre-post irecv for layer 0
-        a2f_recv_handles: List[dist.Work] = []
-        a2f_recv_tensors: List[torch.Tensor] = []
+        # Pre-post irecv for layer 0 on a2f_group
+        a2f_recv_handles: List[Optional[dist.Work]] = [None] * num_mb
+        a2f_recv_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
         for mb_idx, mb_size in enumerate(mb_sizes):
             tag = self._get_tag(0, mb_idx, "a2f")
             recv_tensor = torch.empty(
                 mb_size, 1, self.model.hidden_size,
                 dtype=self.model.dtype, device=self.model.device,
             )
-            handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-            a2f_recv_handles.append(handle)
-            a2f_recv_tensors.append(recv_tensor)
+            a2f_recv_handles[mb_idx] = dist.irecv(
+                recv_tensor, src=peer, tag=tag, group=a2f_group,
+            )
+            a2f_recv_tensors[mb_idx] = recv_tensor
 
         for layer_idx in range(num_layers):
-            # Process each MB: wait recv → compute → isend
+            # Process each MB: wait recv → compute → isend → post next-layer irecv
             send_handles = []
+            next_a2f_handles: List[Optional[dist.Work]] = [None] * num_mb
+            next_a2f_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
+
             for mb_idx in range(num_mb):
                 if tracker:
                     tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
@@ -469,7 +494,7 @@ class DecodeDBOScheduler:
 
                 tag = self._get_tag(layer_idx, mb_idx, "f2a")
                 send_start = time.perf_counter()
-                handle = dist.isend(output, dst=self.ctx.peer_rank, tag=tag)
+                handle = dist.isend(output, dst=peer, tag=tag, group=f2a_group)
                 if tracker:
                     send_end = _measure_send_transfer(handle, send_start)
                     tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
@@ -478,21 +503,23 @@ class DecodeDBOScheduler:
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
-            # Post irecv for next layer BEFORE waiting current sends
-            if layer_idx + 1 < num_layers:
-                a2f_recv_handles = []
-                a2f_recv_tensors = []
-                for mb_idx, mb_size in enumerate(mb_sizes):
-                    tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
+                # Post next-layer A2F irecv per-MB on a2f_group
+                if layer_idx + 1 < num_layers:
+                    next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
                     recv_tensor = torch.empty(
-                        mb_size, 1, self.model.hidden_size,
+                        mb_sizes[mb_idx], 1, self.model.hidden_size,
                         dtype=self.model.dtype, device=self.model.device,
                     )
-                    handle = dist.irecv(recv_tensor, src=self.ctx.peer_rank, tag=tag)
-                    a2f_recv_handles.append(handle)
-                    a2f_recv_tensors.append(recv_tensor)
+                    next_a2f_handles[mb_idx] = dist.irecv(
+                        recv_tensor, src=peer, tag=next_tag, group=a2f_group,
+                    )
+                    next_a2f_tensors[mb_idx] = recv_tensor
 
-            # Wait all sends complete (no-op if already waited via timing)
+            if layer_idx + 1 < num_layers:
+                a2f_recv_handles = next_a2f_handles
+                a2f_recv_tensors = next_a2f_tensors
+
+            # Wait all sends complete
             for handle in send_handles:
                 handle.wait()
 
