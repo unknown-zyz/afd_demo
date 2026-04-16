@@ -2,2604 +2,4332 @@
   "node": "ffn",
   "num_layers": 48,
   "num_micro_batches": 2,
-  "total_time_ms": 380.86249493062496,
-  "total_compute_ms": 323.7279821187258,
-  "total_recv_wait_ms": 5.470309406518936,
-  "total_moe_router_ms": 0.0,
-  "total_moe_experts_ms": 0.0,
+  "total_time_ms": 3595.968483015895,
+  "total_compute_ms": 3100.351004861295,
+  "total_recv_wait_ms": 0.8126311004161835,
+  "total_moe_router_ms": 174.6726930141449,
+  "total_moe_experts_ms": 2058.947505429387,
   "total_moe_shared_or_dense_ms": 0.0,
-  "compute_ratio": 0.8499865080642651,
+  "compute_ratio": 0.8621741318102624,
   "events": [
     {
       "type": "recv_wait",
       "layer": 0,
       "mb": 0,
-      "start": 0.0005738623440265656,
-      "end": 0.003338480368256569,
-      "duration_ms": 2.7646180242300034,
+      "start": 0.0024476051330566406,
+      "end": 0.00245728250592947,
+      "duration_ms": 0.009677372872829437,
       "node": "ffn"
     },
     {
       "type": "ffn_compute",
       "layer": 0,
       "mb": 0,
-      "start": 0.0034286733716726303,
-      "end": 0.005990821868181229,
-      "duration_ms": 2.5621484965085983,
+      "start": 0.3734001247212291,
+      "end": 0.6993205826729536,
+      "duration_ms": 325.92045795172453,
       "node": "ffn"
     },
     {
-      "type": "recv_wait",
+      "type": "moe_router",
       "layer": 0,
-      "mb": 1,
-      "start": 0.006520179100334644,
-      "end": 0.006552654318511486,
-      "duration_ms": 0.032475218176841736,
+      "mb": 0,
+      "start": 0.3734001247212291,
+      "end": 0.4926252095028758,
+      "duration_ms": 119.22508478164673,
       "node": "ffn"
     },
     {
-      "type": "ffn_compute",
+      "type": "moe_experts",
       "layer": 0,
-      "mb": 1,
-      "start": 0.0065821511670947075,
-      "end": 0.009089653380215168,
-      "duration_ms": 2.5075022131204605,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 1,
       "mb": 0,
-      "start": 0.009780440479516983,
-      "end": 0.00980741810053587,
-      "duration_ms": 0.026977621018886566,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 1,
-      "mb": 0,
-      "start": 0.009839154779911041,
-      "end": 0.012931524775922298,
-      "duration_ms": 3.092369996011257,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 1,
-      "mb": 1,
-      "start": 0.01327912975102663,
-      "end": 0.01331019215285778,
-      "duration_ms": 0.031062401831150055,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 1,
-      "mb": 1,
-      "start": 0.013336812146008015,
-      "end": 0.015851047821342945,
-      "duration_ms": 2.5142356753349304,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 2,
-      "mb": 0,
-      "start": 0.016672302968800068,
-      "end": 0.01669888384640217,
-      "duration_ms": 0.026580877602100372,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 2,
-      "mb": 0,
-      "start": 0.016726704314351082,
-      "end": 0.020525573752820492,
-      "duration_ms": 3.79886943846941,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 2,
-      "mb": 1,
-      "start": 0.020961121656000614,
-      "end": 0.020991784520447254,
-      "duration_ms": 0.030662864446640015,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 2,
-      "mb": 1,
-      "start": 0.02101784572005272,
-      "end": 0.024130813777446747,
-      "duration_ms": 3.1129680573940277,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 3,
-      "mb": 0,
-      "start": 0.024807702749967575,
-      "end": 0.024834008887410164,
-      "duration_ms": 0.026306137442588806,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 3,
-      "mb": 0,
-      "start": 0.024860797449946404,
-      "end": 0.028644497506320477,
-      "duration_ms": 3.783700056374073,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 3,
-      "mb": 1,
-      "start": 0.029051252640783787,
-      "end": 0.029081576503813267,
-      "duration_ms": 0.03032386302947998,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 3,
-      "mb": 1,
-      "start": 0.02910660393536091,
-      "end": 0.03212153818458319,
-      "duration_ms": 3.0149342492222786,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 4,
-      "mb": 0,
-      "start": 0.032802095636725426,
-      "end": 0.03282811678946018,
-      "duration_ms": 0.02602115273475647,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 4,
-      "mb": 0,
-      "start": 0.032853988930583,
-      "end": 0.03669656813144684,
-      "duration_ms": 3.842579200863838,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 4,
-      "mb": 1,
-      "start": 0.03701955545693636,
-      "end": 0.03705042880028486,
-      "duration_ms": 0.030873343348503113,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 4,
-      "mb": 1,
-      "start": 0.03707595635205507,
-      "end": 0.040484217926859856,
-      "duration_ms": 3.408261574804783,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 5,
-      "mb": 0,
-      "start": 0.04116002470254898,
-      "end": 0.04118605609983206,
-      "duration_ms": 0.02603139728307724,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 5,
-      "mb": 0,
-      "start": 0.04121151100844145,
-      "end": 0.04467122536152601,
-      "duration_ms": 3.459714353084564,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 5,
-      "mb": 1,
-      "start": 0.04498665686696768,
-      "end": 0.04501746874302626,
-      "duration_ms": 0.03081187605857849,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 5,
-      "mb": 1,
-      "start": 0.04504292458295822,
-      "end": 0.04848953802138567,
-      "duration_ms": 3.4466134384274483,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 6,
-      "mb": 0,
-      "start": 0.04915750678628683,
-      "end": 0.04918377846479416,
-      "duration_ms": 0.026271678507328033,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 6,
-      "mb": 0,
-      "start": 0.049209932796657085,
-      "end": 0.052610146813094616,
-      "duration_ms": 3.4002140164375305,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 6,
-      "mb": 1,
-      "start": 0.05292376130819321,
-      "end": 0.05295471474528313,
-      "duration_ms": 0.030953437089920044,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 6,
-      "mb": 1,
-      "start": 0.05298095941543579,
-      "end": 0.05638942774385214,
-      "duration_ms": 3.4084683284163475,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 7,
-      "mb": 0,
-      "start": 0.05704386532306671,
-      "end": 0.057070585899055004,
-      "duration_ms": 0.026720575988292694,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 7,
-      "mb": 0,
-      "start": 0.057096706703305244,
-      "end": 0.060555885545909405,
-      "duration_ms": 3.4591788426041603,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 7,
-      "mb": 1,
-      "start": 0.06086958106607199,
-      "end": 0.06090039573609829,
-      "duration_ms": 0.030814670026302338,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 7,
-      "mb": 1,
-      "start": 0.06092538218945265,
-      "end": 0.06395316496491432,
-      "duration_ms": 3.0277827754616737,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 8,
-      "mb": 0,
-      "start": 0.06460854597389698,
-      "end": 0.0646344879642129,
-      "duration_ms": 0.025941990315914154,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 8,
-      "mb": 0,
-      "start": 0.06466409098356962,
-      "end": 0.06808826979249716,
-      "duration_ms": 3.424178808927536,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 8,
-      "mb": 1,
-      "start": 0.06839824002236128,
-      "end": 0.068429259583354,
-      "duration_ms": 0.031019560992717743,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 8,
-      "mb": 1,
-      "start": 0.06845489330589771,
-      "end": 0.07123461458832026,
-      "duration_ms": 2.7797212824225426,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 9,
-      "mb": 0,
-      "start": 0.07185100018978119,
-      "end": 0.07187747303396463,
-      "duration_ms": 0.026472844183444977,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 9,
-      "mb": 0,
-      "start": 0.07190266717225313,
-      "end": 0.07576469797641039,
-      "duration_ms": 3.862030804157257,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 9,
-      "mb": 1,
-      "start": 0.07625249307602644,
-      "end": 0.07628270145505667,
-      "duration_ms": 0.03020837903022766,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 9,
-      "mb": 1,
-      "start": 0.07630778942257166,
-      "end": 0.07959152292460203,
-      "duration_ms": 3.2837335020303726,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 10,
-      "mb": 0,
-      "start": 0.080266784876585,
-      "end": 0.08029319252818823,
-      "duration_ms": 0.026407651603221893,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 10,
-      "mb": 0,
-      "start": 0.0803242577239871,
-      "end": 0.08450342994183302,
-      "duration_ms": 4.179172217845917,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 10,
-      "mb": 1,
-      "start": 0.08484212588518858,
-      "end": 0.08487262297421694,
-      "duration_ms": 0.03049708902835846,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 10,
-      "mb": 1,
-      "start": 0.08489791490137577,
-      "end": 0.08793078269809484,
-      "duration_ms": 3.0328677967190742,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 11,
-      "mb": 0,
-      "start": 0.08874983713030815,
-      "end": 0.08877616003155708,
-      "duration_ms": 0.026322901248931885,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 11,
-      "mb": 0,
-      "start": 0.08880180399864912,
-      "end": 0.09169053472578526,
-      "duration_ms": 2.888730727136135,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 11,
-      "mb": 1,
-      "start": 0.09202306810766459,
-      "end": 0.09205359406769276,
-      "duration_ms": 0.03052596002817154,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 11,
-      "mb": 1,
-      "start": 0.09207810088992119,
-      "end": 0.09465265646576881,
-      "duration_ms": 2.5745555758476257,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 12,
-      "mb": 0,
-      "start": 0.09536635968834162,
-      "end": 0.09539274591952562,
-      "duration_ms": 0.026386231184005737,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 12,
-      "mb": 0,
-      "start": 0.09541849978268147,
-      "end": 0.09882935229688883,
-      "duration_ms": 3.410852514207363,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 12,
-      "mb": 1,
-      "start": 0.09916012361645699,
-      "end": 0.09919070266187191,
-      "duration_ms": 0.03057904541492462,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 12,
-      "mb": 1,
-      "start": 0.09921551961451769,
-      "end": 0.10229021590203047,
-      "duration_ms": 3.0746962875127792,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 13,
-      "mb": 0,
-      "start": 0.10296656377613544,
-      "end": 0.10299281682819128,
-      "duration_ms": 0.026253052055835724,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 13,
-      "mb": 0,
-      "start": 0.10302263218909502,
-      "end": 0.10642468091100454,
-      "duration_ms": 3.402048721909523,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 13,
-      "mb": 1,
-      "start": 0.10673934035003185,
-      "end": 0.10676997061818838,
-      "duration_ms": 0.030630268156528473,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 13,
-      "mb": 1,
-      "start": 0.1067959563806653,
-      "end": 0.10982663743197918,
-      "duration_ms": 3.030681051313877,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 14,
-      "mb": 0,
-      "start": 0.11046941112726927,
-      "end": 0.11049586813896894,
-      "duration_ms": 0.026457011699676514,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 14,
-      "mb": 0,
-      "start": 0.11052186042070389,
-      "end": 0.11440220288932323,
-      "duration_ms": 3.8803424686193466,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 14,
-      "mb": 1,
-      "start": 0.11472328752279282,
-      "end": 0.11475388891994953,
-      "duration_ms": 0.030601397156715393,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 14,
-      "mb": 1,
-      "start": 0.11477889213711023,
-      "end": 0.11823479272425175,
-      "duration_ms": 3.455900587141514,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 15,
-      "mb": 0,
-      "start": 0.11889268551021814,
-      "end": 0.11891897208988667,
-      "duration_ms": 0.02628657966852188,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 15,
-      "mb": 0,
-      "start": 0.11894423607736826,
-      "end": 0.12272949516773224,
-      "duration_ms": 3.7852590903639793,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 15,
-      "mb": 1,
-      "start": 0.12303906213492155,
-      "end": 0.12306967750191689,
-      "duration_ms": 0.030615366995334625,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 15,
-      "mb": 1,
-      "start": 0.12309476919472218,
-      "end": 0.12610261235386133,
-      "duration_ms": 3.0078431591391563,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 16,
-      "mb": 0,
-      "start": 0.126754280179739,
-      "end": 0.12678067572414875,
-      "duration_ms": 0.026395544409751892,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 16,
-      "mb": 0,
-      "start": 0.12680642493069172,
-      "end": 0.1313522895798087,
-      "duration_ms": 4.545864649116993,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 16,
-      "mb": 1,
-      "start": 0.13165998086333275,
-      "end": 0.13169017247855663,
-      "duration_ms": 0.030191615223884583,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 16,
-      "mb": 1,
-      "start": 0.13171502109616995,
-      "end": 0.13474448397755623,
-      "duration_ms": 3.02946288138628,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 17,
-      "mb": 0,
-      "start": 0.1353732943534851,
-      "end": 0.13539969455450773,
-      "duration_ms": 0.02640020102262497,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 17,
-      "mb": 0,
-      "start": 0.13542515411973,
-      "end": 0.1388868447393179,
-      "duration_ms": 3.4616906195878983,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 17,
-      "mb": 1,
-      "start": 0.1391973178833723,
-      "end": 0.13922790810465813,
-      "duration_ms": 0.030590221285820007,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 17,
-      "mb": 1,
-      "start": 0.13925296813249588,
-      "end": 0.1418170090764761,
-      "duration_ms": 2.564040943980217,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 18,
-      "mb": 0,
-      "start": 0.14246954582631588,
-      "end": 0.142495421692729,
-      "duration_ms": 0.025875866413116455,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 18,
-      "mb": 0,
-      "start": 0.14252067357301712,
-      "end": 0.14630845189094543,
-      "duration_ms": 3.787778317928314,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 18,
-      "mb": 1,
-      "start": 0.14663745183497667,
-      "end": 0.14666816592216492,
-      "duration_ms": 0.030714087188243866,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 18,
-      "mb": 1,
-      "start": 0.1466933200135827,
-      "end": 0.14970888663083315,
-      "duration_ms": 3.0155666172504425,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 19,
-      "mb": 0,
-      "start": 0.15035420004278421,
-      "end": 0.1503802016377449,
-      "duration_ms": 0.026001594960689545,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 19,
-      "mb": 0,
-      "start": 0.15041387919336557,
-      "end": 0.15425516944378614,
-      "duration_ms": 3.8412902504205704,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 19,
-      "mb": 1,
-      "start": 0.15457374788820744,
-      "end": 0.15460459142923355,
-      "duration_ms": 0.030843541026115417,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 19,
-      "mb": 1,
-      "start": 0.15462915319949389,
-      "end": 0.15706513915210962,
-      "duration_ms": 2.435985952615738,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 20,
-      "mb": 0,
-      "start": 0.15769678633660078,
-      "end": 0.1577225886285305,
-      "duration_ms": 0.025802291929721832,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 20,
-      "mb": 0,
-      "start": 0.15774789359420538,
-      "end": 0.1615665853023529,
-      "duration_ms": 3.818691708147526,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 20,
-      "mb": 1,
-      "start": 0.16186428163200617,
-      "end": 0.1618951614946127,
-      "duration_ms": 0.03087986260652542,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 20,
-      "mb": 1,
-      "start": 0.16192056331783533,
-      "end": 0.16497886832803488,
-      "duration_ms": 3.058305010199547,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 21,
-      "mb": 0,
-      "start": 0.1656256103888154,
-      "end": 0.16565158404409885,
-      "duration_ms": 0.02597365528345108,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 21,
-      "mb": 0,
-      "start": 0.16567718051373959,
-      "end": 0.16956761106848717,
-      "duration_ms": 3.8904305547475815,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 21,
-      "mb": 1,
-      "start": 0.1698784464970231,
-      "end": 0.16990900039672852,
-      "duration_ms": 0.030553899705410004,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 21,
-      "mb": 1,
-      "start": 0.169934025965631,
-      "end": 0.17297306191176176,
-      "duration_ms": 3.0390359461307526,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 22,
-      "mb": 0,
-      "start": 0.17361269891262054,
-      "end": 0.1736390981823206,
-      "duration_ms": 0.026399269700050354,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 22,
-      "mb": 0,
-      "start": 0.17366457264870405,
-      "end": 0.17756801191717386,
-      "duration_ms": 3.9034392684698105,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 22,
-      "mb": 1,
-      "start": 0.17786863632500172,
-      "end": 0.17789903935045004,
-      "duration_ms": 0.030403025448322296,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 22,
-      "mb": 1,
-      "start": 0.1779241943731904,
-      "end": 0.1812032414600253,
-      "duration_ms": 3.2790470868349075,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 23,
-      "mb": 0,
-      "start": 0.18183700274676085,
-      "end": 0.1818632697686553,
-      "duration_ms": 0.026267021894454956,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 23,
-      "mb": 0,
-      "start": 0.18189086206257343,
-      "end": 0.1857860228046775,
-      "duration_ms": 3.8951607421040535,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 23,
-      "mb": 1,
-      "start": 0.1861050073057413,
-      "end": 0.18613548949360847,
-      "duration_ms": 0.030482187867164612,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 23,
-      "mb": 1,
-      "start": 0.18616050388664007,
-      "end": 0.18930001184344292,
-      "duration_ms": 3.139507956802845,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 24,
-      "mb": 0,
-      "start": 0.189955472946167,
-      "end": 0.1899814661592245,
-      "duration_ms": 0.025993213057518005,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 24,
-      "mb": 0,
-      "start": 0.1900069648399949,
-      "end": 0.19389034062623978,
-      "duration_ms": 3.8833757862448692,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 24,
-      "mb": 1,
-      "start": 0.19419630151242018,
-      "end": 0.19422677345573902,
-      "duration_ms": 0.03047194331884384,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 24,
-      "mb": 1,
-      "start": 0.19425204675644636,
-      "end": 0.19731353595852852,
-      "duration_ms": 3.061489202082157,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 25,
-      "mb": 0,
-      "start": 0.19794154353439808,
-      "end": 0.19796746410429478,
-      "duration_ms": 0.025920569896697998,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 25,
-      "mb": 0,
-      "start": 0.19799275696277618,
-      "end": 0.2015046291053295,
-      "duration_ms": 3.5118721425533295,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 25,
-      "mb": 1,
-      "start": 0.20181366335600615,
-      "end": 0.20184411387890577,
-      "duration_ms": 0.030450522899627686,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 25,
-      "mb": 1,
-      "start": 0.2018692446872592,
-      "end": 0.20547124091535807,
-      "duration_ms": 3.6019962280988693,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 26,
-      "mb": 0,
-      "start": 0.20609749760478735,
-      "end": 0.20612323749810457,
-      "duration_ms": 0.025739893317222595,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 26,
-      "mb": 0,
-      "start": 0.2061485042795539,
-      "end": 0.20920203812420368,
-      "duration_ms": 3.0535338446497917,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 26,
-      "mb": 1,
-      "start": 0.2095137070864439,
-      "end": 0.20954461116343737,
-      "duration_ms": 0.030904076993465424,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 26,
-      "mb": 1,
-      "start": 0.2095695910975337,
-      "end": 0.21318707149475813,
-      "duration_ms": 3.6174803972244263,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 27,
-      "mb": 0,
-      "start": 0.2138323551043868,
-      "end": 0.21385845076292753,
-      "duration_ms": 0.026095658540725708,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 27,
-      "mb": 0,
-      "start": 0.21388814691454172,
-      "end": 0.21749776415526867,
-      "duration_ms": 3.609617240726948,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 27,
-      "mb": 1,
-      "start": 0.21780357882380486,
-      "end": 0.21783409360796213,
-      "duration_ms": 0.030514784157276154,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 27,
-      "mb": 1,
-      "start": 0.2178591163828969,
-      "end": 0.22114745993167162,
-      "duration_ms": 3.2883435487747192,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 28,
-      "mb": 0,
-      "start": 0.22179092094302177,
-      "end": 0.22181710228323936,
-      "duration_ms": 0.026181340217590332,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 28,
-      "mb": 0,
-      "start": 0.2218425376340747,
-      "end": 0.22545766830444336,
-      "duration_ms": 3.6151306703686714,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 28,
-      "mb": 1,
-      "start": 0.2257591001689434,
-      "end": 0.2257895851507783,
-      "duration_ms": 0.030484981834888458,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 28,
-      "mb": 1,
-      "start": 0.22581535950303078,
-      "end": 0.2288566892966628,
-      "duration_ms": 3.0413297936320305,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 29,
-      "mb": 0,
-      "start": 0.2294925693422556,
-      "end": 0.22951854672282934,
-      "duration_ms": 0.025977380573749542,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 29,
-      "mb": 0,
-      "start": 0.2295442633330822,
-      "end": 0.23317328374832869,
-      "duration_ms": 3.6290204152464867,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 29,
-      "mb": 1,
-      "start": 0.2334783785045147,
-      "end": 0.23350947443395853,
-      "duration_ms": 0.031095929443836212,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 29,
-      "mb": 1,
-      "start": 0.23353440314531326,
-      "end": 0.2363760620355606,
-      "duration_ms": 2.841658890247345,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 30,
-      "mb": 0,
-      "start": 0.23701632767915726,
-      "end": 0.237042467109859,
-      "duration_ms": 0.026139430701732635,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 30,
-      "mb": 0,
-      "start": 0.23706832993775606,
-      "end": 0.24093753658235073,
-      "duration_ms": 3.8692066445946693,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 30,
-      "mb": 1,
-      "start": 0.24123788345605135,
-      "end": 0.2412682520225644,
-      "duration_ms": 0.030368566513061523,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 30,
-      "mb": 1,
-      "start": 0.2412933176383376,
-      "end": 0.24506230372935534,
-      "duration_ms": 3.768986091017723,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 31,
-      "mb": 0,
-      "start": 0.2456857031211257,
-      "end": 0.2457115976139903,
-      "duration_ms": 0.025894492864608765,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 31,
-      "mb": 0,
-      "start": 0.24573703203350306,
-      "end": 0.24968244414776564,
-      "duration_ms": 3.945412114262581,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 31,
-      "mb": 1,
-      "start": 0.24998875241726637,
-      "end": 0.25001887138932943,
-      "duration_ms": 0.030118972063064575,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 31,
-      "mb": 1,
-      "start": 0.2500433223322034,
-      "end": 0.25315026100724936,
-      "duration_ms": 3.106938675045967,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 32,
-      "mb": 0,
-      "start": 0.25378342904150486,
-      "end": 0.2538093067705631,
-      "duration_ms": 0.025877729058265686,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 32,
-      "mb": 0,
-      "start": 0.253844091668725,
-      "end": 0.2574475659057498,
-      "duration_ms": 3.603474237024784,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 32,
-      "mb": 1,
-      "start": 0.2577472385019064,
-      "end": 0.2577773807570338,
-      "duration_ms": 0.030142255127429962,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 32,
-      "mb": 1,
-      "start": 0.25780221074819565,
-      "end": 0.26112307514995337,
-      "duration_ms": 3.320864401757717,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 33,
-      "mb": 0,
-      "start": 0.2617429420351982,
-      "end": 0.2617688151076436,
-      "duration_ms": 0.02587307244539261,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 33,
-      "mb": 0,
-      "start": 0.2617940856143832,
-      "end": 0.266063267365098,
-      "duration_ms": 4.269181750714779,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 33,
-      "mb": 1,
-      "start": 0.26636198349297047,
-      "end": 0.266399297863245,
-      "duration_ms": 0.03731437027454376,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 33,
-      "mb": 1,
-      "start": 0.2664243448525667,
-      "end": 0.269933233037591,
-      "duration_ms": 3.5088881850242615,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 34,
-      "mb": 0,
-      "start": 0.27058402076363564,
-      "end": 0.2706103287637234,
-      "duration_ms": 0.026308000087738037,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 34,
-      "mb": 0,
-      "start": 0.2706358144059777,
-      "end": 0.27412490360438824,
-      "duration_ms": 3.489089198410511,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 34,
-      "mb": 1,
-      "start": 0.27445878833532333,
-      "end": 0.2744898898527026,
-      "duration_ms": 0.031101517379283905,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 34,
-      "mb": 1,
-      "start": 0.27451491076499224,
-      "end": 0.27808715775609016,
-      "duration_ms": 3.572246991097927,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 35,
-      "mb": 0,
-      "start": 0.27880154084414244,
-      "end": 0.2788277342915535,
-      "duration_ms": 0.026193447411060333,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 35,
-      "mb": 0,
-      "start": 0.2788531892001629,
-      "end": 0.2821551878005266,
-      "duration_ms": 3.3019986003637314,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 35,
-      "mb": 1,
-      "start": 0.28249028138816357,
-      "end": 0.2825207123532891,
-      "duration_ms": 0.03043096512556076,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 35,
-      "mb": 1,
-      "start": 0.28254546970129013,
-      "end": 0.2860339470207691,
-      "duration_ms": 3.4884773194789886,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 36,
-      "mb": 0,
-      "start": 0.28667683620005846,
-      "end": 0.28670299891382456,
-      "duration_ms": 0.026162713766098022,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 36,
-      "mb": 0,
-      "start": 0.2867281408980489,
-      "end": 0.29066925775259733,
-      "duration_ms": 3.9411168545484543,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 36,
-      "mb": 1,
-      "start": 0.2909863740205765,
-      "end": 0.2910164836794138,
-      "duration_ms": 0.03010965883731842,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 36,
-      "mb": 1,
-      "start": 0.29104125779122114,
-      "end": 0.2943754205480218,
-      "duration_ms": 3.3341627568006516,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 37,
-      "mb": 0,
-      "start": 0.29501364659518003,
-      "end": 0.29503952991217375,
-      "duration_ms": 0.02588331699371338,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 37,
-      "mb": 0,
-      "start": 0.29506951943039894,
-      "end": 0.29868712462484837,
-      "duration_ms": 3.6176051944494247,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 37,
-      "mb": 1,
-      "start": 0.29898606706410646,
-      "end": 0.29901638720184565,
-      "duration_ms": 0.03032013773918152,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 37,
-      "mb": 1,
-      "start": 0.29904176108539104,
-      "end": 0.3026463408023119,
-      "duration_ms": 3.6045797169208527,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 38,
-      "mb": 0,
-      "start": 0.30325731448829174,
-      "end": 0.3032830711454153,
-      "duration_ms": 0.025756657123565674,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 38,
-      "mb": 0,
-      "start": 0.3033088054507971,
-      "end": 0.3069113176316023,
-      "duration_ms": 3.6025121808052063,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 38,
-      "mb": 1,
-      "start": 0.30720771104097366,
-      "end": 0.3072381503880024,
-      "duration_ms": 0.0304393470287323,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 38,
-      "mb": 1,
-      "start": 0.30726304929703474,
-      "end": 0.31120008416473866,
-      "duration_ms": 3.9370348677039146,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 39,
-      "mb": 0,
-      "start": 0.31181005481630564,
-      "end": 0.311836164444685,
-      "duration_ms": 0.02610962837934494,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 39,
-      "mb": 0,
-      "start": 0.31186201982200146,
-      "end": 0.3151409765705466,
-      "duration_ms": 3.27895674854517,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 39,
-      "mb": 1,
-      "start": 0.31545360293239355,
-      "end": 0.3154841521754861,
-      "duration_ms": 0.030549243092536926,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 39,
-      "mb": 1,
-      "start": 0.3155089281499386,
-      "end": 0.31977010518312454,
-      "duration_ms": 4.261177033185959,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 40,
-      "mb": 0,
-      "start": 0.3204017551615834,
-      "end": 0.3204280696809292,
-      "duration_ms": 0.026314519345760345,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 40,
-      "mb": 0,
-      "start": 0.32045346312224865,
-      "end": 0.32337312400341034,
-      "duration_ms": 2.9196608811616898,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 40,
-      "mb": 1,
-      "start": 0.32367904391139746,
-      "end": 0.323709387332201,
-      "duration_ms": 0.030343420803546906,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 40,
-      "mb": 1,
-      "start": 0.32373411301523447,
-      "end": 0.3270034119486809,
-      "duration_ms": 3.2692989334464073,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 41,
-      "mb": 0,
-      "start": 0.327636294066906,
-      "end": 0.3276620879769325,
-      "duration_ms": 0.025793910026550293,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 41,
-      "mb": 0,
-      "start": 0.3276878912001848,
-      "end": 0.3312815446406603,
-      "duration_ms": 3.593653440475464,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 41,
-      "mb": 1,
-      "start": 0.3315797569230199,
-      "end": 0.33161001186817884,
-      "duration_ms": 0.030254945158958435,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 41,
-      "mb": 1,
-      "start": 0.3316349424421787,
-      "end": 0.3349709464237094,
-      "duration_ms": 3.3360039815306664,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 42,
-      "mb": 0,
-      "start": 0.33559017442166805,
-      "end": 0.3356164386495948,
-      "duration_ms": 0.02626422792673111,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 42,
-      "mb": 0,
-      "start": 0.33564209192991257,
-      "end": 0.3386760223656893,
-      "duration_ms": 3.0339304357767105,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 42,
-      "mb": 1,
-      "start": 0.33897903468459845,
-      "end": 0.33900947216898203,
-      "duration_ms": 0.03043748438358307,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 42,
-      "mb": 1,
-      "start": 0.33903471659868956,
-      "end": 0.3420966826379299,
-      "duration_ms": 3.0619660392403603,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 43,
-      "mb": 0,
-      "start": 0.3427603915333748,
-      "end": 0.34278655890375376,
-      "duration_ms": 0.0261673703789711,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 43,
-      "mb": 0,
-      "start": 0.3428160725161433,
-      "end": 0.3456355491653085,
-      "duration_ms": 2.8194766491651535,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 43,
-      "mb": 1,
-      "start": 0.345946392044425,
-      "end": 0.3459768956527114,
-      "duration_ms": 0.030503608286380768,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 43,
-      "mb": 1,
-      "start": 0.3460018849000335,
-      "end": 0.3490392519161105,
-      "duration_ms": 3.0373670160770416,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 44,
-      "mb": 0,
-      "start": 0.3496660105884075,
-      "end": 0.34969194419682026,
-      "duration_ms": 0.025933608412742615,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 44,
-      "mb": 0,
-      "start": 0.3497173096984625,
-      "end": 0.3527523335069418,
-      "duration_ms": 3.035023808479309,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 44,
-      "mb": 1,
-      "start": 0.35308398120105267,
-      "end": 0.35311415512114763,
-      "duration_ms": 0.03017392009496689,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 44,
-      "mb": 1,
-      "start": 0.35313900001347065,
-      "end": 0.3563609942793846,
-      "duration_ms": 3.2219942659139633,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 45,
-      "mb": 0,
-      "start": 0.3570165978744626,
-      "end": 0.35704305209219456,
-      "duration_ms": 0.026454217731952667,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 45,
-      "mb": 0,
-      "start": 0.3570687845349312,
-      "end": 0.3603291315957904,
-      "duration_ms": 3.2603470608592033,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 45,
-      "mb": 1,
-      "start": 0.3606636244803667,
-      "end": 0.3606941308826208,
-      "duration_ms": 0.030506402254104614,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 45,
-      "mb": 1,
-      "start": 0.36071929056197405,
-      "end": 0.3642130019143224,
-      "duration_ms": 3.4937113523483276,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 46,
-      "mb": 0,
-      "start": 0.3648537266999483,
-      "end": 0.3648802079260349,
-      "duration_ms": 0.026481226086616516,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 46,
-      "mb": 0,
-      "start": 0.36490586772561073,
-      "end": 0.3679555896669626,
-      "duration_ms": 3.0497219413518906,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 46,
-      "mb": 1,
-      "start": 0.36826580204069614,
-      "end": 0.3682963103055954,
-      "duration_ms": 0.030508264899253845,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 46,
-      "mb": 1,
-      "start": 0.36832106299698353,
-      "end": 0.371560113504529,
-      "duration_ms": 3.239050507545471,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 47,
-      "mb": 0,
-      "start": 0.37219119537621737,
-      "end": 0.3722175182774663,
-      "duration_ms": 0.026322901248931885,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 47,
-      "mb": 0,
-      "start": 0.37224303279072046,
-      "end": 0.37523225601762533,
-      "duration_ms": 2.989223226904869,
-      "node": "ffn"
-    },
-    {
-      "type": "recv_wait",
-      "layer": 47,
-      "mb": 1,
-      "start": 0.3755365014076233,
-      "end": 0.3755669426172972,
-      "duration_ms": 0.03044120967388153,
-      "node": "ffn"
-    },
-    {
-      "type": "ffn_compute",
-      "layer": 47,
-      "mb": 1,
-      "start": 0.37559202685952187,
-      "end": 0.37876536790281534,
-      "duration_ms": 3.173341043293476,
+      "start": 0.4926252095028758,
+      "end": 0.5610872535035014,
+      "duration_ms": 68.46204400062561,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 0,
       "mb": 0,
-      "start": 0.006006089970469475,
-      "end": 0.006428427994251251,
-      "duration_ms": 0.42233802378177643,
+      "start": 0.6993539035320282,
+      "end": 0.6997287040576339,
+      "duration_ms": 0.37480052560567856,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 0,
+      "mb": 1,
+      "start": 0.6997449304908514,
+      "end": 0.6997581757605076,
+      "duration_ms": 0.013245269656181335,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 0,
+      "mb": 1,
+      "start": 0.6998065980151296,
+      "end": 0.7341482415795326,
+      "duration_ms": 34.34164356440306,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 0,
+      "mb": 1,
+      "start": 0.6998065980151296,
+      "end": 0.7000585505738854,
+      "duration_ms": 0.25195255875587463,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 0,
+      "mb": 1,
+      "start": 0.7000585505738854,
+      "end": 0.7271103532984853,
+      "duration_ms": 27.05180272459984,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 0,
       "mb": 1,
-      "start": 0.009100290015339851,
-      "end": 0.009376856498420238,
-      "duration_ms": 0.2765664830803871,
+      "start": 0.7341724252328277,
+      "end": 0.7343519451096654,
+      "duration_ms": 0.1795198768377304,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.7348832655698061,
+      "end": 0.7348900819197297,
+      "duration_ms": 0.006816349923610687,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.7349348831921816,
+      "end": 0.766177861019969,
+      "duration_ms": 31.2429778277874,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.7349348831921816,
+      "end": 0.7351542115211487,
+      "duration_ms": 0.21932832896709442,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.7351542115211487,
+      "end": 0.761025607585907,
+      "duration_ms": 25.8713960647583,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 1,
       "mb": 0,
-      "start": 0.012940623797476292,
-      "end": 0.013216327875852585,
-      "duration_ms": 0.2757040783762932,
+      "start": 0.7661960627883673,
+      "end": 0.7663577115163207,
+      "duration_ms": 0.161648727953434,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 1,
+      "mb": 1,
+      "start": 0.7663664678111672,
+      "end": 0.766376324929297,
+      "duration_ms": 0.009857118129730225,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 1,
+      "mb": 1,
+      "start": 0.7664102455601096,
+      "end": 0.7975249420851469,
+      "duration_ms": 31.11469652503729,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 1,
+      "mb": 1,
+      "start": 0.7664102455601096,
+      "end": 0.7665925920009613,
+      "duration_ms": 0.18234644085168839,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 1,
+      "mb": 1,
+      "start": 0.7665925920009613,
+      "end": 0.7911382205784321,
+      "duration_ms": 24.54562857747078,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 1,
       "mb": 1,
-      "start": 0.015859865583479404,
-      "end": 0.016187375411391258,
-      "duration_ms": 0.3275098279118538,
+      "start": 0.7975422404706478,
+      "end": 0.7977130953222513,
+      "duration_ms": 0.170854851603508,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.7981293639168143,
+      "end": 0.7981362659484148,
+      "duration_ms": 0.006902031600475311,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.7981785237789154,
+      "end": 0.8259921688586473,
+      "duration_ms": 27.81364507973194,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.7981785237789154,
+      "end": 0.7983804317191243,
+      "duration_ms": 0.2019079402089119,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.7983804317191243,
+      "end": 0.8208591863512993,
+      "duration_ms": 22.47875463217497,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 2,
       "mb": 0,
-      "start": 0.02053431048989296,
-      "end": 0.020875515416264534,
-      "duration_ms": 0.3412049263715744,
+      "start": 0.8260093871504068,
+      "end": 0.8262123269960284,
+      "duration_ms": 0.20293984562158585,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 2,
+      "mb": 1,
+      "start": 0.8262209678068757,
+      "end": 0.8262307615950704,
+      "duration_ms": 0.009793788194656372,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 2,
+      "mb": 1,
+      "start": 0.8262642426416278,
+      "end": 0.8539996268227696,
+      "duration_ms": 27.735384181141853,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 2,
+      "mb": 1,
+      "start": 0.8262642426416278,
+      "end": 0.8264471786096692,
+      "duration_ms": 0.18293596804141998,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 2,
+      "mb": 1,
+      "start": 0.8264471786096692,
+      "end": 0.8483154624700546,
+      "duration_ms": 21.868283860385418,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 2,
       "mb": 1,
-      "start": 0.024139858782291412,
-      "end": 0.024396692402660847,
-      "duration_ms": 0.25683362036943436,
+      "start": 0.8540169568732381,
+      "end": 0.8541789334267378,
+      "duration_ms": 0.16197655349969864,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.8545695161446929,
+      "end": 0.8545762551948428,
+      "duration_ms": 0.0067390501499176025,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.8546185828745365,
+      "end": 0.8836946217343211,
+      "duration_ms": 29.076038859784603,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.8546185828745365,
+      "end": 0.8548214696347713,
+      "duration_ms": 0.20288676023483276,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.8548214696347713,
+      "end": 0.8787556728348136,
+      "duration_ms": 23.934203200042248,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 3,
       "mb": 0,
-      "start": 0.028653111308813095,
-      "end": 0.028994988650083542,
-      "duration_ms": 0.3418773412704468,
+      "start": 0.8837121315300465,
+      "end": 0.8838683431968093,
+      "duration_ms": 0.15621166676282883,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 3,
+      "mb": 1,
+      "start": 0.8838763134554029,
+      "end": 0.8838860439136624,
+      "duration_ms": 0.00973045825958252,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 3,
+      "mb": 1,
+      "start": 0.883918859064579,
+      "end": 0.9129188759252429,
+      "duration_ms": 29.00001686066389,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 3,
+      "mb": 1,
+      "start": 0.883918859064579,
+      "end": 0.8841020120307803,
+      "duration_ms": 0.1831529662013054,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 3,
+      "mb": 1,
+      "start": 0.8841020120307803,
+      "end": 0.9069668110460043,
+      "duration_ms": 22.86479901522398,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 3,
       "mb": 1,
-      "start": 0.032130164094269276,
-      "end": 0.03239340987056494,
-      "duration_ms": 0.2632457762956619,
+      "start": 0.9129356211051345,
+      "end": 0.9130879146978259,
+      "duration_ms": 0.1522935926914215,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.9134908448904753,
+      "end": 0.9134976537898183,
+      "duration_ms": 0.006808899343013763,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.9135391628369689,
+      "end": 0.9392030704766512,
+      "duration_ms": 25.663907639682293,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.9135391628369689,
+      "end": 0.9137372327968478,
+      "duration_ms": 0.1980699598789215,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.9137372327968478,
+      "end": 0.9345607711002231,
+      "duration_ms": 20.823538303375244,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 4,
       "mb": 0,
-      "start": 0.03670514561235905,
-      "end": 0.03696055803447962,
-      "duration_ms": 0.25541242212057114,
+      "start": 0.9392200708389282,
+      "end": 0.9397151712328196,
+      "duration_ms": 0.49510039389133453,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 4,
+      "mb": 1,
+      "start": 0.9397301021963358,
+      "end": 0.9397538183256984,
+      "duration_ms": 0.02371612936258316,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 4,
+      "mb": 1,
+      "start": 0.9398061046376824,
+      "end": 0.9654550738632679,
+      "duration_ms": 25.64896922558546,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 4,
+      "mb": 1,
+      "start": 0.9398061046376824,
+      "end": 0.9400025010108948,
+      "duration_ms": 0.1963963732123375,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 4,
+      "mb": 1,
+      "start": 0.9400025010108948,
+      "end": 0.9601820250973105,
+      "duration_ms": 20.179524086415768,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 4,
       "mb": 1,
-      "start": 0.04049280844628811,
-      "end": 0.040761847980320454,
-      "duration_ms": 0.2690395340323448,
+      "start": 0.965471769683063,
+      "end": 0.9656394589692354,
+      "duration_ms": 0.16768928617238998,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.96615120023489,
+      "end": 0.9661578144878149,
+      "duration_ms": 0.006614252924919128,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.9661990264430642,
+      "end": 0.9927324103191495,
+      "duration_ms": 26.53338387608528,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.9661990264430642,
+      "end": 0.9663979783654213,
+      "duration_ms": 0.19895192235708237,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.9663979783654213,
+      "end": 0.9877738384529948,
+      "duration_ms": 21.37586008757353,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 5,
       "mb": 0,
-      "start": 0.04467980097979307,
-      "end": 0.04493213631212711,
-      "duration_ms": 0.2523353323340416,
+      "start": 0.9927496779710054,
+      "end": 0.9929230278357863,
+      "duration_ms": 0.17334986478090286,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 5,
+      "mb": 1,
+      "start": 0.9929311266168952,
+      "end": 0.9929411308839917,
+      "duration_ms": 0.01000426709651947,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 5,
+      "mb": 1,
+      "start": 0.9929752945899963,
+      "end": 1.0194189818575978,
+      "duration_ms": 26.44368726760149,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 5,
+      "mb": 1,
+      "start": 0.9929752945899963,
+      "end": 0.9931601528078318,
+      "duration_ms": 0.18485821783542633,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 5,
+      "mb": 1,
+      "start": 0.9931601528078318,
+      "end": 1.0139884958043694,
+      "duration_ms": 20.828342996537685,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 5,
       "mb": 1,
-      "start": 0.04849791806191206,
-      "end": 0.048756929114460945,
-      "duration_ms": 0.25901105254888535,
+      "start": 1.019437162205577,
+      "end": 1.0196099309250712,
+      "duration_ms": 0.1727687194943428,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 6,
+      "mb": 0,
+      "start": 1.019965405575931,
+      "end": 1.0199720822274685,
+      "duration_ms": 0.0066766515374183655,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 6,
+      "mb": 0,
+      "start": 1.020013129338622,
+      "end": 1.0426825461909175,
+      "duration_ms": 22.6694168522954,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 6,
+      "mb": 0,
+      "start": 1.020013129338622,
+      "end": 1.0202094502747059,
+      "duration_ms": 0.19632093608379364,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 6,
+      "mb": 0,
+      "start": 1.0202094502747059,
+      "end": 1.0384316770359874,
+      "duration_ms": 18.22222676128149,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 6,
       "mb": 0,
-      "start": 0.05261851195245981,
-      "end": 0.052867816761136055,
-      "duration_ms": 0.24930480867624283,
+      "start": 1.0426991255953908,
+      "end": 1.042864566668868,
+      "duration_ms": 0.16544107347726822,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 6,
+      "mb": 1,
+      "start": 1.042872967198491,
+      "end": 1.0428825384005904,
+      "duration_ms": 0.009571202099323273,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 6,
+      "mb": 1,
+      "start": 1.042916752398014,
+      "end": 1.0655068289488554,
+      "duration_ms": 22.59007655084133,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 6,
+      "mb": 1,
+      "start": 1.042916752398014,
+      "end": 1.0430985447019339,
+      "duration_ms": 0.18179230391979218,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 6,
+      "mb": 1,
+      "start": 1.0430985447019339,
+      "end": 1.0608782703056931,
+      "duration_ms": 17.77972560375929,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 6,
       "mb": 1,
-      "start": 0.05639773979783058,
-      "end": 0.056643689051270485,
-      "duration_ms": 0.24594925343990326,
+      "start": 1.0655236840248108,
+      "end": 1.0656851176172495,
+      "duration_ms": 0.16143359243869781,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 7,
+      "mb": 0,
+      "start": 1.0660294787958264,
+      "end": 1.0660362057387829,
+      "duration_ms": 0.006726942956447601,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 7,
+      "mb": 0,
+      "start": 1.0660775201395154,
+      "end": 1.0866395151242614,
+      "duration_ms": 20.56199498474598,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 7,
+      "mb": 0,
+      "start": 1.0660775201395154,
+      "end": 1.0662821615114808,
+      "duration_ms": 0.20464137196540833,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 7,
+      "mb": 0,
+      "start": 1.0662821615114808,
+      "end": 1.0828958414494991,
+      "duration_ms": 16.613679938018322,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 7,
       "mb": 0,
-      "start": 0.0605641370639205,
-      "end": 0.06081459578126669,
-      "duration_ms": 0.2504587173461914,
+      "start": 1.0866566458716989,
+      "end": 1.0868164068087935,
+      "duration_ms": 0.15976093709468842,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 7,
+      "mb": 1,
+      "start": 1.086824425496161,
+      "end": 1.086834128946066,
+      "duration_ms": 0.00970344990491867,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 7,
+      "mb": 1,
+      "start": 1.0868670493364334,
+      "end": 1.1073552686721087,
+      "duration_ms": 20.48821933567524,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 7,
+      "mb": 1,
+      "start": 1.0868670493364334,
+      "end": 1.0870509669184685,
+      "duration_ms": 0.1839175820350647,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 7,
+      "mb": 1,
+      "start": 1.0870509669184685,
+      "end": 1.1031696125864983,
+      "duration_ms": 16.118645668029785,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 7,
       "mb": 1,
-      "start": 0.06396141834557056,
-      "end": 0.06420355848968029,
-      "duration_ms": 0.24214014410972595,
+      "start": 1.1073735626414418,
+      "end": 1.1075502056628466,
+      "duration_ms": 0.1766430214047432,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 8,
+      "mb": 0,
+      "start": 1.1080465810373425,
+      "end": 1.108053207397461,
+      "duration_ms": 0.00662636011838913,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 8,
+      "mb": 0,
+      "start": 1.1080947211012244,
+      "end": 1.1345974188297987,
+      "duration_ms": 26.502697728574276,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 8,
+      "mb": 0,
+      "start": 1.1080947211012244,
+      "end": 1.1083034751936793,
+      "duration_ms": 0.20875409245491028,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 8,
+      "mb": 0,
+      "start": 1.1083034751936793,
+      "end": 1.129977410659194,
+      "duration_ms": 21.67393546551466,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 8,
       "mb": 0,
-      "start": 0.06809681188315153,
-      "end": 0.06834359653294086,
-      "duration_ms": 0.24678464978933334,
+      "start": 1.1346139442175627,
+      "end": 1.1348602613434196,
+      "duration_ms": 0.24631712585687637,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 8,
+      "mb": 1,
+      "start": 1.1348681645467877,
+      "end": 1.1348778940737247,
+      "duration_ms": 0.009729526937007904,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 8,
+      "mb": 1,
+      "start": 1.134919318370521,
+      "end": 1.1613245410844684,
+      "duration_ms": 26.405222713947296,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 8,
+      "mb": 1,
+      "start": 1.134919318370521,
+      "end": 1.135101948864758,
+      "duration_ms": 0.1826304942369461,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 8,
+      "mb": 1,
+      "start": 1.135101948864758,
+      "end": 1.1559215979650617,
+      "duration_ms": 20.81964910030365,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 8,
       "mb": 1,
-      "start": 0.07124283816665411,
-      "end": 0.07147299312055111,
-      "duration_ms": 0.23015495389699936,
+      "start": 1.161341049708426,
+      "end": 1.1615010844543576,
+      "duration_ms": 0.16003474593162537,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 9,
+      "mb": 0,
+      "start": 1.1619151271879673,
+      "end": 1.1619219267740846,
+      "duration_ms": 0.006799586117267609,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 9,
+      "mb": 0,
+      "start": 1.1619629673659801,
+      "end": 1.1863569086417556,
+      "duration_ms": 24.393941275775433,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 9,
+      "mb": 0,
+      "start": 1.1619629673659801,
+      "end": 1.162159763276577,
+      "duration_ms": 0.19679591059684753,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 9,
+      "mb": 0,
+      "start": 1.162159763276577,
+      "end": 1.1817383086308837,
+      "duration_ms": 19.578545354306698,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 9,
       "mb": 0,
-      "start": 0.07577353250235319,
-      "end": 0.07619794737547636,
-      "duration_ms": 0.42441487312316895,
+      "start": 1.1863747974857688,
+      "end": 1.1865352019667625,
+      "duration_ms": 0.1604044809937477,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 9,
+      "mb": 1,
+      "start": 1.1865431275218725,
+      "end": 1.1865527108311653,
+      "duration_ms": 0.009583309292793274,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 9,
+      "mb": 1,
+      "start": 1.1865858668461442,
+      "end": 1.2108820527791977,
+      "duration_ms": 24.296185933053493,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 9,
+      "mb": 1,
+      "start": 1.1865858668461442,
+      "end": 1.1867697052657604,
+      "duration_ms": 0.18383841961622238,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 9,
+      "mb": 1,
+      "start": 1.1867697052657604,
+      "end": 1.2059006756171584,
+      "duration_ms": 19.13097035139799,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 9,
       "mb": 1,
-      "start": 0.0795998265966773,
-      "end": 0.07985104713588953,
-      "duration_ms": 0.25122053921222687,
+      "start": 1.2108986554667354,
+      "end": 1.2110570278018713,
+      "duration_ms": 0.15837233513593674,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 10,
+      "mb": 0,
+      "start": 1.2114627826958895,
+      "end": 1.2114694667980075,
+      "duration_ms": 0.006684102118015289,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 10,
+      "mb": 0,
+      "start": 1.2115108268335462,
+      "end": 1.2333672977983952,
+      "duration_ms": 21.856470964848995,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 10,
+      "mb": 0,
+      "start": 1.2115108268335462,
+      "end": 1.2117073377594352,
+      "duration_ms": 0.1965109258890152,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 10,
+      "mb": 0,
+      "start": 1.2117073377594352,
+      "end": 1.2293136166408658,
+      "duration_ms": 17.606278881430626,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 10,
       "mb": 0,
-      "start": 0.08451195899397135,
-      "end": 0.08478366769850254,
-      "duration_ms": 0.2717087045311928,
+      "start": 1.2333837198093534,
+      "end": 1.233546905219555,
+      "duration_ms": 0.16318541020154953,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 10,
+      "mb": 1,
+      "start": 1.2335549406707287,
+      "end": 1.2335645165294409,
+      "duration_ms": 0.00957585871219635,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 10,
+      "mb": 1,
+      "start": 1.2335972506552935,
+      "end": 1.2553546018898487,
+      "duration_ms": 21.757351234555244,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 10,
+      "mb": 1,
+      "start": 1.2335972506552935,
+      "end": 1.2337795179337263,
+      "duration_ms": 0.18226727843284607,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 10,
+      "mb": 1,
+      "start": 1.2337795179337263,
+      "end": 1.250881320796907,
+      "duration_ms": 17.101802863180637,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 10,
       "mb": 1,
-      "start": 0.08793914783746004,
-      "end": 0.08826692681759596,
-      "duration_ms": 0.32777898013591766,
+      "start": 1.255374589934945,
+      "end": 1.255525603890419,
+      "duration_ms": 0.15101395547389984,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 11,
+      "mb": 0,
+      "start": 1.255854413844645,
+      "end": 1.2558612003922462,
+      "duration_ms": 0.006786547601222992,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 11,
+      "mb": 0,
+      "start": 1.2559022223576903,
+      "end": 1.2824132414534688,
+      "duration_ms": 26.511019095778465,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 11,
+      "mb": 0,
+      "start": 1.2559022223576903,
+      "end": 1.2560983039438725,
+      "duration_ms": 0.19608158618211746,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 11,
+      "mb": 0,
+      "start": 1.2560983039438725,
+      "end": 1.277314467355609,
+      "duration_ms": 21.21616341173649,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 11,
       "mb": 0,
-      "start": 0.09169861953705549,
-      "end": 0.09196432214230299,
-      "duration_ms": 0.26570260524749756,
+      "start": 1.282429849728942,
+      "end": 1.2825876595452428,
+      "duration_ms": 0.157809816300869,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 11,
+      "mb": 1,
+      "start": 1.2825956428423524,
+      "end": 1.2826054226607084,
+      "duration_ms": 0.00977981835603714,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 11,
+      "mb": 1,
+      "start": 1.2826387593522668,
+      "end": 1.3090571807697415,
+      "duration_ms": 26.418421417474747,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 11,
+      "mb": 1,
+      "start": 1.2826387593522668,
+      "end": 1.2828204492107034,
+      "duration_ms": 0.18168985843658447,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 11,
+      "mb": 1,
+      "start": 1.2828204492107034,
+      "end": 1.3036324847489595,
+      "duration_ms": 20.81203553825617,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 11,
       "mb": 1,
-      "start": 0.09466089773923159,
-      "end": 0.09492323361337185,
-      "duration_ms": 0.2623358741402626,
+      "start": 1.3090737937018275,
+      "end": 1.3092714454978704,
+      "duration_ms": 0.19765179604291916,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 12,
+      "mb": 0,
+      "start": 1.309686942026019,
+      "end": 1.3096936140209436,
+      "duration_ms": 0.006671994924545288,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 12,
+      "mb": 0,
+      "start": 1.3097355579957366,
+      "end": 1.3345493376255035,
+      "duration_ms": 24.81377962976694,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 12,
+      "mb": 0,
+      "start": 1.3097355579957366,
+      "end": 1.3099302724003792,
+      "duration_ms": 0.19471440464258194,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 12,
+      "mb": 0,
+      "start": 1.3099302724003792,
+      "end": 1.3299549110233784,
+      "duration_ms": 20.02463862299919,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 12,
       "mb": 0,
-      "start": 0.09883807972073555,
-      "end": 0.09910306707024574,
-      "duration_ms": 0.26498734951019287,
+      "start": 1.3345659114420414,
+      "end": 1.3347755316644907,
+      "duration_ms": 0.20962022244930267,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 12,
+      "mb": 1,
+      "start": 1.334783690981567,
+      "end": 1.3347933795303106,
+      "duration_ms": 0.009688548743724823,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 12,
+      "mb": 1,
+      "start": 1.3348267218098044,
+      "end": 1.3595645232126117,
+      "duration_ms": 24.737801402807236,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 12,
+      "mb": 1,
+      "start": 1.3348267218098044,
+      "end": 1.3350099762901664,
+      "duration_ms": 0.18325448036193848,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 12,
+      "mb": 1,
+      "start": 1.3350099762901664,
+      "end": 1.3544817212969065,
+      "duration_ms": 19.471745006740093,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 12,
       "mb": 1,
-      "start": 0.1022986238822341,
-      "end": 0.1025671474635601,
-      "duration_ms": 0.26852358132600784,
+      "start": 1.35958634596318,
+      "end": 1.3597477236762643,
+      "duration_ms": 0.1613777130842209,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 13,
+      "mb": 0,
+      "start": 1.3601305345073342,
+      "end": 1.3601377261802554,
+      "duration_ms": 0.007191672921180725,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 13,
+      "mb": 0,
+      "start": 1.3601799868047237,
+      "end": 1.3851613160222769,
+      "duration_ms": 24.98132921755314,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 13,
+      "mb": 0,
+      "start": 1.3601799868047237,
+      "end": 1.3603962175548077,
+      "duration_ms": 0.21623075008392334,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 13,
+      "mb": 0,
+      "start": 1.3603962175548077,
+      "end": 1.380459314212203,
+      "duration_ms": 20.063096657395363,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 13,
       "mb": 0,
-      "start": 0.10643335152417421,
-      "end": 0.1066852193325758,
-      "duration_ms": 0.2518678084015846,
+      "start": 1.385178699158132,
+      "end": 1.3853342048823833,
+      "duration_ms": 0.1555057242512703,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 13,
+      "mb": 1,
+      "start": 1.385342719964683,
+      "end": 1.385352405719459,
+      "duration_ms": 0.009685754776000977,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 13,
+      "mb": 1,
+      "start": 1.385385675355792,
+      "end": 1.4101094491779804,
+      "duration_ms": 24.723773822188377,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 13,
+      "mb": 1,
+      "start": 1.385385675355792,
+      "end": 1.3855679091066122,
+      "duration_ms": 0.1822337508201599,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 13,
+      "mb": 1,
+      "start": 1.3855679091066122,
+      "end": 1.405032565817237,
+      "duration_ms": 19.464656710624695,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 13,
       "mb": 1,
-      "start": 0.10983464866876602,
-      "end": 0.11008473206311464,
-      "duration_ms": 0.25008339434862137,
+      "start": 1.4101261282339692,
+      "end": 1.4102789517492056,
+      "duration_ms": 0.15282351523637772,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 14,
+      "mb": 0,
+      "start": 1.4106495277956128,
+      "end": 1.4106561727821827,
+      "duration_ms": 0.006644986569881439,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 14,
+      "mb": 0,
+      "start": 1.4106977861374617,
+      "end": 1.4384939577430487,
+      "duration_ms": 27.796171605587006,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 14,
+      "mb": 0,
+      "start": 1.4106977861374617,
+      "end": 1.410895898938179,
+      "duration_ms": 0.19811280071735382,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 14,
+      "mb": 0,
+      "start": 1.410895898938179,
+      "end": 1.43278768658638,
+      "duration_ms": 21.89178764820099,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 14,
       "mb": 0,
-      "start": 0.11441087257117033,
-      "end": 0.11466663796454668,
-      "duration_ms": 0.2557653933763504,
+      "start": 1.4385106591507792,
+      "end": 1.4387062350288033,
+      "duration_ms": 0.19557587802410126,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 14,
+      "mb": 1,
+      "start": 1.4387145629152656,
+      "end": 1.4387241853401065,
+      "duration_ms": 0.009622424840927124,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 14,
+      "mb": 1,
+      "start": 1.4387567564845085,
+      "end": 1.4664546782150865,
+      "duration_ms": 27.697921730577946,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 14,
+      "mb": 1,
+      "start": 1.4387567564845085,
+      "end": 1.4389387303963304,
+      "duration_ms": 0.1819739118218422,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 14,
+      "mb": 1,
+      "start": 1.4389387303963304,
+      "end": 1.460768273100257,
+      "duration_ms": 21.829542703926563,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 14,
       "mb": 1,
-      "start": 0.11824301164597273,
-      "end": 0.1184972720220685,
-      "duration_ms": 0.2542603760957718,
+      "start": 1.4664799254387617,
+      "end": 1.4666286008432508,
+      "duration_ms": 0.14867540448904037,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 15,
+      "mb": 0,
+      "start": 1.4670026833191514,
+      "end": 1.467009405605495,
+      "duration_ms": 0.006722286343574524,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 15,
+      "mb": 0,
+      "start": 1.4670502934604883,
+      "end": 1.4909975407645106,
+      "duration_ms": 23.947247304022312,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 15,
+      "mb": 0,
+      "start": 1.4670502934604883,
+      "end": 1.4672467755153775,
+      "duration_ms": 0.19648205488920212,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 15,
+      "mb": 0,
+      "start": 1.4672467755153775,
+      "end": 1.4865544941276312,
+      "duration_ms": 19.307718612253666,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 15,
       "mb": 0,
-      "start": 0.12273775320500135,
-      "end": 0.12298427242785692,
-      "duration_ms": 0.24651922285556793,
+      "start": 1.491014514118433,
+      "end": 1.4911754252389073,
+      "duration_ms": 0.16091112047433853,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 15,
+      "mb": 1,
+      "start": 1.4911834616214037,
+      "end": 1.491193175315857,
+      "duration_ms": 0.009713694453239441,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 15,
+      "mb": 1,
+      "start": 1.4912264989688993,
+      "end": 1.5150986220687628,
+      "duration_ms": 23.87212309986353,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 15,
+      "mb": 1,
+      "start": 1.4912264989688993,
+      "end": 1.4914105562493205,
+      "duration_ms": 0.18405728042125702,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 15,
+      "mb": 1,
+      "start": 1.4914105562493205,
+      "end": 1.5102103324607015,
+      "duration_ms": 18.79977621138096,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 15,
       "mb": 1,
-      "start": 0.1261110445484519,
-      "end": 0.12634816765785217,
-      "duration_ms": 0.23712310940027237,
+      "start": 1.5151151604950428,
+      "end": 1.515284577384591,
+      "duration_ms": 0.1694168895483017,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 16,
+      "mb": 0,
+      "start": 1.515722774900496,
+      "end": 1.515729432925582,
+      "duration_ms": 0.006658025085926056,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 16,
+      "mb": 0,
+      "start": 1.5157702565193176,
+      "end": 1.5423030517995358,
+      "duration_ms": 26.532795280218124,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 16,
+      "mb": 0,
+      "start": 1.5157702565193176,
+      "end": 1.5159671371802688,
+      "duration_ms": 0.19688066095113754,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 16,
+      "mb": 0,
+      "start": 1.5159671371802688,
+      "end": 1.5377176869660616,
+      "duration_ms": 21.750549785792828,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 16,
       "mb": 0,
-      "start": 0.1313605848699808,
-      "end": 0.13160441163927317,
-      "duration_ms": 0.24382676929235458,
+      "start": 1.5423199497163296,
+      "end": 1.5424863686785102,
+      "duration_ms": 0.16641896218061447,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 16,
+      "mb": 1,
+      "start": 1.5424944628030062,
+      "end": 1.542504107579589,
+      "duration_ms": 0.009644776582717896,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 16,
+      "mb": 1,
+      "start": 1.542536921799183,
+      "end": 1.5689694732427597,
+      "duration_ms": 26.432551443576813,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 16,
+      "mb": 1,
+      "start": 1.542536921799183,
+      "end": 1.542719129472971,
+      "duration_ms": 0.18220767378807068,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 16,
+      "mb": 1,
+      "start": 1.542719129472971,
+      "end": 1.5635535325855017,
+      "duration_ms": 20.83440311253071,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 16,
       "mb": 1,
-      "start": 0.1347527727484703,
-      "end": 0.13497559819370508,
-      "duration_ms": 0.22282544523477554,
+      "start": 1.5689863599836826,
+      "end": 1.569137747399509,
+      "duration_ms": 0.15138741582632065,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 17,
+      "mb": 0,
+      "start": 1.5695523275062442,
+      "end": 1.5695590572431684,
+      "duration_ms": 0.006729736924171448,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 17,
+      "mb": 0,
+      "start": 1.5696006221696734,
+      "end": 1.5990682309493423,
+      "duration_ms": 29.467608779668808,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 17,
+      "mb": 0,
+      "start": 1.5696006221696734,
+      "end": 1.5697964923456311,
+      "duration_ms": 0.19587017595767975,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 17,
+      "mb": 0,
+      "start": 1.5697964923456311,
+      "end": 1.5933367600664496,
+      "duration_ms": 23.54026772081852,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 17,
       "mb": 0,
-      "start": 0.1388953235000372,
-      "end": 0.13914425671100616,
-      "duration_ms": 0.24893321096897125,
+      "start": 1.5990878269076347,
+      "end": 1.5992430979385972,
+      "duration_ms": 0.1552710309624672,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 17,
+      "mb": 1,
+      "start": 1.5992508539929986,
+      "end": 1.5992603888735175,
+      "duration_ms": 0.009534880518913269,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 17,
+      "mb": 1,
+      "start": 1.5992938484996557,
+      "end": 1.6287031900137663,
+      "duration_ms": 29.409341514110565,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 17,
+      "mb": 1,
+      "start": 1.5992938484996557,
+      "end": 1.5994757041335106,
+      "duration_ms": 0.18185563385486603,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 17,
+      "mb": 1,
+      "start": 1.5994757041335106,
+      "end": 1.6226716814562678,
+      "duration_ms": 23.195977322757244,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 17,
       "mb": 1,
-      "start": 0.14182554557919502,
-      "end": 0.14206389151513577,
-      "duration_ms": 0.2383459359407425,
+      "start": 1.628719869069755,
+      "end": 1.6288762716576457,
+      "duration_ms": 0.156402587890625,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 18,
+      "mb": 0,
+      "start": 1.62930778414011,
+      "end": 1.6293144691735506,
+      "duration_ms": 0.006685033440589905,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 18,
+      "mb": 0,
+      "start": 1.6293561877682805,
+      "end": 1.6494805039837956,
+      "duration_ms": 20.124316215515137,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 18,
+      "mb": 0,
+      "start": 1.6293561877682805,
+      "end": 1.6295511964708567,
+      "duration_ms": 0.19500870257616043,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 18,
+      "mb": 0,
+      "start": 1.6295511964708567,
+      "end": 1.6459520496428013,
+      "duration_ms": 16.40085317194462,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 18,
       "mb": 0,
-      "start": 0.146316590718925,
-      "end": 0.1465825093910098,
-      "duration_ms": 0.26591867208480835,
+      "start": 1.6494967574253678,
+      "end": 1.6496607214212418,
+      "duration_ms": 0.16396399587392807,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 18,
+      "mb": 1,
+      "start": 1.6496687810868025,
+      "end": 1.6496786922216415,
+      "duration_ms": 0.009911134839057922,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 18,
+      "mb": 1,
+      "start": 1.6497113918885589,
+      "end": 1.669737420976162,
+      "duration_ms": 20.026029087603092,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 18,
+      "mb": 1,
+      "start": 1.6497113918885589,
+      "end": 1.649893894791603,
+      "duration_ms": 0.18250290304422379,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 18,
+      "mb": 1,
+      "start": 1.649893894791603,
+      "end": 1.665639452636242,
+      "duration_ms": 15.745557844638824,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 18,
       "mb": 1,
-      "start": 0.14971718564629555,
-      "end": 0.1499545807018876,
-      "duration_ms": 0.2373950555920601,
+      "start": 1.6697539649903774,
+      "end": 1.6699047535657883,
+      "duration_ms": 0.1507885754108429,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 19,
+      "mb": 0,
+      "start": 1.6702750138938427,
+      "end": 1.6702816616743803,
+      "duration_ms": 0.006647780537605286,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 19,
+      "mb": 0,
+      "start": 1.6703235870227218,
+      "end": 1.6938519086688757,
+      "duration_ms": 23.528321646153927,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 19,
+      "mb": 0,
+      "start": 1.6703235870227218,
+      "end": 1.6705219764262438,
+      "duration_ms": 0.19838940352201462,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 19,
+      "mb": 0,
+      "start": 1.6705219764262438,
+      "end": 1.6898215031251311,
+      "duration_ms": 19.299526698887348,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 19,
       "mb": 0,
-      "start": 0.15426341071724892,
-      "end": 0.15452010091394186,
-      "duration_ms": 0.2566901966929436,
+      "start": 1.693868468515575,
+      "end": 1.6940212454646826,
+      "duration_ms": 0.15277694910764694,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 19,
+      "mb": 1,
+      "start": 1.6940294364467263,
+      "end": 1.6940390933305025,
+      "duration_ms": 0.009656883776187897,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 19,
+      "mb": 1,
+      "start": 1.694072143174708,
+      "end": 1.7175068855285645,
+      "duration_ms": 23.434742353856564,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 19,
+      "mb": 1,
+      "start": 1.694072143174708,
+      "end": 1.6942551229149103,
+      "duration_ms": 0.1829797402024269,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 19,
+      "mb": 1,
+      "start": 1.6942551229149103,
+      "end": 1.712711175903678,
+      "duration_ms": 18.456052988767624,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 19,
       "mb": 1,
-      "start": 0.15707348845899105,
-      "end": 0.15730842668563128,
-      "duration_ms": 0.23493822664022446,
+      "start": 1.7175235180184245,
+      "end": 1.717689098790288,
+      "duration_ms": 0.16558077186346054,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 20,
+      "mb": 0,
+      "start": 1.7180150439962745,
+      "end": 1.7180216973647475,
+      "duration_ms": 0.0066533684730529785,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 20,
+      "mb": 0,
+      "start": 1.7180699687451124,
+      "end": 1.7445732178166509,
+      "duration_ms": 26.50324907153845,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 20,
+      "mb": 0,
+      "start": 1.7180699687451124,
+      "end": 1.7182657839730382,
+      "duration_ms": 0.19581522792577744,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 20,
+      "mb": 0,
+      "start": 1.7182657839730382,
+      "end": 1.739357247017324,
+      "duration_ms": 21.091463044285774,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 20,
       "mb": 0,
-      "start": 0.1615748880431056,
-      "end": 0.16181077156215906,
-      "duration_ms": 0.23588351905345917,
+      "start": 1.744591205380857,
+      "end": 1.7447644816711545,
+      "duration_ms": 0.17327629029750824,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 20,
+      "mb": 1,
+      "start": 1.7447725934907794,
+      "end": 1.7447823835536838,
+      "duration_ms": 0.00979006290435791,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 20,
+      "mb": 1,
+      "start": 1.7448171442374587,
+      "end": 1.7712299404665828,
+      "duration_ms": 26.41279622912407,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 20,
+      "mb": 1,
+      "start": 1.7448171442374587,
+      "end": 1.7449999591335654,
+      "duration_ms": 0.18281489610671997,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 20,
+      "mb": 1,
+      "start": 1.7449999591335654,
+      "end": 1.7658241800963879,
+      "duration_ms": 20.824220962822437,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 20,
       "mb": 1,
-      "start": 0.1649871589615941,
-      "end": 0.16523416712880135,
-      "duration_ms": 0.24700816720724106,
+      "start": 1.7712470646947622,
+      "end": 1.7713985601440072,
+      "duration_ms": 0.15149544924497604,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 21,
+      "mb": 0,
+      "start": 1.7717788368463516,
+      "end": 1.77178561873734,
+      "duration_ms": 0.0067818909883499146,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 21,
+      "mb": 0,
+      "start": 1.8441404709592462,
+      "end": 2.1685962518677115,
+      "duration_ms": 324.4557809084654,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 21,
+      "mb": 0,
+      "start": 1.8441404709592462,
+      "end": 1.8810371281579137,
+      "duration_ms": 36.896657198667526,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 21,
+      "mb": 0,
+      "start": 1.8810371281579137,
+      "end": 1.9152787132188678,
+      "duration_ms": 34.241585060954094,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 21,
       "mb": 0,
-      "start": 0.16957629006356,
-      "end": 0.1698253620415926,
-      "duration_ms": 0.24907197803258896,
+      "start": 2.1686221826821566,
+      "end": 2.1689592637121677,
+      "duration_ms": 0.33708103001117706,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 21,
+      "mb": 1,
+      "start": 2.168970588594675,
+      "end": 2.168983206152916,
+      "duration_ms": 0.012617558240890503,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 21,
+      "mb": 1,
+      "start": 2.1690244330093265,
+      "end": 2.1989919068291783,
+      "duration_ms": 29.967473819851875,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 21,
+      "mb": 1,
+      "start": 2.1690244330093265,
+      "end": 2.169262560084462,
+      "duration_ms": 0.23812707513570786,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 21,
+      "mb": 1,
+      "start": 2.169262560084462,
+      "end": 2.1927575869485736,
+      "duration_ms": 23.495026864111423,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 21,
       "mb": 1,
-      "start": 0.17298155836760998,
-      "end": 0.17322122678160667,
-      "duration_ms": 0.23966841399669647,
+      "start": 2.1990144047886133,
+      "end": 2.1991945430636406,
+      "duration_ms": 0.18013827502727509,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 22,
+      "mb": 0,
+      "start": 2.1996751576662064,
+      "end": 2.199681834317744,
+      "duration_ms": 0.0066766515374183655,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 22,
+      "mb": 0,
+      "start": 2.199724033474922,
+      "end": 2.2310751369223,
+      "duration_ms": 31.35110344737768,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 22,
+      "mb": 0,
+      "start": 2.199724033474922,
+      "end": 2.19993794336915,
+      "duration_ms": 0.21390989422798157,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 22,
+      "mb": 0,
+      "start": 2.19993794336915,
+      "end": 2.225402619689703,
+      "duration_ms": 25.464676320552826,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 22,
       "mb": 0,
-      "start": 0.1775766173377633,
-      "end": 0.17781500332057476,
-      "duration_ms": 0.23838598281145096,
+      "start": 2.231093132868409,
+      "end": 2.2312571741640568,
+      "duration_ms": 0.16404129564762115,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 22,
+      "mb": 1,
+      "start": 2.231265341863036,
+      "end": 2.231275036931038,
+      "duration_ms": 0.009695068001747131,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 22,
+      "mb": 1,
+      "start": 2.2313082311302423,
+      "end": 2.2625629380345345,
+      "duration_ms": 31.254706904292107,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 22,
+      "mb": 1,
+      "start": 2.2313082311302423,
+      "end": 2.2315018884837627,
+      "duration_ms": 0.19365735352039337,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 22,
+      "mb": 1,
+      "start": 2.2315018884837627,
+      "end": 2.256067916750908,
+      "duration_ms": 24.566028267145157,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 22,
       "mb": 1,
-      "start": 0.18121181800961494,
-      "end": 0.18144408706575632,
-      "duration_ms": 0.2322690561413765,
+      "start": 2.262579428963363,
+      "end": 2.2627402748912573,
+      "duration_ms": 0.16084592789411545,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 23,
+      "mb": 0,
+      "start": 2.2634037267416716,
+      "end": 2.2634105924516916,
+      "duration_ms": 0.006865710020065308,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 23,
+      "mb": 0,
+      "start": 2.2634544065222144,
+      "end": 2.292798276990652,
+      "duration_ms": 29.34387046843767,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 23,
+      "mb": 0,
+      "start": 2.2634544065222144,
+      "end": 2.2636535447090864,
+      "duration_ms": 0.19913818687200546,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 23,
+      "mb": 0,
+      "start": 2.2636535447090864,
+      "end": 2.286688950844109,
+      "duration_ms": 23.03540613502264,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 23,
       "mb": 0,
-      "start": 0.18579446338117123,
-      "end": 0.1860489696264267,
-      "duration_ms": 0.2545062452554703,
+      "start": 2.292823228985071,
+      "end": 2.292979748919606,
+      "duration_ms": 0.15651993453502655,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 23,
+      "mb": 1,
+      "start": 2.292987521737814,
+      "end": 2.2929970119148493,
+      "duration_ms": 0.009490177035331726,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 23,
+      "mb": 1,
+      "start": 2.2930299155414104,
+      "end": 2.322161015123129,
+      "duration_ms": 29.131099581718445,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 23,
+      "mb": 1,
+      "start": 2.2930299155414104,
+      "end": 2.29322377871722,
+      "duration_ms": 0.1938631758093834,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 23,
+      "mb": 1,
+      "start": 2.29322377871722,
+      "end": 2.3162234434857965,
+      "duration_ms": 22.999664768576622,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 23,
       "mb": 1,
-      "start": 0.18930843472480774,
-      "end": 0.18955193366855383,
-      "duration_ms": 0.24349894374608994,
+      "start": 2.3221780518069863,
+      "end": 2.3223764430731535,
+      "duration_ms": 0.19839126616716385,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 24,
+      "mb": 0,
+      "start": 2.3231996297836304,
+      "end": 2.3232063008472323,
+      "duration_ms": 0.006671063601970673,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 24,
+      "mb": 0,
+      "start": 2.323249732144177,
+      "end": 2.349033403210342,
+      "duration_ms": 25.78367106616497,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 24,
+      "mb": 0,
+      "start": 2.323249732144177,
+      "end": 2.3234499534592032,
+      "duration_ms": 0.20022131502628326,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 24,
+      "mb": 0,
+      "start": 2.3234499534592032,
+      "end": 2.344296700321138,
+      "duration_ms": 20.846746861934662,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 24,
       "mb": 0,
-      "start": 0.19389897771179676,
-      "end": 0.1941412203013897,
-      "duration_ms": 0.24224258959293365,
+      "start": 2.349050147458911,
+      "end": 2.3492061542347074,
+      "duration_ms": 0.15600677579641342,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 24,
+      "mb": 1,
+      "start": 2.3492142520844936,
+      "end": 2.3492236183956265,
+      "duration_ms": 0.009366311132907867,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 24,
+      "mb": 1,
+      "start": 2.3492560451850295,
+      "end": 2.375002222135663,
+      "duration_ms": 25.746176950633526,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 24,
+      "mb": 1,
+      "start": 2.3492560451850295,
+      "end": 2.349451578222215,
+      "duration_ms": 0.19553303718566895,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 24,
+      "mb": 1,
+      "start": 2.349451578222215,
+      "end": 2.3698284346610308,
+      "duration_ms": 20.376856438815594,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 24,
       "mb": 1,
-      "start": 0.19732201099395752,
-      "end": 0.19755552243441343,
-      "duration_ms": 0.23351144045591354,
+      "start": 2.375019932165742,
+      "end": 2.3752100514248013,
+      "duration_ms": 0.19011925905942917,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 25,
+      "mb": 0,
+      "start": 2.3758573746308684,
+      "end": 2.37586407456547,
+      "duration_ms": 0.0066999346017837524,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 25,
+      "mb": 0,
+      "start": 2.37590769585222,
+      "end": 2.403521468862891,
+      "duration_ms": 27.61377301067114,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 25,
+      "mb": 0,
+      "start": 2.37590769585222,
+      "end": 2.3761057686060667,
+      "duration_ms": 0.19807275384664536,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 25,
+      "mb": 0,
+      "start": 2.3761057686060667,
+      "end": 2.3981716949492693,
+      "duration_ms": 22.06592634320259,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 25,
       "mb": 0,
-      "start": 0.20151308085769415,
-      "end": 0.201758885756135,
-      "duration_ms": 0.24580489844083786,
+      "start": 2.403538206592202,
+      "end": 2.4037042083218694,
+      "duration_ms": 0.16600172966718674,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 25,
+      "mb": 1,
+      "start": 2.4037124617025256,
+      "end": 2.403721938841045,
+      "duration_ms": 0.00947713851928711,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 25,
+      "mb": 1,
+      "start": 2.4037546729668975,
+      "end": 2.431326175108552,
+      "duration_ms": 27.57150214165449,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 25,
+      "mb": 1,
+      "start": 2.4037546729668975,
+      "end": 2.4039477054029703,
+      "duration_ms": 0.19303243607282639,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 25,
+      "mb": 1,
+      "start": 2.4039477054029703,
+      "end": 2.425807657651603,
+      "duration_ms": 21.859952248632908,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 25,
       "mb": 1,
-      "start": 0.20547965168952942,
-      "end": 0.20571164414286613,
-      "duration_ms": 0.2319924533367157,
+      "start": 2.4313429901376367,
+      "end": 2.431502742692828,
+      "duration_ms": 0.15975255519151688,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 26,
+      "mb": 0,
+      "start": 2.43220832105726,
+      "end": 2.432215005159378,
+      "duration_ms": 0.006684102118015289,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 26,
+      "mb": 0,
+      "start": 2.4322594413533807,
+      "end": 2.4616754818707705,
+      "duration_ms": 29.416040517389774,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 26,
+      "mb": 0,
+      "start": 2.4322594413533807,
+      "end": 2.43245617300272,
+      "duration_ms": 0.19673164933919907,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 26,
+      "mb": 0,
+      "start": 2.43245617300272,
+      "end": 2.4563446240499616,
+      "duration_ms": 23.888451047241688,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 26,
       "mb": 0,
-      "start": 0.2092103837057948,
-      "end": 0.20945907104760408,
-      "duration_ms": 0.24868734180927277,
+      "start": 2.4616922261193395,
+      "end": 2.461850779131055,
+      "duration_ms": 0.15855301171541214,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 26,
+      "mb": 1,
+      "start": 2.461858721449971,
+      "end": 2.4618681147694588,
+      "duration_ms": 0.009393319487571716,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 26,
+      "mb": 1,
+      "start": 2.461900963447988,
+      "end": 2.4910561311990023,
+      "duration_ms": 29.155167751014233,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 26,
+      "mb": 1,
+      "start": 2.461900963447988,
+      "end": 2.4620944587513804,
+      "duration_ms": 0.19349530339241028,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 26,
+      "mb": 1,
+      "start": 2.4620944587513804,
+      "end": 2.4853959688916802,
+      "duration_ms": 23.301510140299797,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 26,
       "mb": 1,
-      "start": 0.2131956499069929,
-      "end": 0.21343292947858572,
-      "duration_ms": 0.23727957159280777,
+      "start": 2.4910761155188084,
+      "end": 2.491225615143776,
+      "duration_ms": 0.14949962496757507,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 27,
+      "mb": 0,
+      "start": 2.4919380424544215,
+      "end": 2.4919447591528296,
+      "duration_ms": 0.006716698408126831,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 27,
+      "mb": 0,
+      "start": 2.491988530382514,
+      "end": 2.517335689626634,
+      "duration_ms": 25.34715924412012,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 27,
+      "mb": 0,
+      "start": 2.491988530382514,
+      "end": 2.492184706032276,
+      "duration_ms": 0.19617564976215363,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 27,
+      "mb": 0,
+      "start": 2.492184706032276,
+      "end": 2.512827342376113,
+      "duration_ms": 20.642636343836784,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 27,
       "mb": 0,
-      "start": 0.21750660333782434,
-      "end": 0.21775022894144058,
-      "duration_ms": 0.24362560361623764,
+      "start": 2.5173525866121054,
+      "end": 2.5175116658210754,
+      "duration_ms": 0.15907920897006989,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 27,
+      "mb": 1,
+      "start": 2.5175196351483464,
+      "end": 2.5175291132181883,
+      "duration_ms": 0.009478069841861725,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 27,
+      "mb": 1,
+      "start": 2.5175619069486856,
+      "end": 2.542830421589315,
+      "duration_ms": 25.26851464062929,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 27,
+      "mb": 1,
+      "start": 2.5175619069486856,
+      "end": 2.5177552150562406,
+      "duration_ms": 0.19330810755491257,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 27,
+      "mb": 1,
+      "start": 2.5177552150562406,
+      "end": 2.5379094602540135,
+      "duration_ms": 20.15424519777298,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 27,
       "mb": 1,
-      "start": 0.22115602530539036,
-      "end": 0.2213948955759406,
-      "duration_ms": 0.238870270550251,
+      "start": 2.5428469674661756,
+      "end": 2.543010275810957,
+      "duration_ms": 0.16330834478139877,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 28,
+      "mb": 0,
+      "start": 2.5436266167089343,
+      "end": 2.543633310124278,
+      "duration_ms": 0.006693415343761444,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 28,
+      "mb": 0,
+      "start": 2.5436773151159286,
+      "end": 2.5715409386903048,
+      "duration_ms": 27.863623574376106,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 28,
+      "mb": 0,
+      "start": 2.5436773151159286,
+      "end": 2.543875953182578,
+      "duration_ms": 0.19863806664943695,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 28,
+      "mb": 0,
+      "start": 2.543875953182578,
+      "end": 2.5661219842731953,
+      "duration_ms": 22.24603109061718,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 28,
       "mb": 0,
-      "start": 0.2254663985222578,
-      "end": 0.22570520360022783,
-      "duration_ms": 0.23880507797002792,
+      "start": 2.5715578012168407,
+      "end": 2.571713981218636,
+      "duration_ms": 0.1561800017952919,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 28,
+      "mb": 1,
+      "start": 2.5717222644016147,
+      "end": 2.5717318961396813,
+      "duration_ms": 0.009631738066673279,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 28,
+      "mb": 1,
+      "start": 2.5717655904591084,
+      "end": 2.5995981991291046,
+      "duration_ms": 27.83260866999626,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 28,
+      "mb": 1,
+      "start": 2.5717655904591084,
+      "end": 2.571962269023061,
+      "duration_ms": 0.19667856395244598,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 28,
+      "mb": 1,
+      "start": 2.571962269023061,
+      "end": 2.594183790497482,
+      "duration_ms": 22.221521474421024,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 28,
       "mb": 1,
-      "start": 0.22886548284441233,
-      "end": 0.22909847367554903,
-      "duration_ms": 0.2329908311367035,
+      "start": 2.5996158812195063,
+      "end": 2.5997667256742716,
+      "duration_ms": 0.15084445476531982,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 29,
+      "mb": 0,
+      "start": 2.600475952960551,
+      "end": 2.600489837117493,
+      "duration_ms": 0.013884156942367554,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 29,
+      "mb": 0,
+      "start": 2.600541712716222,
+      "end": 2.6266834139823914,
+      "duration_ms": 26.141701266169548,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 29,
+      "mb": 0,
+      "start": 2.600541712716222,
+      "end": 2.6007373444736004,
+      "duration_ms": 0.19563175737857819,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 29,
+      "mb": 0,
+      "start": 2.6007373444736004,
+      "end": 2.621591434814036,
+      "duration_ms": 20.854090340435505,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 29,
       "mb": 0,
-      "start": 0.23318188451230526,
-      "end": 0.2334244903177023,
-      "duration_ms": 0.2426058053970337,
+      "start": 2.626700185239315,
+      "end": 2.6268553994596004,
+      "duration_ms": 0.15521422028541565,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 29,
+      "mb": 1,
+      "start": 2.6268633706495166,
+      "end": 2.6268727481365204,
+      "duration_ms": 0.009377487003803253,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 29,
+      "mb": 1,
+      "start": 2.6269052661955357,
+      "end": 2.6530342046171427,
+      "duration_ms": 26.128938421607018,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 29,
+      "mb": 1,
+      "start": 2.6269052661955357,
+      "end": 2.6271005738526583,
+      "duration_ms": 0.195307657122612,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 29,
+      "mb": 1,
+      "start": 2.6271005738526583,
+      "end": 2.6479377383366227,
+      "duration_ms": 20.837164483964443,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 29,
       "mb": 1,
-      "start": 0.23638464882969856,
-      "end": 0.23662315774708986,
-      "duration_ms": 0.2385089173913002,
+      "start": 2.6530510680750012,
+      "end": 2.6532043367624283,
+      "duration_ms": 0.15326868742704391,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 30,
+      "mb": 0,
+      "start": 2.653896937146783,
+      "end": 2.653903726488352,
+      "duration_ms": 0.006789341568946838,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 30,
+      "mb": 0,
+      "start": 2.6539476215839386,
+      "end": 2.6749922977760434,
+      "duration_ms": 21.044676192104816,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 30,
+      "mb": 0,
+      "start": 2.6539476215839386,
+      "end": 2.6541461097076535,
+      "duration_ms": 0.19848812371492386,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 30,
+      "mb": 0,
+      "start": 2.6541461097076535,
+      "end": 2.671026486903429,
+      "duration_ms": 16.88037719577551,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 30,
       "mb": 0,
-      "start": 0.24094615131616592,
-      "end": 0.24118446558713913,
-      "duration_ms": 0.23831427097320557,
+      "start": 2.675009071826935,
+      "end": 2.675162337720394,
+      "duration_ms": 0.15326589345932007,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 30,
+      "mb": 1,
+      "start": 2.6751702101901174,
+      "end": 2.6751795476302505,
+      "duration_ms": 0.009337440133094788,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 30,
+      "mb": 1,
+      "start": 2.6752114621922374,
+      "end": 2.696214825846255,
+      "duration_ms": 21.00336365401745,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 30,
+      "mb": 1,
+      "start": 2.6752114621922374,
+      "end": 2.67540368065238,
+      "duration_ms": 0.19221846014261246,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 30,
+      "mb": 1,
+      "start": 2.67540368065238,
+      "end": 2.692091815173626,
+      "duration_ms": 16.688134521245956,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 30,
       "mb": 1,
-      "start": 0.24507054407149553,
-      "end": 0.24530232790857553,
-      "duration_ms": 0.23178383708000183,
+      "start": 2.6962403366342187,
+      "end": 2.6963880471885204,
+      "duration_ms": 0.14771055430173874,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 31,
+      "mb": 0,
+      "start": 2.6970672719180584,
+      "end": 2.6970739206299186,
+      "duration_ms": 0.006648711860179901,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 31,
+      "mb": 0,
+      "start": 2.69711728207767,
+      "end": 2.719457507133484,
+      "duration_ms": 22.34022505581379,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 31,
+      "mb": 0,
+      "start": 2.69711728207767,
+      "end": 2.697312689386308,
+      "duration_ms": 0.19540730863809586,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 31,
+      "mb": 0,
+      "start": 2.697312689386308,
+      "end": 2.7154191453009844,
+      "duration_ms": 18.10645591467619,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 31,
       "mb": 0,
-      "start": 0.24969088658690453,
-      "end": 0.2499355459585786,
-      "duration_ms": 0.24465937167406082,
+      "start": 2.7194743221625686,
+      "end": 2.7196348644793034,
+      "duration_ms": 0.1605423167347908,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 31,
+      "mb": 1,
+      "start": 2.719642707146704,
+      "end": 2.7196521861478686,
+      "duration_ms": 0.00947900116443634,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 31,
+      "mb": 1,
+      "start": 2.719684303738177,
+      "end": 2.7419977886602283,
+      "duration_ms": 22.31348492205143,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 31,
+      "mb": 1,
+      "start": 2.719684303738177,
+      "end": 2.7198763620108366,
+      "duration_ms": 0.1920582726597786,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 31,
+      "mb": 1,
+      "start": 2.7198763620108366,
+      "end": 2.7376238964498043,
+      "duration_ms": 17.747534438967705,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 31,
       "mb": 1,
-      "start": 0.25315884687006474,
-      "end": 0.2533914977684617,
-      "duration_ms": 0.23265089839696884,
+      "start": 2.7420141883194447,
+      "end": 2.742170888930559,
+      "duration_ms": 0.15670061111450195,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 32,
+      "mb": 0,
+      "start": 2.742862267419696,
+      "end": 2.742868901230395,
+      "duration_ms": 0.0066338106989860535,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 32,
+      "mb": 0,
+      "start": 2.742912289686501,
+      "end": 2.769056566990912,
+      "duration_ms": 26.144277304410934,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 32,
+      "mb": 0,
+      "start": 2.742912289686501,
+      "end": 2.7431074660271406,
+      "duration_ms": 0.19517634063959122,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 32,
+      "mb": 0,
+      "start": 2.7431074660271406,
+      "end": 2.7639425732195377,
+      "duration_ms": 20.835107192397118,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 32,
       "mb": 0,
-      "start": 0.25745641998946667,
-      "end": 0.2576945349574089,
-      "duration_ms": 0.23811496794223785,
+      "start": 2.769073714502156,
+      "end": 2.76924201939255,
+      "duration_ms": 0.16830489039421082,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 32,
+      "mb": 1,
+      "start": 2.7692499766126275,
+      "end": 2.7692596074193716,
+      "duration_ms": 0.009630806744098663,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 32,
+      "mb": 1,
+      "start": 2.769293594174087,
+      "end": 2.7954122219234705,
+      "duration_ms": 26.11862774938345,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 32,
+      "mb": 1,
+      "start": 2.769293594174087,
+      "end": 2.7694914555177093,
+      "duration_ms": 0.19786134362220764,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 32,
+      "mb": 1,
+      "start": 2.7694914555177093,
+      "end": 2.790318270213902,
+      "duration_ms": 20.82681469619274,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 32,
       "mb": 1,
-      "start": 0.26113163214176893,
-      "end": 0.26135935354977846,
-      "duration_ms": 0.2277214080095291,
+      "start": 2.795428699813783,
+      "end": 2.7955772196874022,
+      "duration_ms": 0.1485198736190796,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 33,
+      "mb": 0,
+      "start": 2.796281149610877,
+      "end": 2.7962877275422215,
+      "duration_ms": 0.006577931344509125,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 33,
+      "mb": 0,
+      "start": 2.796331025660038,
+      "end": 2.821212467737496,
+      "duration_ms": 24.881442077457905,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 33,
+      "mb": 0,
+      "start": 2.796331025660038,
+      "end": 2.796534299850464,
+      "duration_ms": 0.2032741904258728,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 33,
+      "mb": 0,
+      "start": 2.796534299850464,
+      "end": 2.8166578495875,
+      "duration_ms": 20.123549737036228,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 33,
       "mb": 0,
-      "start": 0.2660719444975257,
-      "end": 0.26630829740315676,
-      "duration_ms": 0.23635290563106537,
+      "start": 2.821229225024581,
+      "end": 2.8213826222345233,
+      "duration_ms": 0.15339720994234085,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 33,
+      "mb": 1,
+      "start": 2.8213906828314066,
+      "end": 2.8214000836014748,
+      "duration_ms": 0.00940077006816864,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 33,
+      "mb": 1,
+      "start": 2.8214322049170732,
+      "end": 2.8462723745033145,
+      "duration_ms": 24.840169586241245,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 33,
+      "mb": 1,
+      "start": 2.8214322049170732,
+      "end": 2.821623906493187,
+      "duration_ms": 0.19170157611370087,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 33,
+      "mb": 1,
+      "start": 2.821623906493187,
+      "end": 2.841438469476998,
+      "duration_ms": 19.8145629838109,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 33,
       "mb": 1,
-      "start": 0.26994170993566513,
-      "end": 0.2701723678037524,
-      "duration_ms": 0.23065786808729172,
+      "start": 2.8462888719514012,
+      "end": 2.8464385867118835,
+      "duration_ms": 0.14971476048231125,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 34,
+      "mb": 0,
+      "start": 2.847141773439944,
+      "end": 2.847148571163416,
+      "duration_ms": 0.006797723472118378,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 34,
+      "mb": 0,
+      "start": 2.847191941924393,
+      "end": 2.875458656810224,
+      "duration_ms": 28.26671488583088,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 34,
+      "mb": 0,
+      "start": 2.847191941924393,
+      "end": 2.8473870111629367,
+      "duration_ms": 0.19506923854351044,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 34,
+      "mb": 0,
+      "start": 2.8473870111629367,
+      "end": 2.87048932723701,
+      "duration_ms": 23.102316074073315,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 34,
       "mb": 0,
-      "start": 0.2741334466263652,
-      "end": 0.27440238650888205,
-      "duration_ms": 0.26893988251686096,
+      "start": 2.8754751114174724,
+      "end": 2.875626875087619,
+      "duration_ms": 0.1517636701464653,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 34,
+      "mb": 1,
+      "start": 2.875634959898889,
+      "end": 2.8756443429738283,
+      "duration_ms": 0.009383074939250946,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 34,
+      "mb": 1,
+      "start": 2.8756768936291337,
+      "end": 2.903936918824911,
+      "duration_ms": 28.260025195777416,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 34,
+      "mb": 1,
+      "start": 2.8756768936291337,
+      "end": 2.875869369134307,
+      "duration_ms": 0.19247550517320633,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 34,
+      "mb": 1,
+      "start": 2.875869369134307,
+      "end": 2.8984371023252606,
+      "duration_ms": 22.56773319095373,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 34,
       "mb": 1,
-      "start": 0.27809565141797066,
-      "end": 0.27840419858694077,
-      "duration_ms": 0.30854716897010803,
+      "start": 2.90395366307348,
+      "end": 2.904108657501638,
+      "duration_ms": 0.1549944281578064,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 35,
+      "mb": 0,
+      "start": 2.9047531206160784,
+      "end": 2.9047597218304873,
+      "duration_ms": 0.006601214408874512,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 35,
+      "mb": 0,
+      "start": 2.9048036728054285,
+      "end": 2.9343468667939305,
+      "duration_ms": 29.543193988502026,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 35,
+      "mb": 0,
+      "start": 2.9048036728054285,
+      "end": 2.9050043914467096,
+      "duration_ms": 0.20071864128112793,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 35,
+      "mb": 0,
+      "start": 2.9050043914467096,
+      "end": 2.9288987619802356,
+      "duration_ms": 23.894370533525944,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 35,
       "mb": 0,
-      "start": 0.2821635231375694,
-      "end": 0.2824331084266305,
-      "duration_ms": 0.2695852890610695,
+      "start": 2.9343714425340295,
+      "end": 2.9345343923196197,
+      "duration_ms": 0.16294978559017181,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 35,
+      "mb": 1,
+      "start": 2.9345418978482485,
+      "end": 2.9345513274893165,
+      "duration_ms": 0.00942964106798172,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 35,
+      "mb": 1,
+      "start": 2.934583943337202,
+      "end": 2.9641074733808637,
+      "duration_ms": 29.523530043661594,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 35,
+      "mb": 1,
+      "start": 2.934583943337202,
+      "end": 2.934776891954243,
+      "duration_ms": 0.192948617041111,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 35,
+      "mb": 1,
+      "start": 2.934776891954243,
+      "end": 2.95835426915437,
+      "duration_ms": 23.577377200126648,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 35,
       "mb": 1,
-      "start": 0.2860424527898431,
-      "end": 0.286269954405725,
-      "duration_ms": 0.22750161588191986,
+      "start": 2.964123626239598,
+      "end": 2.964275849983096,
+      "duration_ms": 0.15222374349832535,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 36,
+      "mb": 0,
+      "start": 2.9649705393239856,
+      "end": 2.964977338910103,
+      "duration_ms": 0.006799586117267609,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 36,
+      "mb": 0,
+      "start": 2.965020473115146,
+      "end": 2.9920237828046083,
+      "duration_ms": 27.003309689462185,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 36,
+      "mb": 0,
+      "start": 2.965020473115146,
+      "end": 2.965216478332877,
+      "duration_ms": 0.196005217730999,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 36,
+      "mb": 0,
+      "start": 2.965216478332877,
+      "end": 2.987106068059802,
+      "duration_ms": 21.889589726924896,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 36,
       "mb": 0,
-      "start": 0.2906778110191226,
-      "end": 0.2909308234229684,
-      "duration_ms": 0.25301240384578705,
+      "start": 2.9920406844466925,
+      "end": 2.9922285759821534,
+      "duration_ms": 0.18789153546094894,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 36,
+      "mb": 1,
+      "start": 2.992236567661166,
+      "end": 2.9922458697110415,
+      "duration_ms": 0.0093020498752594,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 36,
+      "mb": 1,
+      "start": 2.992278166115284,
+      "end": 3.019240197725594,
+      "duration_ms": 26.962031610310078,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 36,
+      "mb": 1,
+      "start": 2.992278166115284,
+      "end": 2.9924700492992997,
+      "duration_ms": 0.19188318401575089,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 36,
+      "mb": 1,
+      "start": 2.9924700492992997,
+      "end": 3.013991169631481,
+      "duration_ms": 21.521120332181454,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 36,
       "mb": 1,
-      "start": 0.2943838760256767,
-      "end": 0.2946196999400854,
-      "duration_ms": 0.23582391440868378,
+      "start": 3.019256906583905,
+      "end": 3.0194157510995865,
+      "duration_ms": 0.15884451568126678,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 37,
+      "mb": 0,
+      "start": 3.0200794506818056,
+      "end": 3.020086013711989,
+      "duration_ms": 0.006563030183315277,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 37,
+      "mb": 0,
+      "start": 3.020129748620093,
+      "end": 3.0490042129531503,
+      "duration_ms": 28.874464333057404,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 37,
+      "mb": 0,
+      "start": 3.020129748620093,
+      "end": 3.020491547882557,
+      "duration_ms": 0.3617992624640465,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 37,
+      "mb": 0,
+      "start": 3.020491547882557,
+      "end": 3.0434008492156863,
+      "duration_ms": 22.909301333129406,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 37,
       "mb": 0,
-      "start": 0.2986959805712104,
-      "end": 0.2989329323172569,
-      "duration_ms": 0.23695174604654312,
+      "start": 3.0490210177376866,
+      "end": 3.0491822697222233,
+      "duration_ms": 0.1612519845366478,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 37,
+      "mb": 1,
+      "start": 3.0491902409121394,
+      "end": 3.0491997273638844,
+      "duration_ms": 0.009486451745033264,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 37,
+      "mb": 1,
+      "start": 3.049232534132898,
+      "end": 3.077877352014184,
+      "duration_ms": 28.644817881286144,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 37,
+      "mb": 1,
+      "start": 3.049232534132898,
+      "end": 3.049424858763814,
+      "duration_ms": 0.19232463091611862,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 37,
+      "mb": 1,
+      "start": 3.049424858763814,
+      "end": 3.072295343503356,
+      "duration_ms": 22.870484739542007,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 37,
       "mb": 1,
-      "start": 0.3026551157236099,
-      "end": 0.3028768952935934,
-      "duration_ms": 0.22177956998348236,
+      "start": 3.077894102782011,
+      "end": 3.0780459018424153,
+      "duration_ms": 0.1517990604043007,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 38,
+      "mb": 0,
+      "start": 3.078673394396901,
+      "end": 3.0786801539361477,
+      "duration_ms": 0.006759539246559143,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 38,
+      "mb": 0,
+      "start": 3.0787232173606753,
+      "end": 3.1057166708633304,
+      "duration_ms": 26.99345350265503,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 38,
+      "mb": 0,
+      "start": 3.0787232173606753,
+      "end": 3.0789255937561393,
+      "duration_ms": 0.20237639546394348,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 38,
+      "mb": 0,
+      "start": 3.0789255937561393,
+      "end": 3.100579268299043,
+      "duration_ms": 21.6536745429039,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 38,
       "mb": 0,
-      "start": 0.30692021548748016,
-      "end": 0.3071538070216775,
-      "duration_ms": 0.23359153419733047,
+      "start": 3.1057335920631886,
+      "end": 3.105887960642576,
+      "duration_ms": 0.1543685793876648,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 38,
+      "mb": 1,
+      "start": 3.105895923450589,
+      "end": 3.1059053782373667,
+      "duration_ms": 0.009454786777496338,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 38,
+      "mb": 1,
+      "start": 3.1059374194592237,
+      "end": 3.1328942766413093,
+      "duration_ms": 26.956857182085514,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 38,
+      "mb": 1,
+      "start": 3.1059374194592237,
+      "end": 3.1061304546892643,
+      "duration_ms": 0.19303523004055023,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 38,
+      "mb": 1,
+      "start": 3.1061304546892643,
+      "end": 3.1276385383680463,
+      "duration_ms": 21.508083678781986,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 38,
       "mb": 1,
-      "start": 0.31120857410132885,
-      "end": 0.31142972502857447,
-      "duration_ms": 0.2211509272456169,
+      "start": 3.132910921238363,
+      "end": 3.133062895387411,
+      "duration_ms": 0.1519741490483284,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 39,
+      "mb": 0,
+      "start": 3.133757811039686,
+      "end": 3.1337644271552563,
+      "duration_ms": 0.006616115570068359,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 39,
+      "mb": 0,
+      "start": 3.1338076051324606,
+      "end": 3.160830482840538,
+      "duration_ms": 27.02287770807743,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 39,
+      "mb": 0,
+      "start": 3.1338076051324606,
+      "end": 3.1340088173747063,
+      "duration_ms": 0.20121224224567413,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 39,
+      "mb": 0,
+      "start": 3.1340088173747063,
+      "end": 3.1555595099925995,
+      "duration_ms": 21.55069261789322,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 39,
       "mb": 0,
-      "start": 0.3151494963094592,
-      "end": 0.3154000239446759,
-      "duration_ms": 0.25052763521671295,
+      "start": 3.1608471581712365,
+      "end": 3.1610081112012267,
+      "duration_ms": 0.16095302999019623,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 39,
+      "mb": 1,
+      "start": 3.1610160768032074,
+      "end": 3.1610255744308233,
+      "duration_ms": 0.00949762761592865,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 39,
+      "mb": 1,
+      "start": 3.1610582135617733,
+      "end": 3.1880084769800305,
+      "duration_ms": 26.950263418257236,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 39,
+      "mb": 1,
+      "start": 3.1610582135617733,
+      "end": 3.1612498546019197,
+      "duration_ms": 0.19164104014635086,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 39,
+      "mb": 1,
+      "start": 3.1612498546019197,
+      "end": 3.182743910700083,
+      "duration_ms": 21.494056098163128,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 39,
       "mb": 1,
-      "start": 0.31977863144129515,
-      "end": 0.3200109610334039,
-      "duration_ms": 0.2323295921087265,
+      "start": 3.188024964183569,
+      "end": 3.18817519582808,
+      "duration_ms": 0.15023164451122284,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 40,
+      "mb": 0,
+      "start": 3.188796971924603,
+      "end": 3.1888035722076893,
+      "duration_ms": 0.006600283086299896,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 40,
+      "mb": 0,
+      "start": 3.188854488544166,
+      "end": 3.2145859925076365,
+      "duration_ms": 25.73150396347046,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 40,
+      "mb": 0,
+      "start": 3.188854488544166,
+      "end": 3.1890498399734497,
+      "duration_ms": 0.19535142928361893,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 40,
+      "mb": 0,
+      "start": 3.1890498399734497,
+      "end": 3.2095638820901513,
+      "duration_ms": 20.514042116701603,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 40,
       "mb": 0,
-      "start": 0.32338149938732386,
-      "end": 0.32362405862659216,
-      "duration_ms": 0.24255923926830292,
+      "start": 3.2146026538684964,
+      "end": 3.214755756780505,
+      "duration_ms": 0.15310291200876236,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 40,
+      "mb": 1,
+      "start": 3.2147636245936155,
+      "end": 3.214773101732135,
+      "duration_ms": 0.00947713851928711,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 40,
+      "mb": 1,
+      "start": 3.2148048663511872,
+      "end": 3.2404973302036524,
+      "duration_ms": 25.692463852465153,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 40,
+      "mb": 1,
+      "start": 3.2148048663511872,
+      "end": 3.21499715000391,
+      "duration_ms": 0.19228365272283554,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 40,
+      "mb": 1,
+      "start": 3.21499715000391,
+      "end": 3.235475261695683,
+      "duration_ms": 20.478111691772938,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 40,
       "mb": 1,
-      "start": 0.32701186928898096,
-      "end": 0.32724873069673777,
-      "duration_ms": 0.23686140775680542,
+      "start": 3.240513942204416,
+      "end": 3.2406676318496466,
+      "duration_ms": 0.1536896452307701,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 41,
+      "mb": 0,
+      "start": 3.2412883415818214,
+      "end": 3.241295026615262,
+      "duration_ms": 0.006685033440589905,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 41,
+      "mb": 0,
+      "start": 3.2413383768871427,
+      "end": 3.267914693802595,
+      "duration_ms": 26.57631691545248,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 41,
+      "mb": 0,
+      "start": 3.2413383768871427,
+      "end": 3.2415404552593827,
+      "duration_ms": 0.20207837224006653,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 41,
+      "mb": 0,
+      "start": 3.2415404552593827,
+      "end": 3.26281563565135,
+      "duration_ms": 21.275180391967297,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 41,
       "mb": 0,
-      "start": 0.33129001036286354,
-      "end": 0.3315273495391011,
-      "duration_ms": 0.23733917623758316,
+      "start": 3.2679315926507115,
+      "end": 3.2680877652019262,
+      "duration_ms": 0.15617255121469498,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 41,
+      "mb": 1,
+      "start": 3.2680956963449717,
+      "end": 3.268105324357748,
+      "duration_ms": 0.009628012776374817,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 41,
+      "mb": 1,
+      "start": 3.268137671984732,
+      "end": 3.2946974225342274,
+      "duration_ms": 26.55975054949522,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 41,
+      "mb": 1,
+      "start": 3.268137671984732,
+      "end": 3.26834153290838,
+      "duration_ms": 0.20386092364788055,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 41,
+      "mb": 1,
+      "start": 3.26834153290838,
+      "end": 3.289531107991934,
+      "duration_ms": 21.18957508355379,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 41,
       "mb": 1,
-      "start": 0.33497945591807365,
-      "end": 0.3352023158222437,
-      "duration_ms": 0.22285990417003632,
+      "start": 3.294714025221765,
+      "end": 3.2948661278933287,
+      "duration_ms": 0.15210267156362534,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 42,
+      "mb": 0,
+      "start": 3.2955425195395947,
+      "end": 3.2955491421744227,
+      "duration_ms": 0.006622634828090668,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 42,
+      "mb": 0,
+      "start": 3.295592464506626,
+      "end": 3.3238706048578024,
+      "duration_ms": 28.278140351176262,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 42,
+      "mb": 0,
+      "start": 3.295592464506626,
+      "end": 3.2957945447415113,
+      "duration_ms": 0.20208023488521576,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 42,
+      "mb": 0,
+      "start": 3.2957945447415113,
+      "end": 3.318368511274457,
+      "duration_ms": 22.573966532945633,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 42,
       "mb": 0,
-      "start": 0.3386847050860524,
-      "end": 0.3389268247410655,
-      "duration_ms": 0.2421196550130844,
+      "start": 3.323887144215405,
+      "end": 3.324043657630682,
+      "duration_ms": 0.15651341527700424,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 42,
+      "mb": 1,
+      "start": 3.3240515710785985,
+      "end": 3.324060703627765,
+      "duration_ms": 0.009132549166679382,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 42,
+      "mb": 1,
+      "start": 3.3240927197039127,
+      "end": 3.352341971360147,
+      "duration_ms": 28.249251656234264,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 42,
+      "mb": 1,
+      "start": 3.3240927197039127,
+      "end": 3.324295745231211,
+      "duration_ms": 0.20302552729845047,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 42,
+      "mb": 1,
+      "start": 3.324295745231211,
+      "end": 3.3468334209173918,
+      "duration_ms": 22.53767568618059,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 42,
       "mb": 1,
-      "start": 0.34210536535829306,
-      "end": 0.3423560122027993,
-      "duration_ms": 0.25064684450626373,
+      "start": 3.3523584250360727,
+      "end": 3.3525174064561725,
+      "duration_ms": 0.15898142009973526,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 43,
+      "mb": 0,
+      "start": 3.35328980255872,
+      "end": 3.3532967371866107,
+      "duration_ms": 0.006934627890586853,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 43,
+      "mb": 0,
+      "start": 3.3533400343731046,
+      "end": 3.3769597029313445,
+      "duration_ms": 23.619668558239937,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 43,
+      "mb": 0,
+      "start": 3.3533400343731046,
+      "end": 3.3535350672900677,
+      "duration_ms": 0.19503291696310043,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 43,
+      "mb": 0,
+      "start": 3.3535350672900677,
+      "end": 3.3723366912454367,
+      "duration_ms": 18.801623955368996,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 43,
       "mb": 0,
-      "start": 0.3456440819427371,
-      "end": 0.34589188266545534,
-      "duration_ms": 0.24780072271823883,
+      "start": 3.376976465806365,
+      "end": 3.3771344451233745,
+      "duration_ms": 0.157979317009449,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 43,
+      "mb": 1,
+      "start": 3.377142461016774,
+      "end": 3.377151846885681,
+      "duration_ms": 0.009385868906974792,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 43,
+      "mb": 1,
+      "start": 3.3771840734407306,
+      "end": 3.4007592191919684,
+      "duration_ms": 23.57514575123787,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 43,
+      "mb": 1,
+      "start": 3.3771840734407306,
+      "end": 3.377376307733357,
+      "duration_ms": 0.19223429262638092,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 43,
+      "mb": 1,
+      "start": 3.377376307733357,
+      "end": 3.3961337143555284,
+      "duration_ms": 18.757406622171402,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 43,
       "mb": 1,
-      "start": 0.34904789831489325,
-      "end": 0.34928274247795343,
-      "duration_ms": 0.2348441630601883,
+      "start": 3.4007755052298307,
+      "end": 3.400927623733878,
+      "duration_ms": 0.1521185040473938,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 44,
+      "mb": 0,
+      "start": 3.401545049622655,
+      "end": 3.4015517607331276,
+      "duration_ms": 0.006711110472679138,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 44,
+      "mb": 0,
+      "start": 3.4015950467437506,
+      "end": 3.4243293395265937,
+      "duration_ms": 22.734292782843113,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 44,
+      "mb": 0,
+      "start": 3.4015950467437506,
+      "end": 3.4017973421141505,
+      "duration_ms": 0.20229537039995193,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 44,
+      "mb": 0,
+      "start": 3.4017973421141505,
+      "end": 3.419885966926813,
+      "duration_ms": 18.0886248126626,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 44,
       "mb": 0,
-      "start": 0.3527607833966613,
-      "end": 0.35302373114973307,
-      "duration_ms": 0.262947753071785,
+      "start": 3.4243459748104215,
+      "end": 3.424510609358549,
+      "duration_ms": 0.16463454812765121,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 44,
+      "mb": 1,
+      "start": 3.424518714658916,
+      "end": 3.4245281573385,
+      "duration_ms": 0.009442679584026337,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 44,
+      "mb": 1,
+      "start": 3.4245606334879994,
+      "end": 3.4472615709528327,
+      "duration_ms": 22.70093746483326,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 44,
+      "mb": 1,
+      "start": 3.4245606334879994,
+      "end": 3.424753393046558,
+      "duration_ms": 0.19275955855846405,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 44,
+      "mb": 1,
+      "start": 3.424753393046558,
+      "end": 3.442815118469298,
+      "duration_ms": 18.061725422739983,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 44,
       "mb": 1,
-      "start": 0.3563695801422,
-      "end": 0.35661033634096384,
-      "duration_ms": 0.24075619876384735,
+      "start": 3.4472782630473375,
+      "end": 3.447495208121836,
+      "duration_ms": 0.2169450744986534,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 45,
+      "mb": 0,
+      "start": 3.448171821422875,
+      "end": 3.4481786899268627,
+      "duration_ms": 0.006868503987789154,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 45,
+      "mb": 0,
+      "start": 3.4482216043397784,
+      "end": 3.471409685909748,
+      "duration_ms": 23.188081569969654,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 45,
+      "mb": 0,
+      "start": 3.4482216043397784,
+      "end": 3.4484187103807926,
+      "duration_ms": 0.1971060410141945,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 45,
+      "mb": 0,
+      "start": 3.4484187103807926,
+      "end": 3.46686346270144,
+      "duration_ms": 18.44475232064724,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 45,
       "mb": 0,
-      "start": 0.36033776868134737,
-      "end": 0.3606077488511801,
-      "duration_ms": 0.26998016983270645,
+      "start": 3.4714261488988996,
+      "end": 3.471582381054759,
+      "duration_ms": 0.15623215585947037,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 45,
+      "mb": 1,
+      "start": 3.471590394154191,
+      "end": 3.4715997641906142,
+      "duration_ms": 0.00937003642320633,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 45,
+      "mb": 1,
+      "start": 3.4716318398714066,
+      "end": 3.4948056247085333,
+      "duration_ms": 23.173784837126732,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 45,
+      "mb": 1,
+      "start": 3.4716318398714066,
+      "end": 3.47182440944016,
+      "duration_ms": 0.1925695687532425,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 45,
+      "mb": 1,
+      "start": 3.47182440944016,
+      "end": 3.49026090092957,
+      "duration_ms": 18.4364914894104,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 45,
       "mb": 1,
-      "start": 0.3642216557636857,
-      "end": 0.3644574014469981,
-      "duration_ms": 0.23574568331241608,
+      "start": 3.4948331536725163,
+      "end": 3.4949868200346828,
+      "duration_ms": 0.15366636216640472,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 46,
+      "mb": 0,
+      "start": 3.4955912875011563,
+      "end": 3.4955980060622096,
+      "duration_ms": 0.006718561053276062,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 46,
+      "mb": 0,
+      "start": 3.4956417055800557,
+      "end": 3.5205375365912914,
+      "duration_ms": 24.895831011235714,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 46,
+      "mb": 0,
+      "start": 3.4956417055800557,
+      "end": 3.4958368940278888,
+      "duration_ms": 0.19518844783306122,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 46,
+      "mb": 0,
+      "start": 3.4958368940278888,
+      "end": 3.5159505549818277,
+      "duration_ms": 20.11366095393896,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 46,
       "mb": 0,
-      "start": 0.36796397529542446,
-      "end": 0.36820888705551624,
-      "duration_ms": 0.24491176009178162,
+      "start": 3.5205546179786325,
+      "end": 3.520719609223306,
+      "duration_ms": 0.16499124467372894,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 46,
+      "mb": 1,
+      "start": 3.5207278290763497,
+      "end": 3.520737159997225,
+      "duration_ms": 0.00933092087507248,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 46,
+      "mb": 1,
+      "start": 3.5207696380093694,
+      "end": 3.545622169971466,
+      "duration_ms": 24.85253196209669,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 46,
+      "mb": 1,
+      "start": 3.5207696380093694,
+      "end": 3.520961655303836,
+      "duration_ms": 0.19201729446649551,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 46,
+      "mb": 1,
+      "start": 3.520961655303836,
+      "end": 3.540776200592518,
+      "duration_ms": 19.814545288681984,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 46,
       "mb": 1,
-      "start": 0.3715686434879899,
-      "end": 0.3717998908832669,
-      "duration_ms": 0.23124739527702332,
+      "start": 3.545638636685908,
+      "end": 3.5457991305738688,
+      "duration_ms": 0.1604938879609108,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 47,
+      "mb": 0,
+      "start": 3.546518662944436,
+      "end": 3.5465255863964558,
+      "duration_ms": 0.006923452019691467,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 47,
+      "mb": 0,
+      "start": 3.5465691443532705,
+      "end": 3.5706084240227938,
+      "duration_ms": 24.03927966952324,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 47,
+      "mb": 0,
+      "start": 3.5465691443532705,
+      "end": 3.546770882792771,
+      "duration_ms": 0.20173843950033188,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 47,
+      "mb": 0,
+      "start": 3.546770882792771,
+      "end": 3.5659100245684385,
+      "duration_ms": 19.139141775667667,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 47,
       "mb": 0,
-      "start": 0.3752407915890217,
-      "end": 0.37548288609832525,
-      "duration_ms": 0.2420945093035698,
+      "start": 3.570625437423587,
+      "end": 3.570776325650513,
+      "duration_ms": 0.15088822692632675,
+      "node": "ffn"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 47,
+      "mb": 1,
+      "start": 3.5707842325791717,
+      "end": 3.570793641731143,
+      "duration_ms": 0.00940915197134018,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 47,
+      "mb": 1,
+      "start": 3.5708256624639034,
+      "end": 3.594821241684258,
+      "duration_ms": 23.995579220354557,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 47,
+      "mb": 1,
+      "start": 3.5708256624639034,
+      "end": 3.571018381975591,
+      "duration_ms": 0.19271951168775558,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 47,
+      "mb": 1,
+      "start": 3.571018381975591,
+      "end": 3.5901308357715607,
+      "duration_ms": 19.112453795969486,
       "node": "ffn"
     },
     {
       "type": "send_transfer",
       "layer": 47,
       "mb": 1,
-      "start": 0.37877381779253483,
-      "end": 0.37958265002816916,
-      "duration_ms": 0.8088322356343269,
+      "start": 3.594837767072022,
+      "end": 3.594989296980202,
+      "duration_ms": 0.15152990818023682,
       "node": "ffn"
     }
   ]
