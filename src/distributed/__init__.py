@@ -103,15 +103,10 @@ class DistributedContext:
                 device_id=device_id,
             )
         
-        # Create directional NCCL process groups for cross-layer pipelining.
-        # Default group: reserved for warmup/keepalive/control-plane.
-        # Directional groups use separate NCCL communicators to break FIFO:
-        #   - a2f_group: ATT isend → FFN irecv (Attention-to-FFN direction)
-        #   - f2a_group: FFN isend → ATT irecv (FFN-to-Attention direction)
-        # This allows irecv(F2A) to be posted without blocking isend(A2F).
-        comm_ranks = [config.attn_node_rank, config.ffn_node_rank]
-        self._a2f_group = dist.new_group(ranks=comm_ranks)
-        self._f2a_group = dist.new_group(ranks=comm_ranks)
+        # Create directional NCCL process groups lazily (only when DBO is used).
+        # See a2f_group / f2a_group properties below.
+        # Store comm_ranks for lazy creation.
+        self._comm_ranks = [config.attn_node_rank, config.ffn_node_rank]
         
         self._initialized = True
         logger.info(
@@ -187,21 +182,49 @@ class DistributedContext:
     
     @property
     def a2f_group(self):
-        """Get the ATT→FFN directional NCCL group."""
+        """Get the ATT→FFN directional NCCL group (lazy init)."""
+        if self._a2f_group is None:
+            self._init_directional_groups()
         return self._a2f_group
     
     @property
     def f2a_group(self):
-        """Get the FFN→ATT directional NCCL group."""
+        """Get the FFN→ATT directional NCCL group (lazy init)."""
+        if self._f2a_group is None:
+            self._init_directional_groups()
         return self._f2a_group
+    
+    def _init_directional_groups(self):
+        """Create directional NCCL groups for cross-layer pipelining.
+        
+        Called lazily on first access to a2f_group or f2a_group.
+        Directional groups use separate NCCL communicators to break FIFO:
+          - a2f_group: ATT isend → FFN irecv (Attention-to-FFN direction)
+          - f2a_group: FFN isend → ATT irecv (FFN-to-Attention direction)
+        """
+        logger.info("Creating directional NCCL groups (a2f, f2a)...")
+        self._a2f_group = dist.new_group(ranks=self._comm_ranks)
+        self._f2a_group = dist.new_group(ranks=self._comm_ranks)
+        # Warm up the new groups to avoid cold-start latency
+        from .warmup import warmup_p2p
+        warmup_p2p(
+            self.peer_rank, self.device, num_rounds=3,
+            extra_groups=[self._a2f_group, self._f2a_group],
+        )
+        logger.info("Directional NCCL groups created and warmed up")
     
     def warmup(self, num_rounds=3, keepalive=False, keepalive_interval=0.5):
         """预热 P2P 通道并可选启动保活。"""
         from .warmup import warmup_p2p, P2PKeepalive
 
+        # Only warm up directional groups if they've been created
+        extra = []
+        if self._a2f_group is not None and self._f2a_group is not None:
+            extra = [self._a2f_group, self._f2a_group]
+
         result = warmup_p2p(
             self.peer_rank, self.device, num_rounds=num_rounds,
-            extra_groups=[self._a2f_group, self._f2a_group],
+            extra_groups=extra,
         )
         self._warmup_result = result
 

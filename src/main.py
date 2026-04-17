@@ -54,7 +54,7 @@ def setup_logging(verbose: bool = False):
         "httpx",
         "httpcore",
         "urllib3",
-        "src.distributed",
+        "src.distributed.warmup",
     ]:
         logging.getLogger(name).setLevel(logging.WARNING if verbose else logging.ERROR)
     for name in ["src.model", "src.pipeline"]:

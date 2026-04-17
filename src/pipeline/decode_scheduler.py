@@ -105,6 +105,8 @@ class DecodeDBOScheduler:
         # Send transfer uses direct handle.wait() timing (no monitor needed)
         # P2P keepalive (optional)
         self._keepalive = keepalive
+        # Eagerly init directional groups (collective: both nodes must reach here)
+        _ = self.ctx.a2f_group
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
         )

@@ -177,7 +177,8 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
 
 def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict, 
                   output_path: str, num_layers: int = 2, start_layer: int = 1,
-                  serial_time_override: float = None, dbo_e2e_time: float = None):
+                  serial_time_override: float = None, dbo_e2e_time: float = None,
+                  serial_e2e_time: float = None):
     """
     绘制 4 泳道 pipeline 图。
     
@@ -283,13 +284,14 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     total_comm = sum(a2f_times + f2a_times)
     
     # 串行时间：优先使用实测值，否则用估算值
+    # Note: all times here are PER-STEP (one decode pass through displayed layers)
     estimated_serial = attn_compute + ffn_compute + total_comm
     if serial_time_override and serial_time_override > 0:
         serial_time = serial_time_override
-        serial_label = f"Serial: {serial_time:.1f}ms (measured)"
+        serial_label = f"Serial: {serial_time:.1f}ms/step"
     else:
         serial_time = estimated_serial
-        serial_label = f"Serial: {serial_time:.1f}ms (est.)"
+        serial_label = f"Serial: {serial_time:.1f}ms/step (est.)"
     
     # DBO E2E time: use override if provided, otherwise use per-step total from timing JSON
     if dbo_e2e_time and dbo_e2e_time > 0:
@@ -297,10 +299,12 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         dbo_label = f"DBO: {dbo_display_time:.1f}ms (E2E)"
     else:
         dbo_display_time = total_inference_time
-        dbo_label = f"DBO: {dbo_display_time:.1f}ms"
+        dbo_label = f"DBO: {dbo_display_time:.1f}ms/step"
     
-    # Speedup vs serial (both must be same scale: E2E or per-step)
-    if serial_time > 0 and dbo_display_time > 0:
+    # Speedup: prefer E2E-to-E2E comparison when both available
+    if serial_e2e_time and dbo_e2e_time and serial_e2e_time > 0 and dbo_e2e_time > 0:
+        speedup = serial_e2e_time / dbo_e2e_time
+    elif serial_time > 0 and dbo_display_time > 0:
         speedup = serial_time / dbo_display_time
     else:
         speedup = 1.0
@@ -386,15 +390,22 @@ def main():
     args = parser.parse_args()
     
     # 从 serial timing JSON 读取实测时间（优先级低于 --serial-time）
+    serial_e2e_time = None  # Store raw E2E for speedup calculation
     if args.serial_time is None and args.serial_timing and Path(args.serial_timing).exists():
         try:
             with open(args.serial_timing) as f:
                 serial_data = json.load(f)
             total_ms = serial_data.get('total_time_ms')
             if total_ms:
-                # Always use raw total_time_ms (E2E wall-clock time)
-                args.serial_time = total_ms
-                print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms E2E)")
+                max_new_tokens = serial_data.get('max_new_tokens')
+                if max_new_tokens and max_new_tokens > 1:
+                    serial_e2e_time = total_ms
+                    args.serial_time = total_ms / max_new_tokens
+                    print(f"  Serial timing: {args.serial_timing}")
+                    print(f"    E2E={total_ms:.1f}ms / {max_new_tokens} tokens → per-step≈{args.serial_time:.1f}ms")
+                else:
+                    args.serial_time = total_ms
+                    print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms per-step)")
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
     
@@ -430,7 +441,8 @@ def main():
     plot_pipeline(lanes_data, attn_data, ffn_data, args.output, 
                   args.num_layers, start_layer,
                   serial_time_override=args.serial_time,
-                  dbo_e2e_time=args.dbo_e2e_time)
+                  dbo_e2e_time=args.dbo_e2e_time,
+                  serial_e2e_time=serial_e2e_time)
     
     print(f"\n✓ Done! View the result at: {args.output}")
 
