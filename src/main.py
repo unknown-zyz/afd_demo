@@ -118,6 +118,9 @@ def parse_args():
                         help="Disable DBO for both prefill and decode (AF separation only)")
     parser.add_argument("--num-micro-batches", type=int, default=2,
                         help="Number of micro-batches for DBO pipeline")
+    parser.add_argument("--crosslayer", action="store_true",
+                        help="Enable cross-layer micro-batch pipelining in decode DBO "
+                             "(default: off; post next-layer irecvs before draining current-layer sends)")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -441,6 +444,7 @@ def run_generation_demo(args):
         num_decode_micro_batches=args.num_micro_batches,
         enable_timing=args.timing,
         timing_mode=args.timing_mode,
+        decode_use_crosslayer=args.crosslayer,
     )
     
     if torch.cuda.is_available():

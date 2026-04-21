@@ -91,6 +91,7 @@ class DecodeDBOScheduler:
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
         keepalive=None,
+        use_crosslayer: bool = False,
     ):
         self.model = model
         self.ctx = get_distributed_context()
@@ -105,10 +106,17 @@ class DecodeDBOScheduler:
         # Send transfer uses direct handle.wait() timing (no monitor needed)
         # P2P keepalive (optional)
         self._keepalive = keepalive
+        # Cross-layer pipelining switch:
+        #   - False (default): layer-synchronous — drain current-layer sends
+        #     before posting next-layer irecvs. Cleaner baseline.
+        #   - True: post next-layer irecvs before draining current-layer sends,
+        #     enabling cross-layer micro-batch pipeline.
+        self.use_crosslayer = use_crosslayer
         # Eagerly init directional groups (collective: both nodes must reach here)
         _ = self.ctx.a2f_group
         logger.debug(
-            f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}"
+            f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}, "
+            f"use_crosslayer={use_crosslayer}"
         )
 
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
@@ -299,19 +307,33 @@ class DecodeDBOScheduler:
             if self._keepalive:
                 self._keepalive.notify_comm()
 
-            # Post F2A irecv per-MB on f2a_group (doesn't block a2f_group sends)
-            f2a_tag = self._get_tag(0, mb_idx, "f2a")
-            recv_tensor = torch.empty(
-                mb_sizes[mb_idx], 1, self.model.hidden_size,
-                dtype=self.model.dtype, device=self.model.device,
-            )
-            f2a_recv_handles[mb_idx] = dist.irecv(
-                recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
-            )
-            f2a_recv_tensors[mb_idx] = recv_tensor
+            if self.use_crosslayer:
+                # Post F2A irecv per-MB on f2a_group (doesn't block a2f_group sends)
+                f2a_tag = self._get_tag(0, mb_idx, "f2a")
+                recv_tensor = torch.empty(
+                    mb_sizes[mb_idx], 1, self.model.hidden_size,
+                    dtype=self.model.dtype, device=self.model.device,
+                )
+                f2a_recv_handles[mb_idx] = dist.irecv(
+                    recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
+                )
+                f2a_recv_tensors[mb_idx] = recv_tensor
 
         if prev_send_handle is not None:
             prev_send_handle.wait()
+
+        if not self.use_crosslayer:
+            # Post all F2A irecvs for layer 0 AFTER sends drain
+            for mb_idx in range(num_mb):
+                f2a_tag = self._get_tag(0, mb_idx, "f2a")
+                recv_tensor = torch.empty(
+                    mb_sizes[mb_idx], 1, self.model.hidden_size,
+                    dtype=self.model.dtype, device=self.model.device,
+                )
+                f2a_recv_handles[mb_idx] = dist.irecv(
+                    recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
+                )
+                f2a_recv_tensors[mb_idx] = recv_tensor
 
         cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
         cache_layer.values = torch.cat(mb_updated_values, dim=0)
@@ -392,19 +414,33 @@ class DecodeDBOScheduler:
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
-                # Post F2A irecv for THIS layer per-MB on f2a_group
-                f2a_tag = self._get_tag(layer_idx, mb_idx, "f2a")
-                recv_tensor = torch.empty(
-                    mb_sizes[mb_idx], 1, self.model.hidden_size,
-                    dtype=self.model.dtype, device=self.model.device,
-                )
-                next_f2a_handles[mb_idx] = dist.irecv(
-                    recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
-                )
-                next_f2a_tensors[mb_idx] = recv_tensor
+                if self.use_crosslayer:
+                    # Post F2A irecv for THIS layer per-MB on f2a_group
+                    f2a_tag = self._get_tag(layer_idx, mb_idx, "f2a")
+                    recv_tensor = torch.empty(
+                        mb_sizes[mb_idx], 1, self.model.hidden_size,
+                        dtype=self.model.dtype, device=self.model.device,
+                    )
+                    next_f2a_handles[mb_idx] = dist.irecv(
+                        recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
+                    )
+                    next_f2a_tensors[mb_idx] = recv_tensor
 
             if prev_send_handle is not None:
                 prev_send_handle.wait()
+
+            if not self.use_crosslayer:
+                # Post all F2A irecvs for this layer AFTER sends drain
+                for mb_idx in range(num_mb):
+                    f2a_tag = self._get_tag(layer_idx, mb_idx, "f2a")
+                    recv_tensor = torch.empty(
+                        mb_sizes[mb_idx], 1, self.model.hidden_size,
+                        dtype=self.model.dtype, device=self.model.device,
+                    )
+                    next_f2a_handles[mb_idx] = dist.irecv(
+                        recv_tensor, src=peer, tag=f2a_tag, group=f2a_group,
+                    )
+                    next_f2a_tensors[mb_idx] = recv_tensor
 
             cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
             cache_layer.values = torch.cat(mb_updated_values, dim=0)
@@ -505,30 +541,39 @@ class DecodeDBOScheduler:
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
-            # Post all next-layer A2F irecvs AFTER all MB computes in this layer.
-            # Rationale: posting irecv per-MB inside the compute loop causes NCCL
-            # kernel activity to contend with FFN compute for GPU SMs, making
-            # MB0 compute slower than MB1 (MB0 sees more pending NCCL ops).
-            # Since A2F irecvs are on a separate communicator (a2f_group), deferring
-            # by ~5ms/layer has negligible pipeline cost while eliminating contention.
-            if layer_idx + 1 < num_layers:
-                for mb_idx in range(num_mb):
-                    next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
-                    recv_tensor = torch.empty(
-                        mb_sizes[mb_idx], 1, self.model.hidden_size,
-                        dtype=self.model.dtype, device=self.model.device,
-                    )
-                    next_a2f_handles[mb_idx] = dist.irecv(
-                        recv_tensor, src=peer, tag=next_tag, group=a2f_group,
-                    )
-                    next_a2f_tensors[mb_idx] = recv_tensor
+            # Post next-layer A2F irecvs.
+            #   use_crosslayer=True: post BEFORE draining sends → next-layer
+            #     irecvs can be matched while this-layer F2A sends complete,
+            #     enabling cross-layer micro-batch pipeline.
+            #   use_crosslayer=False: post AFTER draining sends → layer-synchronous
+            #     baseline. Incurs ~5ms/layer irecv match latency but gives a
+            #     clean non-pipelined reference.
+            def _post_next_layer_irecvs():
+                if layer_idx + 1 < num_layers:
+                    for mb_idx in range(num_mb):
+                        next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
+                        recv_tensor = torch.empty(
+                            mb_sizes[mb_idx], 1, self.model.hidden_size,
+                            dtype=self.model.dtype, device=self.model.device,
+                        )
+                        next_a2f_handles[mb_idx] = dist.irecv(
+                            recv_tensor, src=peer, tag=next_tag, group=a2f_group,
+                        )
+                        next_a2f_tensors[mb_idx] = recv_tensor
 
-                a2f_recv_handles = next_a2f_handles
-                a2f_recv_tensors = next_a2f_tensors
+            if self.use_crosslayer:
+                _post_next_layer_irecvs()
 
             # Wait all sends complete
             for handle in send_handles:
                 handle.wait()
+
+            if not self.use_crosslayer:
+                _post_next_layer_irecvs()
+
+            if layer_idx + 1 < num_layers:
+                a2f_recv_handles = next_a2f_handles
+                a2f_recv_tensors = next_a2f_tensors
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
 

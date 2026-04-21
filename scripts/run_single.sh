@@ -67,6 +67,7 @@ WARMUP_P2P=false
 WARMUP_ROUNDS=3
 KEEPALIVE=false
 KEEPALIVE_INTERVAL=0.5
+CROSSLAYER=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -105,6 +106,10 @@ while [ $# -gt 0 ]; do
         --keepalive-interval)
             KEEPALIVE_INTERVAL="$2"
             shift 2
+            ;;
+        --crosslayer)
+            CROSSLAYER=true
+            shift
             ;;
         *)
             echo "ERROR: Unknown option: $1"
@@ -147,6 +152,12 @@ if [ "$KEEPALIVE" = true ]; then
     WARMUP_FLAGS="$WARMUP_FLAGS --keepalive --keepalive-interval $KEEPALIVE_INTERVAL"
 fi
 
+CROSSLAYER_FLAG=""
+if [ "$CROSSLAYER" = true ]; then
+    CROSSLAYER_FLAG="--crosslayer"
+    SUFFIX="${SUFFIX}_crosslayer"
+fi
+
 echo "========================================"
 echo "  $([ "$NO_DBO" = true ] && echo 'Serial ' || echo '')Experiment: $SUFFIX"
 echo "========================================"
@@ -184,7 +195,7 @@ run_local() {
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS" \
         --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS \
+        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG \
         > "results/prefill_dbo/logs/ffn_${SUFFIX}.log" 2>&1 &
     FFN_PID=$!
     sleep 5
@@ -202,7 +213,7 @@ run_local() {
         --max-new-tokens "$TOKENS" \
         --prompt "Hello world, this is a test prompt for batch scaling experiments with a longer text." \
         --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS \
+        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG \
         > "results/prefill_dbo/logs/attn_${SUFFIX}.log" 2>&1
 
     wait $FFN_PID 2>/dev/null || true
@@ -234,7 +245,7 @@ run_multinode() {
          --prefill-seq-len $SEQ \
          --max-new-tokens $TOKENS \
          --timing --timing-suffix '$SUFFIX' \
-         --verbose $GENERATE_FLAG $DBO_FLAG" \
+         --verbose $GENERATE_FLAG $DBO_FLAG $CROSSLAYER_FLAG" \
          2>&1 | tee "results/prefill_dbo/logs/ffn_${SUFFIX}.log" | sed 's/^/[FFN] /' &
     REMOTE_PID=$!
     sleep 10
@@ -252,7 +263,7 @@ run_multinode() {
         --max-new-tokens "$TOKENS" \
         --prompt "Hello world, this is a test prompt for batch scaling experiments with a longer text." \
         --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG \
+        --verbose $GENERATE_FLAG $DBO_FLAG $CROSSLAYER_FLAG \
         2>&1 | tee "results/prefill_dbo/logs/attn_${SUFFIX}.log" | sed 's/^/[ATTN] /'
 
     wait $REMOTE_PID 2>/dev/null || true

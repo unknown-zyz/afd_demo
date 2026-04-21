@@ -546,6 +546,7 @@ class DisaggregatedQwenModel(nn.Module):
         num_decode_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        decode_use_crosslayer: bool = False,
     ) -> torch.Tensor:
         """
         Generate text autoregressively with optional Decode DBO.
@@ -563,6 +564,7 @@ class DisaggregatedQwenModel(nn.Module):
             num_decode_micro_batches: Number of micro-batches for decode DBO
             enable_timing: Whether to collect per-layer timing data
             timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
+            decode_use_crosslayer: Enable cross-layer micro-batch pipelining in decode DBO
         
         Returns:
             Generated token IDs [batch_size, seq_len + num_generated]
@@ -572,6 +574,7 @@ class DisaggregatedQwenModel(nn.Module):
             return self._generate_ffn_node(
                 input_ids, max_new_tokens, use_decode_dbo,
                 num_decode_micro_batches, enable_timing, timing_mode,
+                decode_use_crosslayer,
             )
         
         # Initialize KV cache if needed
@@ -616,6 +619,7 @@ class DisaggregatedQwenModel(nn.Module):
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
                 keepalive=getattr(ctx, '_keepalive', None),
+                use_crosslayer=decode_use_crosslayer,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
         
@@ -674,6 +678,7 @@ class DisaggregatedQwenModel(nn.Module):
         num_decode_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        decode_use_crosslayer: bool = False,
     ) -> torch.Tensor:
         """
         FFN node participation in generation.
@@ -698,6 +703,7 @@ class DisaggregatedQwenModel(nn.Module):
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
                 keepalive=getattr(ctx, '_keepalive', None),
+                use_crosslayer=decode_use_crosslayer,
             )
         
         # Decode loop: max_new_tokens - 1 iterations
