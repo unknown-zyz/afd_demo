@@ -81,8 +81,12 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     end_layer = start_layer + num_layers
     
     # === Step 1: 计算 ATT-FFN 时钟偏移 ===
-    # 使用 A→F 通信边界对齐：ATT send_transfer end ≈ FFN recv_wait start
-    # 当 recv_wait ≈ 0 时，两者几乎同时，偏移 = ffn_recv_start - attn_send_end
+    # 对齐原理：
+    #   观测量 = ffn_recv_end - attn_send_end (ffn 时钟 - att 时钟)
+    #   真实关系: ffn_recv_end_真 ≥ 数据到达_真 ≥ attn_send_end_真 + 传输延迟
+    #   所以 观测量 = 真实时钟偏移 + (ffn_recv_end - 数据到达) + 传输延迟 ≥ 真实偏移
+    #   取所有锚点中的最小值，是真实偏移的紧上界（误差 ≈ 传输延迟 ~0.1ms）
+    #   相比旧方法（依赖 recv_dur≈0 的假设）对 crosslayer 模式更鲁棒
     
     # Build lookup: (layer, mb) -> ATT send_transfer end time
     attn_send_ends = {}
@@ -91,32 +95,28 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
             key = (event['layer'], event['mb'])
             attn_send_ends[key] = event['start'] * 1000 + event['duration_ms']
     
-    # Build lookup: (layer, mb) -> FFN recv_wait start time
-    ffn_recv_starts = {}
+    # Build lookup: (layer, mb) -> FFN recv_wait end time (data actually arrived)
+    ffn_recv_ends = {}
     for event in ffn_data['events']:
         if event['type'] == 'recv_wait':
             key = (event['layer'], event['mb'])
-            ffn_recv_starts[key] = (event['start'] * 1000, event['duration_ms'])
+            ffn_recv_ends[key] = event['start'] * 1000 + event['duration_ms']
     
-    # Compute offset from layers in visualization range (using low recv_wait as reliable anchors)
+    # Collect offsets from ALL anchors in visualization range (no recv_dur filter needed)
     offsets = []
     for layer in range(start_layer, end_layer):
         for mb in range(2):  # MB 0 and 1
             key = (layer, mb)
-            if key in attn_send_ends and key in ffn_recv_starts:
-                ffn_start, recv_dur = ffn_recv_starts[key]
-                attn_end = attn_send_ends[key]
-                if recv_dur < 5.0:  # recv_wait < 5ms = reliable anchor
-                    offsets.append(ffn_start - attn_end)
+            if key in attn_send_ends and key in ffn_recv_ends:
+                offsets.append(ffn_recv_ends[key] - attn_send_ends[key])
     
     if offsets:
-        # Use median for robustness against outliers
-        offsets.sort()
-        clock_offset = offsets[len(offsets) // 2]
-        print(f"  Clock offset (FFN-ATT): {clock_offset:.2f}ms (from {len(offsets)} anchors)")
+        # Use MIN (tightest upper bound on true clock offset)
+        clock_offset = min(offsets)
+        print(f"  Clock offset (FFN-ATT): {clock_offset:.2f}ms (min of {len(offsets)} anchors, range [{min(offsets):.2f}, {max(offsets):.2f}])")
     else:
         clock_offset = 0
-        print(f"  Warning: No reliable clock anchors found, using offset=0")
+        print(f"  Warning: No clock anchors found, using offset=0")
     
     # === Step 2: 提取事件到各泳道 ===
     lanes_data = {

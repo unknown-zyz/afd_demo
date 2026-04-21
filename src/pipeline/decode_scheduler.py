@@ -505,8 +505,14 @@ class DecodeDBOScheduler:
                 if self._keepalive:
                     self._keepalive.notify_comm()
 
-                # Post next-layer A2F irecv per-MB on a2f_group
-                if layer_idx + 1 < num_layers:
+            # Post all next-layer A2F irecvs AFTER all MB computes in this layer.
+            # Rationale: posting irecv per-MB inside the compute loop causes NCCL
+            # kernel activity to contend with FFN compute for GPU SMs, making
+            # MB0 compute slower than MB1 (MB0 sees more pending NCCL ops).
+            # Since A2F irecvs are on a separate communicator (a2f_group), deferring
+            # by ~5ms/layer has negligible pipeline cost while eliminating contention.
+            if layer_idx + 1 < num_layers:
+                for mb_idx in range(num_mb):
                     next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
                     recv_tensor = torch.empty(
                         mb_sizes[mb_idx], 1, self.model.hidden_size,
@@ -517,7 +523,6 @@ class DecodeDBOScheduler:
                     )
                     next_a2f_tensors[mb_idx] = recv_tensor
 
-            if layer_idx + 1 < num_layers:
                 a2f_recv_handles = next_a2f_handles
                 a2f_recv_tensors = next_a2f_tensors
 
