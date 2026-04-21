@@ -360,8 +360,8 @@ def main():
     parser.add_argument(
         '--start-layer',
         type=int,
-        default=1,
-        help='Starting layer to visualize (default: 1, skip Layer 0 warmup)'
+        default=0,
+        help='Starting layer to visualize (default: 0, include Layer 0)'
     )
     parser.add_argument(
         '--num-layers',
