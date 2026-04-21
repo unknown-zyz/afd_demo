@@ -319,6 +319,24 @@ if [ "$VISUALIZE" = true ] && [ "$NO_DBO" = false ]; then
     echo "   Plot: results/prefill_dbo/dbo_pipeline_${SUFFIX}.png"
 fi
 
+# ── Auto-generate markdown report ────────────────────────────────
+if [ -f "$ATTN_TIMING" ] && [ -f "$FFN_TIMING" ]; then
+    REPORT="results/prefill_dbo/report_${SUFFIX}.md"
+    if [ "$NO_DBO" = true ]; then MODE_TAG="serial"
+    elif [ "$GENERATE" = false ]; then MODE_TAG="prefill-dbo"
+    elif [ "$CROSSLAYER" = true ]; then MODE_TAG="decode-dbo-crosslayer"
+    else MODE_TAG="decode-dbo"
+    fi
+    CACHE="results/serial/cache/b${BATCH}_s${SEQ}_t${TOKENS}.json"
+    CMP=""
+    [ -f "$CACHE" ] && [ "$NO_DBO" = false ] && CMP="--serial-baseline $CACHE"
+    python scripts/gen_experiment_report.py \
+        --attn-timing "$ATTN_TIMING" --ffn-timing "$FFN_TIMING" \
+        --output "$REPORT" --mode "$MODE_TAG" \
+        --batch "$BATCH" --seq "$SEQ" --tokens "$TOKENS" $CMP \
+        && echo "   Report: $REPORT" || echo "[WARN] report generation failed"
+fi
+
 echo ""
 echo "✅ Experiment completed: $SUFFIX"
 echo "   Timing: $ATTN_TIMING"
