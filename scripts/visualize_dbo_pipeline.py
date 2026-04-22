@@ -177,8 +177,8 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
 
 def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict, 
                   output_path: str, num_layers: int = 2, start_layer: int = 1,
-                  serial_time_override: float = None, dbo_e2e_time: float = None,
-                  serial_e2e_time: float = None):
+                  serial_baseline_ms: float = None, serial_baseline_label: str = None,
+                  dbo_total_ms: float = None, mode: str = None):
     """
     绘制 4 泳道 pipeline 图。
     
@@ -189,6 +189,10 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         output_path: 输出图片路径
         num_layers: 显示的层数
         start_layer: 原始数据中的起始层号
+        serial_baseline_ms: 与 DBO 对比的串行基线 (mode-matched: prefill_ms or decode_step_ms)
+        serial_baseline_label: 可选标签 (如 "prefill" / "decode_step")
+        dbo_total_ms: DBO 端到端时间 (全模型, mode-matched); 默认取 attn JSON total_time_ms
+        mode: "prefill" 或 "decode" (仅用于标题显示)
     """
     fig, ax = plt.subplots(figsize=(14, 6))
     
@@ -283,41 +287,35 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     # 总通信时间
     total_comm = sum(a2f_times + f2a_times)
     
-    # 串行时间：优先使用实测值，否则用估算值
-    # Note: all times here are PER-STEP (one decode pass through displayed layers)
-    estimated_serial = attn_compute + ffn_compute + total_comm
-    if serial_time_override and serial_time_override > 0:
-        serial_time = serial_time_override
-        serial_label = f"Serial: {serial_time:.1f}ms/step"
+    # ─── Speedup: mode-matched baseline vs DBO full-model time ───────────────
+    # DBO full-model time (one full prefill pass OR one full decode step)
+    if dbo_total_ms is not None and dbo_total_ms > 0:
+        dbo_full = dbo_total_ms
     else:
-        serial_time = estimated_serial
-        serial_label = f"Serial: {serial_time:.1f}ms/step (est.)"
-    
-    # DBO E2E time: use override if provided, otherwise use per-step total from timing JSON
-    if dbo_e2e_time and dbo_e2e_time > 0:
-        dbo_display_time = dbo_e2e_time
-        dbo_label = f"DBO: {dbo_display_time:.1f}ms (E2E)"
+        dbo_full = max(attn_data.get('total_time_ms', 0), ffn_data.get('total_time_ms', 0))
+
+    unit = "prefill" if mode == "prefill" else ("step" if mode == "decode" else "run")
+    dbo_label = f"DBO: {dbo_full:.1f}ms/{unit}"
+
+    if serial_baseline_ms and serial_baseline_ms > 0:
+        tag = serial_baseline_label or unit
+        serial_label = f"Serial: {serial_baseline_ms:.1f}ms/{tag}"
+        speedup_str = f"Speedup: {serial_baseline_ms / dbo_full:.2f}x" if dbo_full > 0 else "Speedup: N/A"
     else:
-        dbo_display_time = total_inference_time
-        dbo_label = f"DBO: {dbo_display_time:.1f}ms/step"
-    
-    # Speedup: prefer E2E-to-E2E comparison when both available
-    if serial_e2e_time and dbo_e2e_time and serial_e2e_time > 0 and dbo_e2e_time > 0:
-        speedup = serial_e2e_time / dbo_e2e_time
-    elif serial_time > 0 and dbo_display_time > 0:
-        speedup = serial_time / dbo_display_time
-    else:
-        speedup = 1.0
-    
-    # Per-layer averages
+        # No mode-matched baseline available → refuse to show a misleading number.
+        serial_label = "Serial: N/A"
+        speedup_str = "Speedup: N/A"
+
+    # Keep legacy vars for per-layer display block below.
     avg_attn = attn_compute / num_layers if num_layers > 0 else 0
     avg_ffn = ffn_compute / num_layers if num_layers > 0 else 0
     
     # 构建标题和统计信息 (3 行)
     end_layer = start_layer + num_layers - 1
     layer_note = " (L0 skipped)" if start_layer > 0 else ""
-    line1 = f'DBO Pipeline — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
-    line2 = f"{dbo_label} | {serial_label} | Speedup: {speedup:.2f}x"
+    mode_tag = f" [{mode}]" if mode else ""
+    line1 = f'DBO Pipeline{mode_tag} — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
+    line2 = f"{dbo_label} | {serial_label} | {speedup_str}"
     line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
     
     ax.set_title(f'{line1}\n{line2}\n{line3}', fontsize=10, pad=10)
@@ -373,41 +371,62 @@ def main():
         '--serial-time',
         type=float,
         default=None,
-        help='Measured serial (no-DBO) time in ms for speedup calculation'
+        help='Measured serial baseline in ms (bypasses cache JSON lookup)'
     )
     parser.add_argument(
         '--serial-timing',
         default=None,
-        help='Path to serial (no-DBO) attention timing JSON to read total_time_ms'
+        help='Path to serial cache JSON (must contain prefill_ms and/or decode_step_ms)'
     )
     parser.add_argument(
-        '--dbo-e2e-time',
-        type=float,
-        default=None,
-        help='DBO end-to-end wall-clock time in ms (for E2E speedup calculation in decode)'
+        '--mode',
+        choices=['prefill', 'decode', 'auto'],
+        default='auto',
+        help='Comparison mode. auto: infer from --attn-timing path (prefill-dbo/decode-dbo).'
     )
     
     args = parser.parse_args()
-    
-    # 从 serial timing JSON 读取实测时间（优先级低于 --serial-time）
-    serial_e2e_time = None  # Store raw E2E for speedup calculation
-    if args.serial_time is None and args.serial_timing and Path(args.serial_timing).exists():
+
+    # ── Auto-detect mode from attn-timing path ──────────────────────────────
+    if args.mode == 'auto':
+        p = str(args.attn_timing).lower()
+        if 'prefill-dbo' in p or 'prefill_dbo' in p:
+            args.mode = 'prefill'
+        elif 'decode-dbo' in p or 'decode_dbo' in p:
+            args.mode = 'decode'
+        else:
+            args.mode = None  # unknown; no speedup
+            print("  Warning: could not infer mode from path; pass --mode explicitly.")
+
+    # ── Resolve serial baseline from cache JSON (mode-matched) ──────────────
+    serial_baseline_ms = args.serial_time
+    serial_baseline_label = None
+    if serial_baseline_ms is None and args.serial_timing and Path(args.serial_timing).exists():
         try:
             with open(args.serial_timing) as f:
-                serial_data = json.load(f)
-            total_ms = serial_data.get('total_time_ms')
-            if total_ms:
-                max_new_tokens = serial_data.get('max_new_tokens')
-                if max_new_tokens and max_new_tokens > 1:
-                    serial_e2e_time = total_ms
-                    args.serial_time = total_ms / max_new_tokens
-                    print(f"  Serial timing: {args.serial_timing}")
-                    print(f"    E2E={total_ms:.1f}ms / {max_new_tokens} tokens → per-step≈{args.serial_time:.1f}ms")
-                else:
-                    args.serial_time = total_ms
-                    print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms per-step)")
+                cache = json.load(f)
+            if args.mode == 'prefill':
+                serial_baseline_ms = cache.get('prefill_ms')
+                serial_baseline_label = 'prefill'
+            elif args.mode == 'decode':
+                serial_baseline_ms = cache.get('decode_step_ms')
+                serial_baseline_label = 'step'
+            if serial_baseline_ms is None:
+                print(f"  Warning: '{args.mode}' baseline missing from {args.serial_timing}; "
+                      f"Speedup will be N/A. Keys present: {list(cache.keys())}")
+            else:
+                print(f"  Serial {args.mode} baseline: {serial_baseline_ms:.1f}ms  ({args.serial_timing})")
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
+
+    # ── DBO total time (full model, one step/pass) from attn JSON ──────────
+    dbo_total_ms = None
+    try:
+        with open(args.attn_timing) as f:
+            _attn = json.load(f)
+        dbo_total_ms = _attn.get('total_time_ms')
+    except Exception:
+        pass
     
     # 检查输入文件
     if not Path(args.attn_timing).exists():
@@ -440,9 +459,10 @@ def main():
     print(f"\nGenerating visualization...")
     plot_pipeline(lanes_data, attn_data, ffn_data, args.output, 
                   args.num_layers, start_layer,
-                  serial_time_override=args.serial_time,
-                  dbo_e2e_time=args.dbo_e2e_time,
-                  serial_e2e_time=serial_e2e_time)
+                  serial_baseline_ms=serial_baseline_ms,
+                  serial_baseline_label=serial_baseline_label,
+                  dbo_total_ms=dbo_total_ms,
+                  mode=args.mode)
     
     print(f"\n✓ Done! View the result at: {args.output}")
 
