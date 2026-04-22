@@ -179,4 +179,12 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  Matrix complete. Summary: $SUMMARY"
 echo "════════════════════════════════════════════════════════════"
-column -s, -t "$SUMMARY" | head -40
+if command -v column >/dev/null 2>&1; then
+    column -s, -t "$SUMMARY" | head -80
+else
+    cat "$SUMMARY"
+fi
+
+# Clean up transient files from run_single.sh that matrix already moved/re-reported
+rm -f results/prefill_dbo/report_warmup_*.md 2>/dev/null || true
+rm -f results/prefill_dbo/timing_*_warmup_*.json 2>/dev/null || true
