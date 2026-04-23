@@ -26,8 +26,9 @@ MODES="serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer"
 BATCHES="2,4,8,16,32,64,128,256"
 SEQS="128,256,512"
 TOKENS=20
-ATTN_DEVS="${ATTN_DEVS:-0,1}"
-FFN_DEVS="${FFN_DEVS:-2,3,4,5,6,7,8,9}"
+ATTN_DEVS="${ATTN_DEVS:-}"
+FFN_DEVS="${FFN_DEVS:-}"
+VISIBLE_DEVS="${VISIBLE_DEVS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
 NO_CACHE=false
 DRY_RUN=false
 
@@ -39,6 +40,7 @@ while [ $# -gt 0 ]; do
         --tokens) TOKENS="$2"; shift 2;;
         --attn-devs) ATTN_DEVS="$2"; shift 2;;
         --ffn-devs) FFN_DEVS="$2"; shift 2;;
+        --visible-devs) VISIBLE_DEVS="$2"; shift 2;;
         --no-cache) NO_CACHE=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
         -h|--help)
@@ -80,7 +82,7 @@ run_one() {
     fi
 
     local port=$((29500 + (RANDOM % 2000)))
-    ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
+    ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
         --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
         --model-name "$MODEL_NAME" \
