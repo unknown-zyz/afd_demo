@@ -18,7 +18,8 @@ allowed-tools: shell
 | SSH 命令 | `ssh schedTeam@1.95.114.229 -p 22 -i ~/.ssh/id_rsa_second` |
 | 远端工作目录（宿主） | `/home/schedTeam/zhangyz` |
 | 模型权重路径（宿主） | `/home/schedTeam/Qwen3-30B-A3B`（**只读，禁止移动/重新下载**） |
-| 默认容器 | `zhangyz-npu-1`（image `deepep-ascend-bench-dev`） |
+| **首选容器** | `afd-npu-test`（**长驻**，已装 torch_npu 2.6.0 + transformers，已挂模型；**禁止删除**） |
+| 备用容器 | `zhangyz-npu-1`（image `deepep-ascend-bench-dev`，无模型挂载，仅适合 CPU 冒烟） |
 | 容器内工作目录 | `/workspace`（来自 docker volume `zhangyz_workspace`） |
 | docker-compose 文件 | `/home/schedTeam/zhangyz/docker-compose.yml` |
 | 容器 NPU 设备 | `/dev/davinci0..15` 已透传，CANN 8.5 装在 `/usr/local/Ascend/` |
@@ -35,6 +36,48 @@ allowed-tools: shell
 - ⛔ 禁止用 `pkill` / `killall` 等按名字杀进程；只能 `kill <PID>`。
 
 ## 2. 标准执行步骤
+
+> **优先使用长驻容器 `afd-npu-test`**：已经装好 torch_npu 2.6.0、transformers、所有 CANN 依赖，并以 ro 方式挂载了模型 `/models/Qwen3-30B-A3B`。多数情况下只需 `docker exec afd-npu-test bash -lc '...'` 即可跑实验，**跳过 Step 5/6/7a**。
+>
+> ### 已验证可跑的最小命令（直接复用）
+>
+> ```bash
+> ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229 \
+>   "docker exec afd-npu-test bash -lc '
+>      source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null
+>      cd /workspace/afd_demo
+>      ASCEND_VISIBLE_DEVICES=0,1 ./scripts/run_npu.sh \
+>        --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
+>        --batch 1 --seq 32 --tokens 4 \
+>        --model-name /models/Qwen3-30B-A3B
+>   '"
+> ```
+>
+> ### 若 `afd-npu-test` 不存在或损坏，重建命令（**严禁删除其他容器**）
+>
+> ```bash
+> docker run -d --name afd-npu-test --privileged --network host --ipc host --shm-size 16g \
+>   --device /dev/davinci0 --device /dev/davinci1 \
+>   --device /dev/davinci2 --device /dev/davinci3 \
+>   --device /dev/davinci_manager --device /dev/hisi_hdc --device /dev/devmm_svm \
+>   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+>   -v /usr/local/Ascend/firmware:/usr/local/Ascend/firmware \
+>   -v /etc/ascend_install.info:/etc/ascend_install.info \
+>   -v /usr/local/dcmi:/usr/local/dcmi \
+>   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+>   -v /home/schedTeam/Qwen3-30B-A3B:/models/Qwen3-30B-A3B:ro \
+>   deepep-ascend-bench-dev sleep infinity
+> # privileged + network host 缺一不可，否则 drvGetDevNum=87
+>
+> # 装包顺序（务必 2.6.0，不要用 2.5.1）
+> docker exec afd-npu-test pip3 install numpy pyyaml decorator attrs psutil scipy
+> docker exec afd-npu-test pip3 install torch==2.6.0 torch_npu==2.6.0
+> docker exec afd-npu-test pip3 install transformers accelerate sentencepiece protobuf
+> ```
+>
+> ### 已知 BUG（避免重复踩）
+> 1. **不要用 `torch_npu==2.5.1`**：CANN 8.5 镜像的 TBE 二进制缓存与之不匹配，会报 `BinaryGetFunction failed for Index_*` / `aclnnNeg` 等。必须 ≥ 2.6.0。
+> 2. **不要用 4 卡 preset (`--attn-size 2 --ffn-size 2`)**：当前 `src/distributed/__init__.py:160-167` 的 role 映射缺陷会让 4 个 rank 抢同一个 device 导致 OOM。仅支持 `--attn-size 1 --ffn-size 1`（2 rank）跑通。
 
 ### Step 1 — SSH 连接
 
