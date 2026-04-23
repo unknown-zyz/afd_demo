@@ -30,6 +30,7 @@ ATTN_DEVS="${ATTN_DEVS:-}"
 FFN_DEVS="${FFN_DEVS:-}"
 VISIBLE_DEVS="${VISIBLE_DEVS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
 NO_CACHE=false
+APPEND=false
 DRY_RUN=false
 
 while [ $# -gt 0 ]; do
@@ -42,6 +43,7 @@ while [ $# -gt 0 ]; do
         --ffn-devs) FFN_DEVS="$2"; shift 2;;
         --visible-devs) VISIBLE_DEVS="$2"; shift 2;;
         --no-cache) NO_CACHE=true; shift;;
+        --append) APPEND=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
         -h|--help)
             sed -n '2,20p' "$0"; exit 0;;
@@ -135,7 +137,10 @@ run_one() {
 
 # Main sweep ------------------------------------------------------------------
 SUMMARY="$ROOT_OUT/experiment_matrix_summary.csv"
-echo "mode,batch,seq,tokens,status,report" > "$SUMMARY"
+CHIP_POOL=$(echo "$VISIBLE_DEVS" | tr ',' '\n' | wc -l)
+if [ "$APPEND" = false ] || [ ! -f "$SUMMARY" ]; then
+    echo "mode,batch,seq,tokens,chip_pool,status,report" > "$SUMMARY"
+fi
 
 for MODE in "${MODE_ARR[@]}"; do
     case "$MODE" in
@@ -151,21 +156,21 @@ for MODE in "${MODE_ARR[@]}"; do
             CACHE="$ROOT_OUT/serial/cache/b${BATCH}_s${SEQ}_t${TOKENS}.json"
             if [ "$MODE" = "serial" ] && [ "$NO_CACHE" = false ] && [ -f "$CACHE" ]; then
                 echo "[cache-hit] serial b${BATCH}_s${SEQ}_t${TOKENS}  (skipping)"
-                echo "serial,$BATCH,$SEQ,$TOKENS,cached,$CACHE" >> "$SUMMARY"
+                echo "serial,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,cached,$CACHE" >> "$SUMMARY"
                 continue
             fi
 
             run_one "$MODE" "$BATCH" "$SEQ" "$TOKENS" "$OUTDIR"
             rc=$?
             if [ $rc -eq 2 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,OOM," >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,OOM," >> "$SUMMARY"
                 echo "↳ OOM reached for $MODE seq=$SEQ; skipping larger batches."
                 break
             elif [ $rc -ne 0 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,FAIL," >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,FAIL," >> "$SUMMARY"
             else
                 REPORT="$OUTDIR/report_${MODE}_b${BATCH}_s${SEQ}_t${TOKENS}.md"
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,ok,$REPORT" >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,ok,$REPORT" >> "$SUMMARY"
             fi
         done
     done
