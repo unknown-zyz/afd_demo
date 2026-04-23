@@ -56,9 +56,14 @@ echo "preset=$PRESET  attn_size=$ATTN_SIZE  ffn_size=$FFN_SIZE  ffn_tp_size=$FFN
 echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS"
 
 # ── NPU / HCCL environment ───────────────────────────────────────
-# Exposed via `npu-smi info` enumeration. Override ASCEND_VISIBLE_DEVICES
-# to restrict cards on shared machines (e.g. "0,1,2,3" for 4-card runs).
-export ASCEND_VISIBLE_DEVICES="${ASCEND_VISIBLE_DEVICES:-$(seq -s, 0 $((WORLD_SIZE-1)))}"
+# Per-rank device visibility: ATTN_DEVICES (for attention ranks), FFN_DEVICES (for ffn ranks).
+# This isolates each role's layer-sharding pool, so both ranks don't compete for the
+# same physical chips (on shared 910C boxes with limited free HBM per chip).
+# Fallback: if not set, use ASCEND_VISIBLE_DEVICES for all ranks (legacy behavior).
+DEFAULT_DEVS=$(seq -s, 0 $((WORLD_SIZE-1)))
+export ASCEND_VISIBLE_DEVICES="${ASCEND_VISIBLE_DEVICES:-$DEFAULT_DEVS}"
+ATTN_DEVICES="${ATTN_DEVICES:-}"
+FFN_DEVICES="${FFN_DEVICES:-}"
 export HCCL_BUFFSIZE="${HCCL_BUFFSIZE:-200}"           # MB
 export HCCL_CONNECT_TIMEOUT="${HCCL_CONNECT_TIMEOUT:-600}"
 export HCCL_EXEC_TIMEOUT="${HCCL_EXEC_TIMEOUT:-1800}"
@@ -79,14 +84,20 @@ if [ -f venv/bin/activate ]; then source venv/bin/activate; fi
 # FFN ranks: ATTN_SIZE..WORLD_SIZE-1
 PIDS=()
 for (( R=0; R<WORLD_SIZE; R++ )); do
-    if (( R < ATTN_SIZE )); then ROLE=attention
-    else ROLE=ffn
+    if (( R < ATTN_SIZE )); then ROLE=attention; RANK_DEVS="$ATTN_DEVICES"
+    else ROLE=ffn;                               RANK_DEVS="$FFN_DEVICES"
     fi
     LOCAL_RANK=$R
     RANK=$R
     RUN_LOG="results/logs/npu_${SUFFIX}_r${RANK}.log"
     mkdir -p results/logs
     (
+        # Per-rank device pool (falls back to global ASCEND_VISIBLE_DEVICES if empty)
+        if [ -n "$RANK_DEVS" ]; then
+            export ASCEND_VISIBLE_DEVICES="$RANK_DEVS"
+            export ASCEND_RT_VISIBLE_DEVICES="$RANK_DEVS"
+            LOCAL_RANK=0  # rank sees only its own devs starting at 0
+        fi
         RANK=$RANK LOCAL_RANK=$LOCAL_RANK WORLD_SIZE=$WORLD_SIZE \
         MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT \
         python -u -m src.main \
