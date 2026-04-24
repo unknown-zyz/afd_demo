@@ -315,7 +315,12 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     
     # 构建标题和统计信息 (3 行)
     end_layer = start_layer + num_layers - 1
-    layer_note = " (L0 skipped)" if start_layer > 0 else ""
+    if start_layer == 1:
+        layer_note = " (L0 skipped)"
+    elif start_layer > 1:
+        layer_note = f" (L0–L{start_layer-1} skipped)"
+    else:
+        layer_note = ""
     line1 = f'DBO Pipeline — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
     line2 = f"{dbo_label} | {serial_label} | Speedup: {speedup:.2f}x"
     line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
@@ -361,7 +366,21 @@ def main():
         '--start-layer',
         type=int,
         default=0,
-        help='Starting layer to visualize (default: 0, include Layer 0)'
+        help='Starting layer to visualize (default: 0, include Layer 0). '
+             'Use --auto-skip-warmup to drop backend JIT warmup layers automatically.'
+    )
+    parser.add_argument(
+        '--auto-skip-warmup',
+        action='store_true',
+        default=True,
+        help='Auto-detect and skip warmup layers whose mb0 duration is >5× the '
+             'median of later layers (for NPU prefill without --prefill-warmup-rounds).'
+    )
+    parser.add_argument(
+        '--no-auto-skip-warmup',
+        action='store_false',
+        dest='auto_skip_warmup',
+        help='Disable auto warmup-layer skipping.'
     )
     parser.add_argument(
         '--num-layers',
@@ -417,12 +436,46 @@ def main():
     if not Path(args.ffn_timing).exists():
         print(f"Error: FFN timing file not found: {args.ffn_timing}")
         sys.exit(1)
+
+    # Auto-detect warmup layers (NPU per-shape JIT compile): if mb0 attn durations
+    # for the first few layers are >5× the median of later layers, bump start_layer.
+    auto_skipped = 0
+    if args.auto_skip_warmup:
+        try:
+            with open(args.attn_timing) as f:
+                _attn = json.load(f)
+            mb0_attn = {}
+            for ev in _attn.get('events', []):
+                if ev.get('type') == 'attn_compute' and ev.get('mb') == 0:
+                    mb0_attn.setdefault(ev['layer'], ev['duration_ms'])
+            if mb0_attn:
+                layers_sorted = sorted(mb0_attn)
+                # Reference median: use layers from max(start_layer+3, 4) onwards
+                tail = [mb0_attn[l] for l in layers_sorted if l >= max(args.start_layer + 3, 4)]
+                if not tail:
+                    tail = list(mb0_attn.values())[-max(len(mb0_attn)//2, 1):]
+                tail_sorted = sorted(tail)
+                median = tail_sorted[len(tail_sorted)//2]
+                threshold = 5.0 * median
+                # Walk forward from current start_layer while that layer is warmup
+                new_start = args.start_layer
+                while new_start in mb0_attn and mb0_attn[new_start] > threshold:
+                    print(f"  Auto-skip warmup layer L{new_start}: "
+                          f"attn_mb0={mb0_attn[new_start]:.1f}ms > 5×median({median:.2f}ms)")
+                    new_start += 1
+                auto_skipped = new_start - args.start_layer
+                if auto_skipped > 0:
+                    args.start_layer = new_start
+                    args.num_layers = max(1, args.num_layers - auto_skipped)
+        except Exception as e:
+            print(f"  Warning: auto-skip-warmup detection failed: {e}")
     
     # 加载数据
     print(f"Loading timing data...")
     print(f"  Attention: {args.attn_timing}")
     print(f"  FFN: {args.ffn_timing}")
-    print(f"  Layers: {args.start_layer} to {args.start_layer + args.num_layers - 1}")
+    print(f"  Layers: {args.start_layer} to {args.start_layer + args.num_layers - 1}"
+          + (f" (auto-skipped {auto_skipped} warmup layer(s))" if auto_skipped else ""))
     
     lanes_data, attn_data, ffn_data, start_layer = load_timing_data(
         args.attn_timing,
