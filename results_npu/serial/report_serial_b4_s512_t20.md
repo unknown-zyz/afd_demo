@@ -13,14 +13,14 @@
 
 | Metric | Attention | FFN |
 |---|---:|---:|
-| Representative-step total | 7011.268 ms | 6959.497 ms |
+| Representative-step total | 7039.155 ms | 6987.104 ms |
 | Compute | - | - |
 | Recv wait | - | - |
 | MoE router | - | - |
 | MoE experts | - | - |
 | MoE shared/dense | - | - |
 | Compute ratio | - | - |
-| Tokens/sec | 2.85 | - |
+| Tokens/sec | 2.84 | - |
 
 ## Per-layer breakdown
 

@@ -13,7 +13,7 @@
 
 | Metric | Attention | FFN |
 |---|---:|---:|
-| Representative-step total | 21873.086 ms | 21487.948 ms |
+| Representative-step total | 21874.354 ms | 21491.808 ms |
 | Compute | - | - |
 | Recv wait | - | - |
 | MoE router | - | - |

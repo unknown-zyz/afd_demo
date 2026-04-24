@@ -312,7 +312,7 @@ def run_inference_demo(args):
     # so that layer-0/1 of mb0 don't dominate the timing JSON and pipeline plot.
     warmup_rounds = args.prefill_warmup_rounds
     if warmup_rounds is None:
-        warmup_rounds = 1 if args.backend == 'npu' else 0
+        warmup_rounds = 1 if devmod.DEVICE_TYPE == 'npu' else 0
     if warmup_rounds > 0:
         logger.info(f"Running {warmup_rounds} prefill warmup round(s) to absorb JIT compile cost")
         saved_timing = getattr(scheduler, 'enable_timing', False)
