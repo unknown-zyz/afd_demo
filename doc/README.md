@@ -34,7 +34,7 @@
 - 核心模块 API
 - Worker 接口
 - Pipeline 调度器
-- KV Cache 管理
+- HuggingFace `DynamicCache` 使用说明
 - 数据结构
 - 工具函数
 - 测试和扩展指南
