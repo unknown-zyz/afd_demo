@@ -90,7 +90,6 @@ class DecodeDBOScheduler:
         num_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
-        keepalive=None,
         use_crosslayer: bool = False,
     ):
         self.model = model
@@ -104,8 +103,6 @@ class DecodeDBOScheduler:
         self._timing_step = 1
         self._current_step = 0
         # Send transfer uses direct handle.wait() timing (no monitor needed)
-        # P2P keepalive (optional)
-        self._keepalive = keepalive
         # Cross-layer pipelining switch:
         #   - False (default): layer-synchronous — drain current-layer sends
         #     before posting next-layer irecvs. Cleaner baseline.
@@ -147,10 +144,6 @@ class DecodeDBOScheduler:
         start_time = time.perf_counter()
         batch_size = input_ids.shape[0]
 
-        # Pause keepalive during inference to avoid NCCL contention
-        if self._keepalive and hasattr(self._keepalive, 'pause'):
-            self._keepalive.pause()
-
         self.stats = DecodeDBOStats(num_tokens=batch_size)
 
         should_track = self.enable_timing and self._current_step == self._timing_step
@@ -179,10 +172,6 @@ class DecodeDBOScheduler:
         self.stats.total_time = time.perf_counter() - start_time
         self.stats.num_layers = self.model.num_layers
         self._current_step += 1
-
-        # Resume keepalive after inference
-        if self._keepalive and hasattr(self._keepalive, 'resume'):
-            self._keepalive.resume()
 
         return result
 
@@ -304,9 +293,6 @@ class DecodeDBOScheduler:
                 send_end = _measure_send_transfer(prev_send_handle, send_start)
                 tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
                                     send_start, send_end)
-            if self._keepalive:
-                self._keepalive.notify_comm()
-
             if self.use_crosslayer:
                 # Post F2A irecv per-MB on f2a_group (doesn't block a2f_group sends)
                 f2a_tag = self._get_tag(0, mb_idx, "f2a")
@@ -411,9 +397,6 @@ class DecodeDBOScheduler:
                     send_end = _measure_send_transfer(prev_send_handle, send_start)
                     tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
                                         send_start, send_end)
-                if self._keepalive:
-                    self._keepalive.notify_comm()
-
                 if self.use_crosslayer:
                     # Post F2A irecv for THIS layer per-MB on f2a_group
                     f2a_tag = self._get_tag(layer_idx, mb_idx, "f2a")
@@ -538,8 +521,6 @@ class DecodeDBOScheduler:
                     tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
                                         send_start, send_end)
                 send_handles.append(handle)
-                if self._keepalive:
-                    self._keepalive.notify_comm()
 
             # Post next-layer A2F irecvs.
             #   use_crosslayer=True: post BEFORE draining sends → next-layer

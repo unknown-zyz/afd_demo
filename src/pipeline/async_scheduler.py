@@ -107,7 +107,6 @@ class AsyncPipelineScheduler:
         use_cuda_streams: bool = True,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
-        keepalive=None,
     ):
         """
         Initialize async scheduler.
@@ -118,7 +117,6 @@ class AsyncPipelineScheduler:
             use_cuda_streams: Whether to use separate CUDA streams
             enable_timing: Whether to record detailed per-MB timing
             timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
-            keepalive: Optional P2PKeepalive instance for heartbeat notification
         """
         self.model = model
         self.ctx = get_distributed_context()
@@ -152,9 +150,6 @@ class AsyncPipelineScheduler:
         
         # Send transfer uses direct handle.wait() timing (no monitor needed)
 
-        # P2P keepalive (optional)
-        self._keepalive = keepalive
-
         logger.info(f"AsyncPipelineScheduler initialized: num_mb={num_micro_batches}, "
                     f"use_cuda_streams={use_cuda_streams}, timing={enable_timing}")
     
@@ -167,8 +162,6 @@ class AsyncPipelineScheduler:
         """Non-blocking send."""
         handle = dist.isend(tensor.contiguous(), dst=self.ctx.peer_rank, tag=tag)
         self._pending_sends.append(handle)
-        if self._keepalive:
-            self._keepalive.notify_comm()
         return handle
     
     def _recv_async(self, shape: Tuple[int, ...], tag: int) -> Tuple[dist.Work, torch.Tensor]:

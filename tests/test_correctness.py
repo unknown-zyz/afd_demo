@@ -48,26 +48,5 @@ class TestTensorComparison:
         assert metrics["max_abs_diff"] < 1e-4
 
 
-class TestModelValidation:
-    """Tests for model validation (requires model loading)."""
-    
-    @pytest.mark.skip(reason="Requires model download")
-    def test_baseline_model(self):
-        """Test that baseline model can be loaded and run."""
-        from src.utils.validation import BaselineModel
-        
-        model = BaselineModel(
-            model_name="Qwen/Qwen2-0.5B",  # Use smallest model for testing
-            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            dtype=torch.float32,
-        )
-        
-        input_ids = torch.randint(0, 1000, (1, 10))
-        output = model.forward(input_ids)
-        
-        assert output.shape[0] == 1
-        assert output.shape[1] == 10
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

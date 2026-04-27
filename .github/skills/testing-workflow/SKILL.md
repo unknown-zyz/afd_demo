@@ -80,7 +80,7 @@ bash .github/skills/testing-workflow/check_resources.sh
 ### 合并条件
 满足以下**全部条件**才可合并到 main：
 1. ✅ 单元测试全部通过：`pytest tests/ -v`
-2. ✅ 功能测试通过：`bash scripts/test_local.sh`
+2. ✅ 功能测试通过：`bash scripts/run_single.sh local 2 128 --tokens 5`
 3. ✅ 性能无回归：关键指标不低于 main 分支基准
 4. ✅ 性能有提升（如果是优化类变更）：加速比有可测量的改善
 
@@ -99,10 +99,9 @@ pytest tests/ -v
 
 ### 单机功能测试
 ```bash
-bash scripts/test_local.sh                    # 快速测试（5 tokens）
-bash scripts/test_local.sh 10 2               # 自定义：10 tokens, batch=2
-bash scripts/test_local.sh --timing           # 带 timing 数据
-bash scripts/test_local.sh --no-dbo           # 禁用 DBO（仅 AF 分离）
+bash scripts/run_single.sh local 2 128 --tokens 5              # 快速 prefill DBO
+bash scripts/run_single.sh local 2 128 --tokens 5 --no-dbo     # Serial baseline
+bash scripts/run_single.sh local 2 128 --tokens 5 --generate   # Decode DBO
 ```
 
 ### 单机实验
@@ -110,15 +109,14 @@ bash scripts/test_local.sh --no-dbo           # 禁用 DBO（仅 AF 分离）
 bash scripts/run_single.sh local <batch> <seq>              # DBO 模式
 bash scripts/run_single.sh local <batch> <seq> --no-dbo     # Serial 模式
 bash scripts/run_single.sh local <batch> <seq> --visualize  # 自动生成 pipeline 图
+bash scripts/run_single.sh local <batch> <seq> --generate --crosslayer
 ```
 
 ### 批量实验
 ```bash
-bash scripts/run_experiments.sh decode           # Decode 实验 (b1-b128)
-bash scripts/run_experiments.sh decode-large     # 大 batch Decode (b256+)
-bash scripts/run_experiments.sh prefill-batch    # Prefill batch 扩展
-bash scripts/run_experiments.sh prefill-seq      # Prefill seq 扩展
-bash scripts/run_experiments.sh all              # 全部实验
+bash scripts/run_experiment_matrix.sh
+bash scripts/run_experiment_matrix.sh --modes serial,prefill-dbo
+bash scripts/run_experiment_matrix.sh --dry-run --modes serial --batches 2 --seqs 128
 ```
 
 ### 多机测试
