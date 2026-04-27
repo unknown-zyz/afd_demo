@@ -60,6 +60,9 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     """
     加载并组织 timing 数据，提取指定范围的层。
     
+    自动对齐 ATT 和 FFN 进程的时钟差异（不同进程 perf_counter 基准不同）。
+    使用 A→F 通信边界作为锚点：ATT send_transfer 结束 ≈ FFN recv_wait 开始。
+    
     Args:
         attn_path: Attention timing JSON 文件路径
         ffn_path: FFN timing JSON 文件路径
@@ -68,12 +71,6 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     
     Returns:
         dict: 按泳道组织的事件数据
-        {
-            'A': [(start_ms, duration_ms, layer, mb), ...],
-            'A2F': [...],
-            'F': [...],
-            'F2A': [...],
-        }
     """
     with open(attn_path) as f:
         attn_data = json.load(f)
@@ -83,49 +80,89 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     
     end_layer = start_layer + num_layers
     
-    # 组织数据到各个泳道
+    # === Step 1: 计算 ATT-FFN 时钟偏移 ===
+    # 对齐原理：
+    #   观测量 = ffn_recv_end - attn_send_end (ffn 时钟 - att 时钟)
+    #   真实关系: ffn_recv_end_真 ≥ 数据到达_真 ≥ attn_send_end_真 + 传输延迟
+    #   所以 观测量 = 真实时钟偏移 + (ffn_recv_end - 数据到达) + 传输延迟 ≥ 真实偏移
+    #   取所有锚点中的最小值，是真实偏移的紧上界（误差 ≈ 传输延迟 ~0.1ms）
+    #   相比旧方法（依赖 recv_dur≈0 的假设）对 crosslayer 模式更鲁棒
+    
+    # Build lookup: (layer, mb) -> ATT send_transfer end time
+    attn_send_ends = {}
+    for event in attn_data['events']:
+        if event['type'] == 'send_transfer':
+            key = (event['layer'], event['mb'])
+            attn_send_ends[key] = event['start'] * 1000 + event['duration_ms']
+    
+    # Build lookup: (layer, mb) -> FFN recv_wait end time (data actually arrived)
+    ffn_recv_ends = {}
+    for event in ffn_data['events']:
+        if event['type'] == 'recv_wait':
+            key = (event['layer'], event['mb'])
+            ffn_recv_ends[key] = event['start'] * 1000 + event['duration_ms']
+    
+    # Collect offsets from ALL anchors in visualization range (no recv_dur filter needed)
+    offsets = []
+    for layer in range(start_layer, end_layer):
+        for mb in range(2):  # MB 0 and 1
+            key = (layer, mb)
+            if key in attn_send_ends and key in ffn_recv_ends:
+                offsets.append(ffn_recv_ends[key] - attn_send_ends[key])
+    
+    if offsets:
+        # Use MIN (tightest upper bound on true clock offset)
+        clock_offset = min(offsets)
+        print(f"  Clock offset (FFN-ATT): {clock_offset:.2f}ms (min of {len(offsets)} anchors, range [{min(offsets):.2f}, {max(offsets):.2f}])")
+    else:
+        clock_offset = 0
+        print(f"  Warning: No clock anchors found, using offset=0")
+    
+    # === Step 2: 提取事件到各泳道 ===
     lanes_data = {
         'A': [],      # Attention compute
-        'A2F': [],    # Attention send
+        'A2F': [],    # Attention send (A→F)
         'F': [],      # FFN compute
-        'F2A': [],    # FFN send
+        'F2A': [],    # FFN send (F→A)
     }
     
-    # 找到起始时间偏移 (使图从 0 开始)
+    # 找到起始时间偏移 (使图从 0 开始) — 只用 ATT 事件确定 (单一时钟)
     min_start = float('inf')
     for event in attn_data['events']:
         if start_layer <= event['layer'] < end_layer:
             min_start = min(min_start, event['start'] * 1000)
+    # Also consider aligned FFN events
     for event in ffn_data['events']:
         if start_layer <= event['layer'] < end_layer:
-            min_start = min(min_start, event['start'] * 1000)
+            aligned_start = event['start'] * 1000 - clock_offset
+            min_start = min(min_start, aligned_start)
     
     if min_start == float('inf'):
         min_start = 0
     
-    # 提取 Attention 节点事件
+    # 提取 Attention 节点事件 (使用 ATT 时钟，无需调整)
     for event in attn_data['events']:
         layer = event['layer']
         if layer < start_layer or layer >= end_layer:
             continue
         
-        start_ms = event['start'] * 1000 - min_start  # 相对时间
+        start_ms = event['start'] * 1000 - min_start
         duration_ms = event['duration_ms']
         mb = event['mb']
-        display_layer = layer - start_layer  # 显示用的层号 (从 0 开始)
+        display_layer = layer - start_layer
         
         if event['type'] == 'attn_compute':
             lanes_data['A'].append((start_ms, duration_ms, display_layer, mb))
         elif event['type'] == 'send_transfer':
             lanes_data['A2F'].append((start_ms, duration_ms, display_layer, mb))
     
-    # 提取 FFN 节点事件
+    # 提取 FFN 节点事件 (应用时钟偏移对齐到 ATT 时间线)
     for event in ffn_data['events']:
         layer = event['layer']
         if layer < start_layer or layer >= end_layer:
             continue
         
-        start_ms = event['start'] * 1000 - min_start
+        start_ms = event['start'] * 1000 - clock_offset - min_start  # Align to ATT clock
         duration_ms = event['duration_ms']
         mb = event['mb']
         display_layer = layer - start_layer
@@ -140,7 +177,8 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
 
 def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict, 
                   output_path: str, num_layers: int = 2, start_layer: int = 1,
-                  serial_time_override: float = None):
+                  serial_baseline_ms: float = None, serial_baseline_label: str = None,
+                  dbo_total_ms: float = None, mode: str = None):
     """
     绘制 4 泳道 pipeline 图。
     
@@ -151,6 +189,10 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         output_path: 输出图片路径
         num_layers: 显示的层数
         start_layer: 原始数据中的起始层号
+        serial_baseline_ms: 与 DBO 对比的串行基线 (mode-matched: prefill_ms or decode_step_ms)
+        serial_baseline_label: 可选标签 (如 "prefill" / "decode_step")
+        dbo_total_ms: DBO 端到端时间 (全模型, mode-matched); 默认取 attn JSON total_time_ms
+        mode: "prefill" 或 "decode" (仅用于标题显示)
     """
     fig, ax = plt.subplots(figsize=(14, 6))
     
@@ -245,30 +287,35 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     # 总通信时间
     total_comm = sum(a2f_times + f2a_times)
     
-    # 串行时间：优先使用实测值，否则用估算值
-    estimated_serial = attn_compute + ffn_compute + total_comm
-    if serial_time_override and serial_time_override > 0:
-        serial_time = serial_time_override
-        serial_label = f"Serial: {serial_time:.1f}ms (measured)"
+    # ─── Speedup: mode-matched baseline vs DBO full-model time ───────────────
+    # DBO full-model time (one full prefill pass OR one full decode step)
+    if dbo_total_ms is not None and dbo_total_ms > 0:
+        dbo_full = dbo_total_ms
     else:
-        serial_time = estimated_serial
-        serial_label = f"Serial: {serial_time:.1f}ms (est.)"
-    
-    # Speedup vs serial
-    if serial_time > 0 and total_inference_time > 0:
-        speedup = serial_time / total_inference_time
+        dbo_full = max(attn_data.get('total_time_ms', 0), ffn_data.get('total_time_ms', 0))
+
+    unit = "prefill" if mode == "prefill" else ("step" if mode == "decode" else "run")
+    dbo_label = f"DBO: {dbo_full:.1f}ms/{unit}"
+
+    if serial_baseline_ms and serial_baseline_ms > 0:
+        tag = serial_baseline_label or unit
+        serial_label = f"Serial: {serial_baseline_ms:.1f}ms/{tag}"
+        speedup_str = f"Speedup: {serial_baseline_ms / dbo_full:.2f}x" if dbo_full > 0 else "Speedup: N/A"
     else:
-        speedup = 1.0
-    
-    # Per-layer averages
+        # No mode-matched baseline available → refuse to show a misleading number.
+        serial_label = "Serial: N/A"
+        speedup_str = "Speedup: N/A"
+
+    # Keep legacy vars for per-layer display block below.
     avg_attn = attn_compute / num_layers if num_layers > 0 else 0
     avg_ffn = ffn_compute / num_layers if num_layers > 0 else 0
     
     # 构建标题和统计信息 (3 行)
     end_layer = start_layer + num_layers - 1
     layer_note = " (L0 skipped)" if start_layer > 0 else ""
-    line1 = f'DBO Pipeline — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
-    line2 = f"DBO: {total_inference_time:.1f}ms (E2E) | {serial_label} | Speedup: {speedup:.2f}x"
+    mode_tag = f" [{mode}]" if mode else ""
+    line1 = f'DBO Pipeline{mode_tag} — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
+    line2 = f"{dbo_label} | {serial_label} | {speedup_str}"
     line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
     
     ax.set_title(f'{line1}\n{line2}\n{line3}', fontsize=10, pad=10)
@@ -311,8 +358,8 @@ def main():
     parser.add_argument(
         '--start-layer',
         type=int,
-        default=1,
-        help='Starting layer to visualize (default: 1, skip Layer 0 warmup)'
+        default=0,
+        help='Starting layer to visualize (default: 0, include Layer 0)'
     )
     parser.add_argument(
         '--num-layers',
@@ -324,33 +371,62 @@ def main():
         '--serial-time',
         type=float,
         default=None,
-        help='Measured serial (no-DBO) time in ms for speedup calculation'
+        help='Measured serial baseline in ms (bypasses cache JSON lookup)'
     )
     parser.add_argument(
         '--serial-timing',
         default=None,
-        help='Path to serial (no-DBO) attention timing JSON to read total_time_ms'
+        help='Path to serial cache JSON (must contain prefill_ms and/or decode_step_ms)'
+    )
+    parser.add_argument(
+        '--mode',
+        choices=['prefill', 'decode', 'auto'],
+        default='auto',
+        help='Comparison mode. auto: infer from --attn-timing path (prefill-dbo/decode-dbo).'
     )
     
     args = parser.parse_args()
-    
-    # 从 serial timing JSON 读取实测时间（优先级低于 --serial-time）
-    if args.serial_time is None and args.serial_timing and Path(args.serial_timing).exists():
+
+    # ── Auto-detect mode from attn-timing path ──────────────────────────────
+    if args.mode == 'auto':
+        p = str(args.attn_timing).lower()
+        if 'prefill-dbo' in p or 'prefill_dbo' in p:
+            args.mode = 'prefill'
+        elif 'decode-dbo' in p or 'decode_dbo' in p:
+            args.mode = 'decode'
+        else:
+            args.mode = None  # unknown; no speedup
+            print("  Warning: could not infer mode from path; pass --mode explicitly.")
+
+    # ── Resolve serial baseline from cache JSON (mode-matched) ──────────────
+    serial_baseline_ms = args.serial_time
+    serial_baseline_label = None
+    if serial_baseline_ms is None and args.serial_timing and Path(args.serial_timing).exists():
         try:
             with open(args.serial_timing) as f:
-                serial_data = json.load(f)
-            total_ms = serial_data.get('total_time_ms')
-            max_tokens = serial_data.get('max_new_tokens', 1)
-            if total_ms:
-                if max_tokens > 1:
-                    # Decode: per-step time
-                    args.serial_time = total_ms / max_tokens
-                    print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms per step, from {total_ms:.0f}ms/{max_tokens}tok)")
-                else:
-                    args.serial_time = total_ms
-                    print(f"  Serial timing: {args.serial_timing} ({args.serial_time:.1f}ms)")
+                cache = json.load(f)
+            if args.mode == 'prefill':
+                serial_baseline_ms = cache.get('prefill_ms')
+                serial_baseline_label = 'prefill'
+            elif args.mode == 'decode':
+                serial_baseline_ms = cache.get('decode_step_ms')
+                serial_baseline_label = 'step'
+            if serial_baseline_ms is None:
+                print(f"  Warning: '{args.mode}' baseline missing from {args.serial_timing}; "
+                      f"Speedup will be N/A. Keys present: {list(cache.keys())}")
+            else:
+                print(f"  Serial {args.mode} baseline: {serial_baseline_ms:.1f}ms  ({args.serial_timing})")
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
+
+    # ── DBO total time (full model, one step/pass) from attn JSON ──────────
+    dbo_total_ms = None
+    try:
+        with open(args.attn_timing) as f:
+            _attn = json.load(f)
+        dbo_total_ms = _attn.get('total_time_ms')
+    except Exception:
+        pass
     
     # 检查输入文件
     if not Path(args.attn_timing).exists():
@@ -383,7 +459,10 @@ def main():
     print(f"\nGenerating visualization...")
     plot_pipeline(lanes_data, attn_data, ffn_data, args.output, 
                   args.num_layers, start_layer,
-                  serial_time_override=args.serial_time)
+                  serial_baseline_ms=serial_baseline_ms,
+                  serial_baseline_label=serial_baseline_label,
+                  dbo_total_ms=dbo_total_ms,
+                  mode=args.mode)
     
     print(f"\n✓ Done! View the result at: {args.output}")
 

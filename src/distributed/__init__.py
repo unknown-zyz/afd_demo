@@ -53,7 +53,10 @@ class DistributedContext:
             return
         self.config: Optional[DistributedConfig] = None
         self._initialized = False
-        self._comm_group = None
+        self._a2f_group = None   # ATT→FFN directional group
+        self._f2a_group = None   # FFN→ATT directional group
+        self._warmup_result: Optional[dict] = None
+        self._keepalive = None
         
     def initialize(self, config: Optional[DistributedConfig] = None) -> None:
         """
@@ -100,10 +103,10 @@ class DistributedContext:
                 device_id=device_id,
             )
         
-        # Create communication group between attention and FFN nodes
-        self._comm_group = dist.new_group(
-            ranks=[config.attn_node_rank, config.ffn_node_rank]
-        )
+        # Create directional NCCL process groups lazily (only when DBO is used).
+        # See a2f_group / f2a_group properties below.
+        # Store comm_ranks for lazy creation.
+        self._comm_ranks = [config.attn_node_rank, config.ffn_node_rank]
         
         self._initialized = True
         logger.info(
@@ -178,10 +181,60 @@ class DistributedContext:
             return self.config.attn_node_rank
     
     @property
-    def comm_group(self):
-        """Get the communication group between attention and FFN."""
-        return self._comm_group
+    def a2f_group(self):
+        """Get the ATT→FFN directional NCCL group (lazy init)."""
+        if self._a2f_group is None:
+            self._init_directional_groups()
+        return self._a2f_group
     
+    @property
+    def f2a_group(self):
+        """Get the FFN→ATT directional NCCL group (lazy init)."""
+        if self._f2a_group is None:
+            self._init_directional_groups()
+        return self._f2a_group
+    
+    def _init_directional_groups(self):
+        """Create directional NCCL groups for cross-layer pipelining.
+        
+        Called lazily on first access to a2f_group or f2a_group.
+        Directional groups use separate NCCL communicators to break FIFO:
+          - a2f_group: ATT isend → FFN irecv (Attention-to-FFN direction)
+          - f2a_group: FFN isend → ATT irecv (FFN-to-Attention direction)
+        """
+        logger.info("Creating directional NCCL groups (a2f, f2a)...")
+        self._a2f_group = dist.new_group(ranks=self._comm_ranks)
+        self._f2a_group = dist.new_group(ranks=self._comm_ranks)
+        # Warm up the new groups to avoid cold-start latency
+        from .warmup import warmup_p2p
+        warmup_p2p(
+            self.peer_rank, self.device, num_rounds=3,
+            extra_groups=[self._a2f_group, self._f2a_group],
+        )
+        logger.info("Directional NCCL groups created and warmed up")
+    
+    def warmup(self, num_rounds=3, keepalive=False, keepalive_interval=0.5):
+        """预热 P2P 通道并可选启动保活。"""
+        from .warmup import warmup_p2p, P2PKeepalive
+
+        # Only warm up directional groups if they've been created
+        extra = []
+        if self._a2f_group is not None and self._f2a_group is not None:
+            extra = [self._a2f_group, self._f2a_group]
+
+        result = warmup_p2p(
+            self.peer_rank, self.device, num_rounds=num_rounds,
+            extra_groups=extra,
+        )
+        self._warmup_result = result
+
+        if keepalive:
+            self._keepalive = P2PKeepalive(
+                self.peer_rank, self.device, interval_s=keepalive_interval
+            )
+            self._keepalive.start()
+        return result
+
     def barrier(self) -> None:
         """Synchronize all processes."""
         if dist.is_initialized():
@@ -189,6 +242,9 @@ class DistributedContext:
     
     def cleanup(self) -> None:
         """Cleanup distributed resources."""
+        if self._keepalive is not None:
+            self._keepalive.stop()
+            self._keepalive = None
         if dist.is_initialized():
             backend = dist.get_backend()
             # Workaround: PyTorch 2.7 + NCCL 2.26 may abort on explicit destroy_process_group()
@@ -200,7 +256,8 @@ class DistributedContext:
                 )
             else:
                 dist.destroy_process_group()
-            self._comm_group = None
+            self._a2f_group = None
+            self._f2a_group = None
         self._initialized = False
         logger.info("Distributed context cleaned up")
 

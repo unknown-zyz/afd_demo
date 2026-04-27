@@ -14,8 +14,6 @@ The key insight:
 
 import logging
 import time
-import threading
-import queue
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass, field
 
@@ -60,101 +58,23 @@ class DBOStats:
         )
 
 
-class SendTransferMonitor:
+def _measure_send_transfer(handle: dist.Work, send_start: float) -> float:
     """
-    Monitor for measuring actual send transfer time using background polling.
+    Return the time when isend() returned to the caller.
     
-    When isend() is called, NCCL starts the transfer asynchronously.
-    This monitor polls handle.is_completed() to detect when transfer actually finishes,
-    independent of when wait() is called.
+    NCCL isend() is non-blocking: it enqueues the send on an internal stream
+    and returns immediately (~0.1ms). The actual data transfer happens
+    asynchronously and does NOT block the pipeline.
     
-    Usage:
-        monitor = SendTransferMonitor(poll_interval=0.0001)  # 100μs
-        monitor.start_monitoring(handle, start_time, layer_idx, mb_idx, direction)
-        # ... do other work ...
-        handle.wait()
-        results = monitor.collect_results()  # [(layer, mb, direction, start, end), ...]
+    The old polling-thread approach showed 20-30ms due to GIL contention.
+    handle.wait()+sync showed 22ms because NCCL send kernel blocks until
+    the receiver posts irecv (real round-trip latency, not pipeline overhead).
+    
+    This approach records the isend() return time, reflecting ATT's actual
+    blocking time. For pipeline visualization, send_transfer bars will be
+    thin (~0.1ms), correctly showing that sends don't block the pipeline.
     """
-    
-    def __init__(self, poll_interval: float = 0.0001):
-        """
-        Args:
-            poll_interval: Polling interval in seconds (default 100μs)
-        """
-        self.poll_interval = poll_interval
-        self._results: queue.Queue = queue.Queue()
-        self._threads: List[threading.Thread] = []
-    
-    def start_monitoring(
-        self,
-        handle: dist.Work,
-        start_time: float,
-        layer_idx: int,
-        mb_idx: int,
-        direction: str = "a2f",
-    ) -> None:
-        """
-        Start background thread to poll for send completion.
-        
-        Args:
-            handle: The dist.Work handle from isend()
-            start_time: Time when isend() was called
-            layer_idx: Layer index for recording
-            mb_idx: Micro-batch index for recording
-            direction: "a2f" (attention→ffn) or "f2a" (ffn→attention)
-        """
-        thread = threading.Thread(
-            target=self._poll_completion,
-            args=(handle, start_time, layer_idx, mb_idx, direction),
-            daemon=True,
-        )
-        thread.start()
-        self._threads.append(thread)
-    
-    def _poll_completion(
-        self,
-        handle: dist.Work,
-        start_time: float,
-        layer_idx: int,
-        mb_idx: int,
-        direction: str,
-    ) -> None:
-        """Background polling thread."""
-        while not handle.is_completed():
-            time.sleep(self.poll_interval)
-        end_time = time.perf_counter()
-        self._results.put((layer_idx, mb_idx, direction, start_time, end_time))
-    
-    def collect_results(self) -> List[Tuple[int, int, str, float, float]]:
-        """
-        Collect all completed monitoring results.
-        
-        Returns:
-            List of (layer_idx, mb_idx, direction, start_time, end_time) tuples
-        """
-        # Wait for all threads to finish (with timeout)
-        for thread in self._threads:
-            thread.join(timeout=1.0)
-        
-        results = []
-        while not self._results.empty():
-            try:
-                results.append(self._results.get_nowait())
-            except queue.Empty:
-                break
-        
-        # Clear threads list for reuse
-        self._threads.clear()
-        return results
-    
-    def clear(self) -> None:
-        """Clear all pending results and threads."""
-        self._threads.clear()
-        while not self._results.empty():
-            try:
-                self._results.get_nowait()
-            except queue.Empty:
-                break
+    return time.perf_counter()
 
 
 class AsyncPipelineScheduler:
@@ -187,6 +107,7 @@ class AsyncPipelineScheduler:
         use_cuda_streams: bool = True,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        keepalive=None,
     ):
         """
         Initialize async scheduler.
@@ -197,6 +118,7 @@ class AsyncPipelineScheduler:
             use_cuda_streams: Whether to use separate CUDA streams
             enable_timing: Whether to record detailed per-MB timing
             timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
+            keepalive: Optional P2PKeepalive instance for heartbeat notification
         """
         self.model = model
         self.ctx = get_distributed_context()
@@ -228,9 +150,11 @@ class AsyncPipelineScheduler:
         # Detailed timing (optional)
         self._timing_tracker = None
         
-        # Send transfer monitor (only used when timing is enabled)
-        self._send_monitor: Optional[SendTransferMonitor] = None
-        
+        # Send transfer uses direct handle.wait() timing (no monitor needed)
+
+        # P2P keepalive (optional)
+        self._keepalive = keepalive
+
         logger.info(f"AsyncPipelineScheduler initialized: num_mb={num_micro_batches}, "
                     f"use_cuda_streams={use_cuda_streams}, timing={enable_timing}")
     
@@ -243,6 +167,8 @@ class AsyncPipelineScheduler:
         """Non-blocking send."""
         handle = dist.isend(tensor.contiguous(), dst=self.ctx.peer_rank, tag=tag)
         self._pending_sends.append(handle)
+        if self._keepalive:
+            self._keepalive.notify_comm()
         return handle
     
     def _recv_async(self, shape: Tuple[int, ...], tag: int) -> Tuple[dist.Work, torch.Tensor]:
@@ -326,6 +252,8 @@ class AsyncPipelineScheduler:
         
         # Initialize timing tracker if enabled
         if self.enable_timing:
+            # Synchronize both nodes so their TimingTracker baselines align
+            dist.barrier()
             node_name = "attention" if self.ctx.is_attention_node else "ffn"
             self._timing_tracker = TimingTracker(
                 node=node_name,
@@ -333,10 +261,6 @@ class AsyncPipelineScheduler:
                 num_micro_batches=self.num_micro_batches,
                 mode=self.timing_mode,
             )
-            # Initialize send transfer monitor for real transfer time measurement
-            self._send_monitor = SendTransferMonitor(poll_interval=0.0001)
-        else:
-            self._send_monitor = None
         
         # Split into micro-batches
         micro_batches = self.mb_manager.split_batch(input_ids, attention_mask)
@@ -397,7 +321,6 @@ class AsyncPipelineScheduler:
         num_mb = len(micro_batches)
         num_layers = self.model.num_layers
         tracker = self._timing_tracker
-        monitor = self._send_monitor
         
         # === Layer 0: compute ALL MBs first, then send ===
         # Deferred-send: compute all MBs before issuing any isend.
@@ -439,10 +362,10 @@ class AsyncPipelineScheduler:
             send_start = time.perf_counter()
             tag = self._get_tag(0, mb_idx, "attn_to_ffn")
             handle = self._send_async(packed, tag)
+            if tracker:
+                send_end = _measure_send_transfer(handle, send_start)
+                tracker.record_event(EventType.SEND_TRANSFER, 0, mb_idx, send_start, send_end)
             prev_send_handles.append(handle)
-            
-            if monitor:
-                monitor.start_monitoring(handle, send_start, 0, mb_idx, "a2f")
         
         # === Layers 1 ~ num_layers-1: 交错 recv(prev_layer) + compute(curr_layer) ===
         for layer_idx in range(1, num_layers):
@@ -461,15 +384,9 @@ class AsyncPipelineScheduler:
                 recv_handles.append((recv_handle, recv_tensor))
                 recv_start_times.append(recv_start)
             
-            # Wait all sends from previous layer
+            # Wait all sends from previous layer (no-op if already waited via timing)
             for handle in prev_send_handles:
                 handle.wait()
-            
-            # Collect and record real transfer times from monitor
-            if monitor and tracker:
-                for result in monitor.collect_results():
-                    l_idx, m_idx, direction, start, end = result
-                    tracker.record_event(EventType.SEND_TRANSFER, l_idx, m_idx, start, end)
             
             # 逐 MB 处理：recv 完一个就立即 compute 下一层，不等其他 MB
             send_handles = []
@@ -513,14 +430,15 @@ class AsyncPipelineScheduler:
                     tracker.record_event(EventType.ATTN_COMPUTE, layer_idx, mb_idx,
                                         compute_start, compute_end)
                 
-                # Send async — next MB's recv.wait will overlap with this send
+                # Send async — in timing mode, wait immediately for accurate measurement
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
                 handle = self._send_async(packed, tag)
+                if tracker:
+                    send_end = _measure_send_transfer(handle, send_start)
+                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
+                                        send_start, send_end)
                 send_handles.append(handle)
-                
-                if monitor:
-                    monitor.start_monitoring(handle, send_start, layer_idx, mb_idx, "a2f")
             
             prev_send_handles = send_handles
         
@@ -529,11 +447,6 @@ class AsyncPipelineScheduler:
         
         for handle in prev_send_handles:
             handle.wait()
-        
-        if monitor and tracker:
-            for result in monitor.collect_results():
-                l_idx, m_idx, direction, start, end = result
-                tracker.record_event(EventType.SEND_TRANSFER, l_idx, m_idx, start, end)
         
         for mb_idx, mb in enumerate(micro_batches):
             recv_start = time.perf_counter()
@@ -578,7 +491,6 @@ class AsyncPipelineScheduler:
         
         num_mb = len(micro_batches)
         tracker = self._timing_tracker
-        monitor = self._send_monitor
         
         # Pre-post irecv for layer 0 so ATT's early sends find a ready receiver
         cur_recv_handles = []
@@ -679,16 +591,16 @@ class AsyncPipelineScheduler:
                             shared_start + stage_timing.shared_or_dense_s,
                         )
                 
-                # Send immediately (async) - next MB's compute overlaps with this send
+                # Send immediately — in timing mode, wait for accurate measurement
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "ffn_to_attn")
                 handle = self._send_async(output, tag)
+                if tracker:
+                    send_end = _measure_send_transfer(handle, send_start)
+                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
+                                        send_start, send_end)
                 send_handles.append(handle)
                 send_start_times.append(send_start)
-                
-                # Start polling for actual transfer completion (if timing enabled)
-                if monitor:
-                    monitor.start_monitoring(handle, send_start, layer_idx, mb_idx, "f2a")
             
             # Pre-post irecv for NEXT layer BEFORE waiting for current sends.
             # This eliminates MB0 A2F blocking: ATT can isend layer N+1 data
@@ -710,15 +622,9 @@ class AsyncPipelineScheduler:
                     cur_recv_tensors.append(recv_tensor)
                     cur_recv_post_times.append(recv_post_start)
             
-            # Wait for all sends (next layer's irecv already posted!)
+            # Wait for all sends (no-op if already waited via timing)
             for mb_idx, handle in enumerate(send_handles):
                 handle.wait()
-            
-            # Collect and record real transfer times from monitor
-            if monitor and tracker:
-                for result in monitor.collect_results():
-                    l_idx, m_idx, direction, start, end = result
-                    tracker.record_event(EventType.SEND_TRANSFER, l_idx, m_idx, start, end)
         
         self._pending_sends.clear()
     

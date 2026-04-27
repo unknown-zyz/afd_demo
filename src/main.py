@@ -54,7 +54,7 @@ def setup_logging(verbose: bool = False):
         "httpx",
         "httpcore",
         "urllib3",
-        "src.distributed",
+        "src.distributed.warmup",
     ]:
         logging.getLogger(name).setLevel(logging.WARNING if verbose else logging.ERROR)
     for name in ["src.model", "src.pipeline"]:
@@ -118,6 +118,9 @@ def parse_args():
                         help="Disable DBO for both prefill and decode (AF separation only)")
     parser.add_argument("--num-micro-batches", type=int, default=2,
                         help="Number of micro-batches for DBO pipeline")
+    parser.add_argument("--crosslayer", action="store_true",
+                        help="Enable cross-layer micro-batch pipelining in decode DBO "
+                             "(default: off; post next-layer irecvs before draining current-layer sends)")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -132,7 +135,17 @@ def parse_args():
                         help="Top-p (nucleus) sampling")
     parser.add_argument("--greedy", action="store_true",
                         help="Use greedy decoding instead of sampling")
-    
+
+    # P2P warmup options
+    parser.add_argument('--warmup-p2p', action='store_true',
+                        help='Warmup NCCL P2P before inference')
+    parser.add_argument('--warmup-rounds', type=int, default=3,
+                        help='Number of warmup rounds')
+    parser.add_argument('--keepalive', action='store_true',
+                        help='Enable P2P keepalive heartbeats')
+    parser.add_argument('--keepalive-interval', type=float, default=0.5,
+                        help='Keepalive interval in seconds')
+
     return parser.parse_args()
 
 
@@ -205,7 +218,18 @@ def run_inference_demo(args):
         print_memory_stats()
     
     ctx.barrier()
-    
+
+    # P2P warmup (optional, to eliminate NCCL cold-start latency)
+    if args.warmup_p2p:
+        warmup_result = ctx.warmup(
+            num_rounds=args.warmup_rounds,
+            keepalive=args.keepalive,
+            keepalive_interval=getattr(args, 'keepalive_interval', 0.5),
+        )
+        if ctx.is_attention_node:
+            logger.info(f"P2P warmup: cold={warmup_result['cold_latency_ms']:.3f}ms, "
+                        f"warm={warmup_result['warm_latency_ms']:.3f}ms")
+
     # Tokenizer (attention node only)
     tokenizer = None
     if ctx.is_attention_node:
@@ -237,6 +261,11 @@ def run_inference_demo(args):
     
     def run_with_scheduler(scheduler):
         """Run inference with timing."""
+        # Pause keepalive before any NCCL ops to prevent deadlock between
+        # heartbeat P2P and collective operations (barrier/broadcast).
+        _keepalive = getattr(ctx, '_keepalive', None)
+        if _keepalive and hasattr(_keepalive, 'pause'):
+            _keepalive.pause()
         ctx.barrier()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -245,6 +274,8 @@ def run_inference_demo(args):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
+        if _keepalive and hasattr(_keepalive, 'resume'):
+            _keepalive.resume()
         return output, elapsed
     
     # Select scheduler based on --no-dbo flag
@@ -254,6 +285,7 @@ def run_inference_demo(args):
             model=model, num_micro_batches=args.num_micro_batches,
             use_cuda_streams=True, enable_timing=args.timing,
             timing_mode=args.timing_mode,
+            keepalive=getattr(ctx, '_keepalive', None),
         )
         scheduler_name = "DBO"
     else:
@@ -343,7 +375,18 @@ def run_generation_demo(args):
     )
     
     ctx.barrier()
-    
+
+    # P2P warmup (optional, to eliminate NCCL cold-start latency)
+    if args.warmup_p2p:
+        warmup_result = ctx.warmup(
+            num_rounds=args.warmup_rounds,
+            keepalive=args.keepalive,
+            keepalive_interval=getattr(args, 'keepalive_interval', 0.5),
+        )
+        if ctx.is_attention_node:
+            logger.info(f"P2P warmup: cold={warmup_result['cold_latency_ms']:.3f}ms, "
+                        f"warm={warmup_result['warm_latency_ms']:.3f}ms")
+
     # Tokenizer
     tokenizer = None
     if ctx.is_attention_node:
@@ -369,6 +412,10 @@ def run_generation_demo(args):
         meta_tensor = torch.zeros(2, dtype=torch.long, device=device)
     
     import torch.distributed as dist
+    # Pause keepalive before any NCCL collective/P2P ops
+    _keepalive_gen = getattr(ctx, '_keepalive', None)
+    if _keepalive_gen and hasattr(_keepalive_gen, 'pause'):
+        _keepalive_gen.pause()
     dist.broadcast(meta_tensor, src=0)
     batch_size = meta_tensor[0].item()
     prompt_len = meta_tensor[1].item()
@@ -397,6 +444,7 @@ def run_generation_demo(args):
         num_decode_micro_batches=args.num_micro_batches,
         enable_timing=args.timing,
         timing_mode=args.timing_mode,
+        decode_use_crosslayer=args.crosslayer,
     )
     
     if torch.cuda.is_available():
