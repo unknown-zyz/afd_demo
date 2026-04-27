@@ -141,10 +141,6 @@ def parse_args():
                         help='Warmup NCCL P2P before inference')
     parser.add_argument('--warmup-rounds', type=int, default=3,
                         help='Number of warmup rounds')
-    parser.add_argument('--keepalive', action='store_true',
-                        help='Enable P2P keepalive heartbeats')
-    parser.add_argument('--keepalive-interval', type=float, default=0.5,
-                        help='Keepalive interval in seconds')
 
     return parser.parse_args()
 
@@ -223,8 +219,6 @@ def run_inference_demo(args):
     if args.warmup_p2p:
         warmup_result = ctx.warmup(
             num_rounds=args.warmup_rounds,
-            keepalive=args.keepalive,
-            keepalive_interval=getattr(args, 'keepalive_interval', 0.5),
         )
         if ctx.is_attention_node:
             logger.info(f"P2P warmup: cold={warmup_result['cold_latency_ms']:.3f}ms, "
@@ -261,11 +255,6 @@ def run_inference_demo(args):
     
     def run_with_scheduler(scheduler):
         """Run inference with timing."""
-        # Pause keepalive before any NCCL ops to prevent deadlock between
-        # heartbeat P2P and collective operations (barrier/broadcast).
-        _keepalive = getattr(ctx, '_keepalive', None)
-        if _keepalive and hasattr(_keepalive, 'pause'):
-            _keepalive.pause()
         ctx.barrier()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -274,8 +263,6 @@ def run_inference_demo(args):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
-        if _keepalive and hasattr(_keepalive, 'resume'):
-            _keepalive.resume()
         return output, elapsed
     
     # Select scheduler based on --no-dbo flag
@@ -285,7 +272,6 @@ def run_inference_demo(args):
             model=model, num_micro_batches=args.num_micro_batches,
             use_cuda_streams=True, enable_timing=args.timing,
             timing_mode=args.timing_mode,
-            keepalive=getattr(ctx, '_keepalive', None),
         )
         scheduler_name = "DBO"
     else:
@@ -380,8 +366,6 @@ def run_generation_demo(args):
     if args.warmup_p2p:
         warmup_result = ctx.warmup(
             num_rounds=args.warmup_rounds,
-            keepalive=args.keepalive,
-            keepalive_interval=getattr(args, 'keepalive_interval', 0.5),
         )
         if ctx.is_attention_node:
             logger.info(f"P2P warmup: cold={warmup_result['cold_latency_ms']:.3f}ms, "
@@ -412,10 +396,6 @@ def run_generation_demo(args):
         meta_tensor = torch.zeros(2, dtype=torch.long, device=device)
     
     import torch.distributed as dist
-    # Pause keepalive before any NCCL collective/P2P ops
-    _keepalive_gen = getattr(ctx, '_keepalive', None)
-    if _keepalive_gen and hasattr(_keepalive_gen, 'pause'):
-        _keepalive_gen.pause()
     dist.broadcast(meta_tensor, src=0)
     batch_size = meta_tensor[0].item()
     prompt_len = meta_tensor[1].item()

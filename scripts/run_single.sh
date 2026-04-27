@@ -34,6 +34,28 @@
 cd "$(dirname "$0")/.."
 source venv/bin/activate
 
+show_usage() {
+    cat <<'EOF'
+Usage: ./scripts/run_single.sh <local|multinode> <batch> <seq> [options]
+
+Arguments:
+  deployment        local (single machine) or multinode
+  batch             Batch size
+  seq               Prefill sequence length
+
+Options:
+  --tokens N        Number of generated tokens (default: 5)
+  --no-dbo          Disable DBO and run serial baseline
+  --visualize       Generate pipeline visualization after the run
+  --verbose         Enable verbose Python logging
+  --generate        Enable autoregressive decode (default: prefill only)
+  --warmup-p2p      Run untimed NCCL P2P warmup before timing
+  --warmup-rounds N Number of warmup rounds (default: 3)
+  --crosslayer      Enable decode cross-layer pipeline
+  -h, --help        Show this help message
+EOF
+}
+
 # Avoid CUDA memory fragmentation on tight-memory GPUs (V100-32GB)
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # NCCL buffer tuning for DBO pipeline:
@@ -46,14 +68,18 @@ export NCCL_BUFFSIZE=33554432
 export NCCL_NCHANNELS_PER_NET_PEER=1
 
 # ── Positional arguments ──────────────────────────────────────────
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    show_usage
+    exit 0
+fi
+
 DEPLOYMENT="$1"
 BATCH="$2"
 SEQ="$3"
 shift 3 2>/dev/null || true
 
 if [ -z "$DEPLOYMENT" ] || [ -z "$BATCH" ] || [ -z "$SEQ" ]; then
-    echo "Usage: $0 <local|multinode> <batch> <seq> [options]"
-    echo "Run '$0 --help' or see header comments for details."
+    show_usage
     exit 1
 fi
 
@@ -65,8 +91,6 @@ VERBOSE=false
 GENERATE=false
 WARMUP_P2P=false
 WARMUP_ROUNDS=3
-KEEPALIVE=false
-KEEPALIVE_INTERVAL=0.5
 CROSSLAYER=false
 
 while [ $# -gt 0 ]; do
@@ -97,14 +121,6 @@ while [ $# -gt 0 ]; do
             ;;
         --warmup-rounds)
             WARMUP_ROUNDS="$2"
-            shift 2
-            ;;
-        --keepalive)
-            KEEPALIVE=true
-            shift
-            ;;
-        --keepalive-interval)
-            KEEPALIVE_INTERVAL="$2"
             shift 2
             ;;
         --crosslayer)
@@ -147,9 +163,6 @@ WARMUP_FLAGS=""
 if [ "$WARMUP_P2P" = true ]; then
     WARMUP_FLAGS="--warmup-p2p --warmup-rounds $WARMUP_ROUNDS"
     SUFFIX="warmup_${SUFFIX}"
-fi
-if [ "$KEEPALIVE" = true ]; then
-    WARMUP_FLAGS="$WARMUP_FLAGS --keepalive --keepalive-interval $KEEPALIVE_INTERVAL"
 fi
 
 CROSSLAYER_FLAG=""

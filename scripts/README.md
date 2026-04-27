@@ -1,26 +1,33 @@
-# 脚本目录
+# Scripts
 
-## 文件
+| 脚本 | 用途 |
+|---|---|
+| `run_single.sh` | 运行单个配置：local/multinode、serial/prefill-dbo/decode-dbo/crosslayer |
+| `run_experiment_matrix.sh` | 批量扫描 batch × seq × mode，并生成 summary CSV |
+| `run_node.sh` | 手动启动单个 Attention 或 FFN 节点 |
+| `gen_experiment_report.py` | 从 attention/ffn timing JSON 生成 markdown 报告 |
+| `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 4 泳道 pipeline Gantt 图 |
+| `plot_all_pipelines.py` | 批量扫描结果目录并生成所有可视化图 |
+| `capture_serial_prefill.sh` | 为 serial cache 补充 `prefill_ms` / `decode_step_ms` |
 
-| 脚本 | 功能 |
-|------|------|
-| `run_node.sh` | 手动启动单个节点（attention / ffn） |
-ls DBO/Serial、本地/多机、可视化 |
-| `run_experiment_matrix.sh` | 实验矩阵扫描：batch 到 OOM × seq × 模式 |
-| `gen_experiment_report.py` | 从 timing JSON 生成 markdown 报告 |
-| `visualize_dbo_pipeline.py` | DBO Pipeline 4 泳道甘特图可视化 |
-
-## 快速用法
+## 常用命令
 
 ```bash
-# 单次实验
-./scripts/run_single.sh local 8 128 --tokens 20 --generate --warmup-p2p
+# 单次 prefill DBO
+./scripts/run_single.sh local 8 128 --tokens 20
 
-# 带可视化
-./scripts/run_single.sh local 4 128 --visualize
+# serial baseline
+./scripts/run_single.sh local 8 128 --tokens 20 --no-dbo
 
-# 实验矩阵
-./scripts/run_experiment_matrix.sh --mode decode-dbo --seq 128
+# decode DBO / cross-layer decode
+./scripts/run_single.sh local 8 128 --tokens 20 --generate
+./scripts/run_single.sh local 8 128 --tokens 20 --generate --crosslayer
+
+# 批量矩阵
+./scripts/run_experiment_matrix.sh --modes serial,prefill-dbo --batches 2,4,8 --seqs 128
+
+# 批量画图
+python scripts/plot_all_pipelines.py --root results
 ```
 
- `--help` 或 `.github/skills/run-experiments/SKILL.md`。
+所有运行脚本默认写入 `results/`；详细参数可用 `--help` 查看。

@@ -62,11 +62,11 @@
 
 | 组件 | 文件 | 说明 |
 |------|------|------|
-| `DistributedContext` | `src/distributed/context.py` | 管理 rank、device、节点角色 |
+| `DistributedContext` | `src/distributed/__init__.py` | 管理 rank、device、节点角色、方向通信组 |
 | `AFDCommunicator` | `src/distributed/communicator.py` | 双缓冲 NCCL 通信 |
 | `AttentionWorker` | `src/model/attention_worker.py` | Embedding + Attention + LM Head |
 | `FFNWorker` | `src/model/ffn_worker.py` | LayerNorm + MLP/MoE |
-| `KVCacheManager` | `src/model/kv_cache.py` | KV Cache 管理 |
+| `DynamicCache` | `transformers.cache_utils` | Decode KV cache，保存在 Attention 节点 |
 | `SimplePipelineScheduler` | `src/pipeline/scheduler.py` | 同步串行调度（无 DBO） |
 | `AsyncPipelineScheduler` | `src/pipeline/async_scheduler.py` | Prefill DBO 调度 |
 | `DecodeDBOScheduler` | `src/pipeline/decode_scheduler.py` | Decode DBO 调度 |
@@ -201,16 +201,15 @@ else:
 
 ---
 
-## 7. 通信延迟测量
+## 7. 通信预热与延迟
 
 ### 7.1 单机环境
 
-**测试工具**: `scripts/measure_comm_latency.py`
+**预热工具**: `src/distributed/warmup.py`
 
-**实测结果** (4 GPU, NVLink/PCIe):
-- Round-trip: 1.16ms
-- One-way: **0.58ms**
-- P95: 0.16ms, P99: 0.18ms
+第一次 NCCL P2P 通信通常包含 channel/proxy 初始化开销。实验脚本使用
+`--warmup-p2p --warmup-rounds N` 在计时前发送小 tensor，避免把冷启动计入
+pipeline timing。
 
 ### 7.2 多机环境
 
@@ -220,8 +219,8 @@ else:
 - 跨数据中心: 50-200ms
 
 **DBO 收益预期**:
-- 单机（<1ms）: Prefill 有效，Decode 效果差
-- 多机（10-100ms）: Prefill 和 Decode 均有明显收益
+- 单机低延迟：Prefill DBO 主要隐藏薄通信；Decode 需对比 serial。
+- 多机高延迟：DBO 更容易体现收益，但也更依赖 NCCL/网络稳定性。
 
 ---
 

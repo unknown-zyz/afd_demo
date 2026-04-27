@@ -1,26 +1,39 @@
-# 实验结果目录
+# Results
 
- AFD + DBO 系统的实验结果。
+本目录保存 GPU 实验产物。历史 JSON/PNG/report 作为实验归档保留，不在常规代码清理中删除。
 
 ## 目录结构
 
-| 目录 | 说明 |
-|------|------|
-ls  |
-| `serial/` | Serial baseline 结果（含 `cache/` 供后续实验复用） |
-| `prefill-dbo/` | Prefill DBO 实验 |
-| `decode-dbo/` | Decode DBO 实验（crosslayer OFF） |
-| `decode-dbo-crosslayer/` | Decode DBO + 跨层流水线实验 |
-| `summary/` | 跨实验对比报告 |
+| 目录/文件 | 说明 |
+|---|---|
+| `experiment_matrix_summary.csv` | 最近一次矩阵实验摘要 |
+| `serial/` | 串行 baseline；`cache/` 中的 JSON 供 DBO 报告计算 speedup |
+| `prefill-dbo/` | Prefill DBO timing JSON、报告和 pipeline PNG |
+| `decode-dbo/` | Decode DBO（crosslayer off）timing JSON、报告和 pipeline PNG |
+| `decode-dbo-crosslayer/` | Decode DBO + cross-layer pipeline 实验产物 |
+| `archive/` | 早期实验归档 |
 
-## 文件命名规范
+## 命名规范
 
-系统的实验结果。 3 个文件，命名为 `<mode>_<config>.<ext>`，其中 `<config>` = `b{B}_s{S}_t{T}`：
+单次配置使用 `b{B}_s{S}_t{T}` 表示 batch、prefill sequence length、decode tokens。
 
-- `timing_attention_<config>.json` — Attention 节点 timing events
-- `timing_ffn_<config>.json` — FFN 节点 timing events
-- `report_<config>.md` — 自动生成的报告（E2E、per-step 表、per-layer 四段时间表）
+| 文件 | 说明 |
+|---|---|
+| `timing_attention_<mode>_b{B}_s{S}_t{T}.json` | Attention 节点 timing events |
+| `timing_ffn_<mode>_b{B}_s{S}_t{T}.json` | FFN 节点 timing events |
+| `report_<mode>_b{B}_s{S}_t{T}.md` | 自动报告 |
+| `pipeline_<mode>_b{B}_s{S}_t{T}.png` | 4 泳道 pipeline Gantt 图 |
 
-## 运行实验
+## 复现实验
 
- `scripts/run_experiment_matrix.sh` 与 `.github/skills/run-experiments/SKILL.md`。
+```bash
+./scripts/run_experiment_matrix.sh
+python scripts/plot_all_pipelines.py --root results
+```
+
+如果只需要单个配置：
+
+```bash
+./scripts/run_single.sh local 8 128 --tokens 20
+./scripts/run_single.sh local 8 128 --tokens 20 --no-dbo
+```

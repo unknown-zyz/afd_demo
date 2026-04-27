@@ -71,8 +71,8 @@ src/
 
 ## 3. 调度器（Scheduler）家族
 
-仓库里有 **三个**真正在跑的调度器，加上一个 `PipelineScheduler` 抽象基类
-（`src/pipeline/scheduler.py:44`，仅供 Async 子类继承）。
+仓库里有 **三个**真正在跑的调度器：serial baseline、prefill DBO、decode DBO。
+历史 `PipelineScheduler` 抽象基类已删除，避免 API 与当前主路径混淆。
 
 ### 3.1 `SimplePipelineScheduler`（同步串行参考实现）
 
@@ -207,8 +207,8 @@ src/
 - 现象：第一次 NCCL P2P 有 **40-60 ms 冷启动**，会污染 timing。
 - 用法：CLI 加 `--warmup-p2p --warmup-rounds 5`，跑 5 轮 dummy
   `isend/irecv` 把 NCCL channel 预热完。
-- ⚠ `P2PKeepalive`（line 100）会死锁，**不要用**。原因：双向心跳互相
-  等待对方推进。
+- 历史 `P2PKeepalive` 路径已删除。原因：双向心跳容易与 scheduler NCCL
+  操作争用并死锁；只保留显式 warmup。
 
 ---
 
@@ -322,7 +322,7 @@ peak = torch.cuda.max_memory_allocated()
 | `src/pipeline/scheduler.py:400` | `send_sync` 阻塞到对端 recv，timing 中 SEND_TRANSFER 被夸大 | 中 |
 | `src/pipeline/async_scheduler.py:670, 783` | `compute_stream.synchronize()` 让"双 stream"退化为串行 | 中 |
 | `src/pipeline/decode_scheduler.py` | step 1 单次采样，方差大；建议 ≥5 次重复 | 中 |
-| `src/distributed/warmup.py:100` | `P2PKeepalive` 死锁，建议直接删除 | 低 |
+| `src/distributed/warmup.py` | 只保留显式 warmup；不要恢复历史 keepalive 心跳 | 低 |
 | `src/main.py:434` | `model.generate` 在 attn 节点跑、FFN 节点走另一分支，控制流分离不显眼 | 低 |
 | `src/model/disaggregated.py:425` | `forward_prefill` 走全 batch（不切 MB），与 SimplePipelineScheduler 不一致 | 中 |
 

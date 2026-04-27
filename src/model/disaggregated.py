@@ -618,7 +618,6 @@ class DisaggregatedQwenModel(nn.Module):
                 num_micro_batches=num_decode_micro_batches,
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
-                keepalive=getattr(ctx, '_keepalive', None),
                 use_crosslayer=decode_use_crosslayer,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
@@ -702,7 +701,6 @@ class DisaggregatedQwenModel(nn.Module):
                 num_micro_batches=num_decode_micro_batches,
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
-                keepalive=getattr(ctx, '_keepalive', None),
                 use_crosslayer=decode_use_crosslayer,
             )
         
