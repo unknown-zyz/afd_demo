@@ -38,44 +38,43 @@ def infer_mode_from_path(path: str | Path) -> str | None:
 def resolve_serial_baseline(cache: Mapping[str, Any], mode: str | None) -> BaselineResolution:
     """Return the mode-matched serial baseline.
 
-    Prefill DBO is a full prefill pass and must be compared only with
-    ``prefill_ms``. Decode DBO records one representative decode step, so a
-    serial full-generation timing can be normalized by token count when
-    ``decode_step_ms`` is absent.
+    Prefill/TTFT comparisons must use ``prefill_ms``. Decode/TPOT
+    comparisons should use ``decode_step_ms``; when it is absent, a generation
+    total can be divided by token count as a marked fallback.
     """
     mode = normalize_mode(mode)
 
     if mode == "prefill":
         value = cache.get("prefill_ms")
         if value is not None:
-            return BaselineResolution(float(value), "prefill", "prefill_ms")
+            return BaselineResolution(float(value), "TTFT", "prefill_ms")
         return BaselineResolution(
             None,
             None,
             "missing",
-            "prefill baseline missing; serial total_time_ms/max_new_tokens is a decode metric and is not comparable",
+            "TTFT baseline missing; serial total_time_ms/max_new_tokens is a TPOT-style metric and is not comparable to TTFT",
         )
 
     if mode == "decode":
         value = cache.get("decode_step_ms")
         if value is not None:
-            return BaselineResolution(float(value), "step", "decode_step_ms")
+            return BaselineResolution(float(value), "TPOT", "decode_step_ms")
 
         total = cache.get("total_time_ms")
         tokens = cache.get("max_new_tokens") or cache.get("tokens")
         if total is not None and tokens:
             return BaselineResolution(
                 float(total) / int(tokens),
-                "step",
+                "TPOT fallback",
                 "total_time_ms/max_new_tokens fallback",
-                "decode_step_ms missing; using serial total_time_ms / max_new_tokens",
+                "decode_step_ms missing; using total_time_ms / max_new_tokens. If total_time_ms is full generation latency, this includes TTFT amortized across output tokens.",
             )
 
         return BaselineResolution(
             None,
             None,
             "missing",
-            "decode baseline missing and total_time_ms/max_new_tokens fallback unavailable",
+            "TPOT baseline missing and total_time_ms/max_new_tokens fallback unavailable",
         )
 
     return BaselineResolution(None, None, "unknown-mode", "could not infer prefill/decode comparison mode")

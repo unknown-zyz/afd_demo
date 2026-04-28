@@ -4,7 +4,7 @@
 Reads the pair of timing JSON files (attention + FFN) produced by src.main and
 emits a detailed markdown report with:
   - Metadata (mode, batch, seq, tokens, dtype, model)
-  - End-to-end decode timing
+  - Model-side TTFT timing for prefill runs, or representative ITL timing for decode runs
   - Per-step timing table (if events span multiple steps)
   - Per-layer × {Attention, A2F, FFN, F2A} mean/min/max table
   - Optional comparison vs a cached serial baseline
@@ -13,9 +13,10 @@ Event type mapping (from timing_tracker):
   attention node: attn_compute -> A;   send_transfer -> A2F;   recv_wait -> F2A wait
   ffn       node: ffn_compute  -> FFN; send_transfer -> F2A;   recv_wait -> A2F wait
 
-The scheduler only records ONE representative decode step (step=1) in events,
-so per-layer times come from that step; total_time_ms is the end-to-end of that
-single representative step.
+Decode DBO records ONE representative inter-token-latency (ITL) sample:
+the second DBO decode call (scheduler step=1), with step 0 skipped as warmup.
+That single-step sample is used for pipeline/per-layer analysis; service-level
+decode comparisons are reported as TPOT when a serial TPOT baseline is present.
 """
 from __future__ import annotations
 
@@ -127,7 +128,7 @@ def _metadata_block(attn: Optional[Dict], ffn: Optional[Dict], args) -> str:
     return "\n".join(lines)
 
 
-def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
+def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
     lines = ["| Metric | Attention | FFN |", "|---|---:|---:|"]
 
     def g(d, k):
@@ -140,8 +141,14 @@ def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
             return f"{v:.3f} {unit}".strip()
         return str(v)
 
+    normalized_mode = normalize_mode(mode)
+    total_label = (
+        "Model-side TTFT / prefill total"
+        if normalized_mode == "prefill"
+        else "Representative ITL sample total"
+    )
     keys = [
-        ("Representative-step total", "total_time_ms", "ms"),
+        (total_label, "total_time_ms", "ms"),
         ("Compute", "total_compute_ms", "ms"),
         ("Recv wait", "total_recv_wait_ms", "ms"),
         ("MoE router", "total_moe_router_ms", "ms"),
@@ -177,23 +184,25 @@ def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mo
     baseline = resolve_serial_baseline(serial_attn, normalized_mode)
     if not baseline.available:
         warning = baseline.warning or "mode-matched serial baseline unavailable"
+        run_metric = "TTFT" if normalized_mode == "prefill" else "representative ITL sample"
         return (f"\n## Compared to serial baseline\n\n"
                 f"- Serial baseline: **N/A** ({warning})\n"
-                f"- This run: **{cur:.3f} ms/{'prefill' if normalized_mode == 'prefill' else 'step'}**\n"
+                f"- This run {run_metric}: **{cur:.3f} ms**\n"
                 f"- Speedup: **N/A**\n")
 
     assert baseline.value_ms is not None
     assert baseline.unit is not None
     speedup = baseline.value_ms / cur
     delta = cur - baseline.value_ms
-    cur_unit = "prefill" if normalized_mode == "prefill" else baseline.unit
+    cur_metric = "TTFT" if normalized_mode == "prefill" else "representative ITL sample"
+    speedup_metric = "TTFT" if normalized_mode == "prefill" else "TPOT"
     source_note = baseline.source
     if baseline.warning:
         source_note += f"; {baseline.warning}"
     return (f"\n## Compared to serial baseline\n\n"
             f"- Serial {baseline.unit}: **{baseline.value_ms:.3f} ms**  ({source_note})\n"
-            f"- This run {cur_unit}: **{cur:.3f} ms**\n"
-            f"- Δ: {delta:+.3f} ms   |   Speedup: **{speedup:.3f}×**\n")
+            f"- This run {cur_metric}: **{cur:.3f} ms**\n"
+            f"- Δ: {delta:+.3f} ms   |   {speedup_metric} speedup: **{speedup:.3f}×**\n")
 
 
 def main():
@@ -224,9 +233,13 @@ def main():
     out.append("## Configuration\n")
     out.append(_metadata_block(attn, ffn, args))
     out.append("")
-    timing_title = "End-to-end prefill timing" if normalize_mode(args.mode) == "prefill" else "End-to-end decode timing (representative step)"
+    timing_title = (
+        "Model-side TTFT timing (prefill path)"
+        if normalize_mode(args.mode) == "prefill"
+        else "Decode timing (representative ITL sample)"
+    )
     out.append(f"## {timing_title}\n")
-    out.append(_e2e_block(attn, ffn))
+    out.append(_e2e_block(attn, ffn, args.mode))
     out.append("")
     cmp_block = _compare_vs_serial(attn, serial_attn, args.mode)
     if cmp_block:

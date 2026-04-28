@@ -258,10 +258,10 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     # 计算改进的性能指标
     num_mb = attn_data.get('num_micro_batches', 2)
 
-    # End-to-end DBO time from timing JSON (all layers)
+    # Mode-matched DBO latency from timing JSON (TTFT-path or representative ITL sample).
     dbo_attn_total = attn_data.get('total_time_ms', 0)
     dbo_ffn_total = ffn_data.get('total_time_ms', 0)
-    # For decode, total_time_ms is already per-step
+    # For decode, total_time_ms is the recorded representative ITL sample.
     total_inference_time = max(dbo_attn_total, dbo_ffn_total)
     
     # 计算时间 (从事件中精确计算, 仅统计可视化范围内的层)
@@ -296,13 +296,23 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     else:
         dbo_full = max(attn_data.get('total_time_ms', 0), ffn_data.get('total_time_ms', 0))
 
-    unit = "prefill" if mode == "prefill" else ("step" if mode == "decode" else "run")
-    dbo_label = f"DBO: {dbo_full:.1f}ms/{unit}"
+    if mode == "prefill":
+        unit = "TTFT"
+        dbo_label = f"DBO TTFT-path: {dbo_full:.1f}ms"
+        speedup_name = "TTFT"
+    elif mode == "decode":
+        unit = "rep. ITL"
+        dbo_label = f"DBO rep. ITL: {dbo_full:.1f}ms"
+        speedup_name = "TPOT"
+    else:
+        unit = "run"
+        dbo_label = f"DBO: {dbo_full:.1f}ms"
+        speedup_name = "Speed"
 
     if serial_baseline_ms and serial_baseline_ms > 0:
         tag = serial_baseline_label or unit
-        serial_label = f"Serial: {serial_baseline_ms:.1f}ms/{tag}"
-        speedup_str = f"Speedup: {serial_baseline_ms / dbo_full:.2f}x" if dbo_full > 0 else "Speedup: N/A"
+        serial_label = f"Serial {tag}: {serial_baseline_ms:.1f}ms"
+        speedup_str = f"{speedup_name} Speedup: {serial_baseline_ms / dbo_full:.2f}x" if dbo_full > 0 else "Speedup: N/A"
     else:
         # No mode-matched baseline available → refuse to show a misleading number.
         serial_label = "Serial: N/A"
@@ -411,7 +421,8 @@ def main():
                 print(f"  Warning: '{args.mode}' baseline missing from {args.serial_timing}; "
                       f"Speedup will be N/A. Keys present: {list(cache.keys())}")
             else:
-                print(f"  Serial {args.mode} baseline: {serial_baseline_ms:.1f}ms  ({args.serial_timing})")
+                metric = serial_baseline_label or args.mode
+                print(f"  Serial {metric} baseline: {serial_baseline_ms:.1f}ms  ({args.serial_timing})")
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
 
