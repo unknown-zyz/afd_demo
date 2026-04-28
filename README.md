@@ -87,6 +87,9 @@ python scripts/visualize_dbo_pipeline.py \
 
 # 批量重画 results 下已有 timing JSON
 python scripts/plot_all_pipelines.py --root results
+
+# 检查哪些 DBO 结果具备可信 serial baseline
+python scripts/audit_experiment_baselines.py --root results
 ```
 
 ## 多机运行
@@ -146,6 +149,7 @@ results/
 - `doc/03-api-reference.md`：当前代码 API
 - `doc/04-deployment.md`：本地/多机部署
 - `doc/05-code-review-guide.md`：面向 review 的关键路径说明
+- `doc/npu_vs_gpu_experiment_analysis.md`：GPU/NPU 实验口径与可信度审计
 
 ## 已知注意事项
 

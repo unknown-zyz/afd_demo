@@ -62,6 +62,14 @@
 
 **适合**: 深入 review、定位性能/正确性风险
 
+### [npu_vs_gpu_experiment_analysis.md](npu_vs_gpu_experiment_analysis.md) - GPU/NPU 实验口径审计
+
+- GPU/NPU DBO speedup 的统一计算口径
+- `Speedup: N/A` 可补与不可补分类
+- NPU 分支相对 GPU 主线的改动和可信度风险
+
+**适合**: review GPU/NPU 实验图、判断哪些结果可用于结论
+
 ## 快速导航
 
 ### 我是新用户

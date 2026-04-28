@@ -8,6 +8,7 @@
 | `gen_experiment_report.py` | 从 attention/ffn timing JSON 生成 markdown 报告 |
 | `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 4 泳道 pipeline Gantt 图 |
 | `plot_all_pipelines.py` | 批量扫描结果目录并生成所有可视化图 |
+| `audit_experiment_baselines.py` | 扫描 DBO timing 是否有 mode-matched serial baseline |
 | `capture_serial_prefill.sh` | 为 serial cache 补充 `prefill_ms` / `decode_step_ms` |
 
 ## 常用命令
@@ -28,6 +29,9 @@
 
 # 批量画图
 python scripts/plot_all_pipelines.py --root results
+
+# 审计图表 speedup 是否有可信 serial baseline
+python scripts/audit_experiment_baselines.py --root results
 ```
 
 所有运行脚本默认写入 `results/`；详细参数可用 `--help` 查看。

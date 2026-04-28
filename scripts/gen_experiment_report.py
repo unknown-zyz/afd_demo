@@ -27,6 +27,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from experiment_baselines import normalize_mode, resolve_serial_baseline
+
 
 def _load(path: str) -> Optional[Dict[str, Any]]:
     if not path or not os.path.isfile(path):
@@ -161,31 +163,36 @@ def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
     return "\n".join(lines)
 
 
-def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict]) -> str:
+def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mode: str) -> str:
     if not cur_attn or not serial_attn:
         return ""
-    cur = cur_attn.get("total_time_ms")
-    # Serial JSONs from the serial decode path store full gen_time across
-    # max_new_tokens steps. DBO JSONs store ONE representative-step time.
-    # Normalize both to per-step for apples-to-apples.
-    serial_mode = serial_attn.get("mode", "")
-    serial_tokens = serial_attn.get("max_new_tokens") or 1
-    base_total = serial_attn.get("total_time_ms")
-    if base_total is None:
+    cur_value = cur_attn.get("total_time_ms")
+    normalized_mode = normalize_mode(mode)
+    if cur_value is None:
         return ""
-    if serial_mode == "serial" and serial_tokens > 1:
-        base_per_step = base_total / serial_tokens
-        base_note = f"serial full-gen {base_total:.1f} ms / {serial_tokens} tokens"
-    else:
-        base_per_step = base_total
-        base_note = f"serial {base_total:.3f} ms"
-    if not cur or not base_per_step:
+    cur = float(cur_value)
+    if cur <= 0:
         return ""
-    speedup = base_per_step / cur
-    delta = cur - base_per_step
+
+    baseline = resolve_serial_baseline(serial_attn, normalized_mode)
+    if not baseline.available:
+        warning = baseline.warning or "mode-matched serial baseline unavailable"
+        return (f"\n## Compared to serial baseline\n\n"
+                f"- Serial baseline: **N/A** ({warning})\n"
+                f"- This run: **{cur:.3f} ms/{'prefill' if normalized_mode == 'prefill' else 'step'}**\n"
+                f"- Speedup: **N/A**\n")
+
+    assert baseline.value_ms is not None
+    assert baseline.unit is not None
+    speedup = baseline.value_ms / cur
+    delta = cur - baseline.value_ms
+    cur_unit = "prefill" if normalized_mode == "prefill" else baseline.unit
+    source_note = baseline.source
+    if baseline.warning:
+        source_note += f"; {baseline.warning}"
     return (f"\n## Compared to serial baseline\n\n"
-            f"- Serial per-step: **{base_per_step:.3f} ms**  ({base_note})\n"
-            f"- This run per-step: **{cur:.3f} ms**\n"
+            f"- Serial {baseline.unit}: **{baseline.value_ms:.3f} ms**  ({source_note})\n"
+            f"- This run {cur_unit}: **{cur:.3f} ms**\n"
             f"- Δ: {delta:+.3f} ms   |   Speedup: **{speedup:.3f}×**\n")
 
 
@@ -217,10 +224,11 @@ def main():
     out.append("## Configuration\n")
     out.append(_metadata_block(attn, ffn, args))
     out.append("")
-    out.append("## End-to-end decode timing (representative step)\n")
+    timing_title = "End-to-end prefill timing" if normalize_mode(args.mode) == "prefill" else "End-to-end decode timing (representative step)"
+    out.append(f"## {timing_title}\n")
     out.append(_e2e_block(attn, ffn))
     out.append("")
-    cmp_block = _compare_vs_serial(attn, serial_attn)
+    cmp_block = _compare_vs_serial(attn, serial_attn, args.mode)
     if cmp_block:
         out.append(cmp_block)
     out.append("## Per-layer breakdown\n")

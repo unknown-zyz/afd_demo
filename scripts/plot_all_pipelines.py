@@ -7,6 +7,7 @@ baseline in results/serial/cache/, and calls scripts/visualize_dbo_pipeline.py
 for each pair. Emits a per-directory pipelines_index.md embedding all PNGs.
 """
 from __future__ import annotations
+import argparse
 import re
 import subprocess
 import sys
@@ -14,13 +15,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VIS = ROOT / "scripts" / "visualize_dbo_pipeline.py"
-CACHE_DIR = ROOT / "results" / "serial" / "cache"
 
-# (dir, mode_tag, start_layer, num_layers)
-TARGETS = [
-    ("results/decode-dbo",             "decode-dbo",             0, 3),
-    ("results/decode-dbo-crosslayer",  "decode-dbo-crosslayer",  0, 3),
-    ("results/prefill-dbo",            "prefill-dbo",            1, 4),
+# (subdir, mode_tag, start_layer, num_layers)
+TARGET_SUBDIRS = [
+    ("decode-dbo",             "decode-dbo",             0, 3),
+    ("decode-dbo-crosslayer",  "decode-dbo-crosslayer",  0, 3),
+    ("prefill-dbo",            "prefill-dbo",            1, 4),
 ]
 
 NAME_RE = re.compile(r"timing_attention_(?P<tag>.+)\.json$")
@@ -48,12 +48,21 @@ def plot_one(attn_path: Path, ffn_path: Path, out_png: Path,
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="results",
+                        help="Root directory (default: 'results'; use 'results_npu' for NPU)")
+    args = parser.parse_args()
+    root_arg = Path(args.root)
+    root = root_arg if root_arg.is_absolute() else ROOT / root_arg
+    cache_dir = root / "serial" / "cache"
+
     total_ok = total_fail = 0
-    for rel_dir, mode_tag, sl, nl in TARGETS:
-        d = ROOT / rel_dir
+    for subdir, mode_tag, sl, nl in TARGET_SUBDIRS:
+        d = root / subdir
         if not d.is_dir():
             continue
-        print(f"\n[{rel_dir}]")
+        display_dir = d.relative_to(ROOT) if d.is_relative_to(ROOT) else d
+        print(f"\n[{display_dir}]")
         index_lines = [f"# Pipeline figures — {mode_tag}\n"]
 
         attn_files = sorted(d.glob("timing_attention_*.json"))
@@ -71,7 +80,7 @@ def main():
             serial = None
             if bm:
                 b, s, t = bm.groups()
-                serial = CACHE_DIR / f"b{b}_s{s}_t{t}.json"
+                serial = cache_dir / f"b{b}_s{s}_t{t}.json"
             out = d / f"pipeline_{tag}.png"
             ok = plot_one(attn, ffn, out, sl, nl, serial)
             if ok:

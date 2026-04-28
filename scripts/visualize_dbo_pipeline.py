@@ -32,6 +32,8 @@ import json
 import sys
 from pathlib import Path
 
+from experiment_baselines import infer_mode_from_path, resolve_serial_baseline
+
 try:
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
@@ -46,36 +48,6 @@ MB_COLORS = {
     0: '#4CAF50',  # Green - MB 0
     1: '#2196F3',  # Blue - MB 1
 }
-
-
-def resolve_serial_baseline(cache: dict, mode: str | None) -> tuple[float | None, str | None, str | None]:
-    """Return mode-matched serial baseline and an optional fallback warning."""
-    if mode == 'prefill':
-        value = cache.get('prefill_ms')
-        if value is not None:
-            return value, 'prefill', None
-        return (
-            None,
-            None,
-            "prefill baseline missing; run capture_serial_prefill.sh for this config "
-            "or treat it as unavailable/OOM",
-        )
-
-    if mode == 'decode':
-        value = cache.get('decode_step_ms')
-        if value is not None:
-            return value, 'step', None
-        total = cache.get('total_time_ms')
-        tokens = cache.get('max_new_tokens') or cache.get('tokens')
-        if total is not None and tokens:
-            return (
-                float(total) / int(tokens),
-                'step (total/tokens fallback)',
-                "decode_step_ms missing; using serial total_time_ms / max_new_tokens",
-            )
-        return None, None, "decode baseline missing and total_time_ms/max_new_tokens fallback unavailable"
-
-    return None, None, None
 
 # 泳道定义
 LANES = {
@@ -419,13 +391,8 @@ def main():
 
     # ── Auto-detect mode from attn-timing path ──────────────────────────────
     if args.mode == 'auto':
-        p = str(args.attn_timing).lower()
-        if 'prefill-dbo' in p or 'prefill_dbo' in p:
-            args.mode = 'prefill'
-        elif 'decode-dbo' in p or 'decode_dbo' in p:
-            args.mode = 'decode'
-        else:
-            args.mode = None  # unknown; no speedup
+        args.mode = infer_mode_from_path(args.attn_timing)
+        if args.mode is None:
             print("  Warning: could not infer mode from path; pass --mode explicitly.")
 
     # ── Resolve serial baseline from cache JSON (mode-matched) ──────────────
@@ -435,9 +402,11 @@ def main():
         try:
             with open(args.serial_timing) as f:
                 cache = json.load(f)
-            serial_baseline_ms, serial_baseline_label, fallback_warning = resolve_serial_baseline(cache, args.mode)
-            if fallback_warning:
-                print(f"  Warning: {fallback_warning}")
+            baseline = resolve_serial_baseline(cache, args.mode)
+            serial_baseline_ms = baseline.value_ms
+            serial_baseline_label = baseline.unit
+            if baseline.warning:
+                print(f"  Warning: {baseline.warning}")
             if serial_baseline_ms is None:
                 print(f"  Warning: '{args.mode}' baseline missing from {args.serial_timing}; "
                       f"Speedup will be N/A. Keys present: {list(cache.keys())}")
