@@ -73,8 +73,32 @@ unset NCCL_BUFFSIZE NCCL_NCHANNELS_PER_NET_PEER 2>/dev/null || true
 MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 MASTER_PORT="${MASTER_PORT:-29650}"
 
-# Per-role timing suffix (readable output naming)
-SUFFIX="npu_b${BATCH}_s${SEQ}_t${TOKENS}"
+# Per-role timing suffix (readable output naming). Keep the mode in the
+# suffix so matrix retries cannot accidentally pick up stale JSON from a
+# different run mode with the same batch/seq/tokens.
+HAS_NO_DBO=false
+HAS_NO_GENERATE=false
+HAS_CROSSLAYER=false
+for arg in "${EXTRA_ARGS[@]}"; do
+    case "$arg" in
+        --no-dbo) HAS_NO_DBO=true ;;
+        --no-generate) HAS_NO_GENERATE=true ;;
+        --crosslayer) HAS_CROSSLAYER=true ;;
+    esac
+done
+
+if [ "$HAS_NO_DBO" = true ] && [ "$HAS_NO_GENERATE" = true ]; then
+    MODE_TAG="serial-prefill"
+elif [ "$HAS_NO_DBO" = true ]; then
+    MODE_TAG="serial"
+elif [ "$HAS_NO_GENERATE" = true ]; then
+    MODE_TAG="prefill-dbo"
+elif [ "$HAS_CROSSLAYER" = true ]; then
+    MODE_TAG="decode-dbo-crosslayer"
+else
+    MODE_TAG="decode-dbo"
+fi
+SUFFIX="${MODE_TAG}_npu_b${BATCH}_s${SEQ}_t${TOKENS}"
 
 # Source python venv if present
 if [ -f venv/bin/activate ]; then source venv/bin/activate; fi

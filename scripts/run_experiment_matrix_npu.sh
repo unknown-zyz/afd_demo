@@ -17,6 +17,7 @@
 #   --tokens N      max_new_tokens for decode  (default: 20)
 #   --devices list  ASCEND_VISIBLE_DEVICES     (default: 0,1,2,3)
 #   --no-cache      Force rerun of serial even if cached
+#   --append        Append to existing summary instead of replacing it
 #   --dry-run       Print commands but don't execute
 
 set -u
@@ -79,11 +80,13 @@ run_one() {
     echo "  Running: $run_suffix"
     echo "════════════════════════════════════════════════════════════"
     if [ "$DRY_RUN" = true ]; then
-        echo "[dry-run] run_npu.sh ... --batch $batch --seq $seq --tokens $tokens $extra"
+        echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME $extra"
         return 0
     fi
 
     local port=$((29500 + (RANDOM % 2000)))
+    rm -f "results/prefill_dbo/timing_attention_${mode}_npu_b${batch}_s${seq}_t${tokens}.json" \
+          "results/prefill_dbo/timing_ffn_${mode}_npu_b${batch}_s${seq}_t${tokens}.json"
     ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
         --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
@@ -92,8 +95,8 @@ run_one() {
     local rc=$?
 
     # Inspect logs for OOM
-    local r0_log="results/logs/npu_npu_b${batch}_s${seq}_t${tokens}_r0.log"
-    local r1_log="results/logs/npu_npu_b${batch}_s${seq}_t${tokens}_r1.log"
+    local r0_log="results/logs/npu_${mode}_npu_b${batch}_s${seq}_t${tokens}_r0.log"
+    local r1_log="results/logs/npu_${mode}_npu_b${batch}_s${seq}_t${tokens}_r1.log"
     if grep -q "out of memory\|OutOfMemory\|OOM" "$r0_log" "$r1_log" 2>/dev/null; then
         echo "[OOM] $run_suffix"
         return 2
@@ -103,16 +106,20 @@ run_one() {
         return $rc
     fi
 
-    # run_npu.sh writes timing to results/prefill_dbo/timing_{attention,ffn}_npu_b{B}_s{S}_t{T}.json
-    local raw_suffix="npu_b${batch}_s${seq}_t${tokens}"
+    # run_npu.sh writes timing to results/prefill_dbo/timing_{attention,ffn}_${mode}_npu_b{B}_s{S}_t{T}.json
+    local raw_suffix="${mode}_npu_b${batch}_s${seq}_t${tokens}"
     local attn_src="results/prefill_dbo/timing_attention_${raw_suffix}.json"
     local ffn_src="results/prefill_dbo/timing_ffn_${raw_suffix}.json"
     local attn_dst="$outdir/timing_attention_${run_suffix}.json"
     local ffn_dst="$outdir/timing_ffn_${run_suffix}.json"
 
     mkdir -p "$outdir"
-    [ -f "$attn_src" ] && mv -f "$attn_src" "$attn_dst"
-    [ -f "$ffn_src"  ] && mv -f "$ffn_src"  "$ffn_dst"
+    if [ ! -f "$attn_src" ] || [ ! -f "$ffn_src" ]; then
+        echo "[FAIL] missing expected timing JSON: $attn_src or $ffn_src"
+        return 1
+    fi
+    mv -f "$attn_src" "$attn_dst"
+    mv -f "$ffn_src"  "$ffn_dst"
 
     # Cache serial baselines
     if [ "$mode" = "serial" ] && [ -f "$attn_dst" ]; then
@@ -137,9 +144,10 @@ run_one() {
 
 # Main sweep ------------------------------------------------------------------
 SUMMARY="$ROOT_OUT/experiment_matrix_summary.csv"
-CHIP_POOL=$(echo "$VISIBLE_DEVS" | tr ',' '\n' | wc -l)
+VISIBLE_CHIP_POOL=$(echo "$VISIBLE_DEVS" | tr ',' '\n' | wc -l)
+ACTIVE_WORLD_SIZE=2
 if [ "$APPEND" = false ] || [ ! -f "$SUMMARY" ]; then
-    echo "mode,batch,seq,tokens,chip_pool,status,report" > "$SUMMARY"
+    echo "mode,batch,seq,tokens,visible_chip_pool,active_world_size,status,report" > "$SUMMARY"
 fi
 
 for MODE in "${MODE_ARR[@]}"; do
@@ -156,21 +164,21 @@ for MODE in "${MODE_ARR[@]}"; do
             CACHE="$ROOT_OUT/serial/cache/b${BATCH}_s${SEQ}_t${TOKENS}.json"
             if [ "$MODE" = "serial" ] && [ "$NO_CACHE" = false ] && [ -f "$CACHE" ]; then
                 echo "[cache-hit] serial b${BATCH}_s${SEQ}_t${TOKENS}  (skipping)"
-                echo "serial,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,cached,$CACHE" >> "$SUMMARY"
+                echo "serial,$BATCH,$SEQ,$TOKENS,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,cached,$CACHE" >> "$SUMMARY"
                 continue
             fi
 
             run_one "$MODE" "$BATCH" "$SEQ" "$TOKENS" "$OUTDIR"
             rc=$?
             if [ $rc -eq 2 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,OOM," >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,OOM," >> "$SUMMARY"
                 echo "↳ OOM reached for $MODE seq=$SEQ; skipping larger batches."
                 break
             elif [ $rc -ne 0 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,FAIL," >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,FAIL," >> "$SUMMARY"
             else
                 REPORT="$OUTDIR/report_${MODE}_b${BATCH}_s${SEQ}_t${TOKENS}.md"
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$CHIP_POOL,ok,$REPORT" >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,ok,$REPORT" >> "$SUMMARY"
             fi
         done
     done
