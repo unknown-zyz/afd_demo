@@ -70,6 +70,14 @@
 
 **适合**: review GPU/NPU 实验图、判断哪些结果可用于结论
 
+### [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md) - GPU/NPU 实验补采总结
+
+- 当前 GPU/NPU TTFT-path 与 TPOT speedup 汇总
+- native baseline、fallback、missing 的补采状态
+- NPU 910C 与 GPU 结果差异的可信结论
+
+**适合**: 获取当前实验结论、确认哪些配置仍受 OOM 或 fallback 限制
+
 ## 快速导航
 
 ### 我是新用户
