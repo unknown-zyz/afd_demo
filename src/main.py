@@ -142,6 +142,11 @@ def parse_args():
                         help='Warmup NCCL P2P before inference')
     parser.add_argument('--warmup-rounds', type=int, default=3,
                         help='Number of warmup rounds')
+    parser.add_argument('--prefill-warmup-rounds', type=int, default=None,
+                        help='Untimed prefill passes to absorb backend JIT/graph-compile '
+                             'overhead before the timed run. Default: 1 on NPU, 0 on CUDA/CPU. '
+                             'Required on Ascend — without it layers 0–1 of mb0 are dominated '
+                             'by per-shape HCCL op compilation (see doc/prefill_l1_anomaly.md).')
 
     # Backend (device + distributed backend selection)
     parser.add_argument('--backend', type=str, choices=['auto', 'cuda', 'npu', 'cpu'],
@@ -288,7 +293,27 @@ def run_inference_demo(args):
     else:
         scheduler = SimplePipelineScheduler(model=model, num_micro_batches=args.num_micro_batches)
         scheduler_name = "SYNC"
-    
+
+    # Prefill warmup — eat per-shape JIT/graph-compile cost before the timed run
+    # so that layer-0/1 of mb0 don't dominate the timing JSON and pipeline plot.
+    warmup_rounds = args.prefill_warmup_rounds
+    if warmup_rounds is None:
+        warmup_rounds = 1 if devmod.DEVICE_TYPE == 'npu' else 0
+    if warmup_rounds > 0:
+        logger.info(f"Running {warmup_rounds} prefill warmup round(s) to absorb JIT compile cost")
+        saved_timing = getattr(scheduler, 'enable_timing', False)
+        if hasattr(scheduler, 'enable_timing'):
+            scheduler.enable_timing = False
+        for i in range(warmup_rounds):
+            _w_out, _w_elapsed = run_with_scheduler(scheduler)
+            logger.info(f"  warmup {i+1}/{warmup_rounds}: {_w_elapsed*1000:.1f} ms")
+            del _w_out
+        if hasattr(scheduler, 'enable_timing'):
+            scheduler.enable_timing = saved_timing
+        # Sync both nodes before timed run so TimingTracker baselines align
+        ctx.barrier()
+        devmod.synchronize()
+
     output, elapsed = run_with_scheduler(scheduler)
     
     if ctx.is_attention_node:
