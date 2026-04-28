@@ -189,13 +189,14 @@ class FFNWorker(nn.Module):
         )
 
     def _resolve_role_devices(self, primary_device: torch.device) -> list[torch.device]:
-        """Resolve all visible CUDA devices for role-internal layer sharding."""
-        if primary_device.type != "cuda" or not torch.cuda.is_available():
+        """Resolve all visible accelerator devices for role-internal layer sharding."""
+        from ..utils import device as devmod
+        if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
             return [primary_device]
-        count = torch.cuda.device_count()
+        count = devmod.device_count()
         if count <= 1:
             return [primary_device]
-        return [torch.device(f"cuda:{idx}") for idx in range(count)]
+        return [torch.device(f"{primary_device.type}:{idx}") for idx in range(count)]
     
     def forward_ffn_layer(
         self,

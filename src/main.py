@@ -21,6 +21,7 @@ from transformers.utils import logging as hf_logging
 from .distributed import init_distributed, get_distributed_context, DistributedConfig
 from .model import DisaggregatedQwenModel
 from .pipeline import SimplePipelineScheduler, AsyncPipelineScheduler
+from .utils import device as devmod
 from .utils.profiler import get_profiler, print_memory_stats
 
 # Suppress transformers warnings by default
@@ -142,6 +143,18 @@ def parse_args():
     parser.add_argument('--warmup-rounds', type=int, default=3,
                         help='Number of warmup rounds')
 
+    # Backend (device + distributed backend selection)
+    parser.add_argument('--backend', type=str, choices=['auto', 'cuda', 'npu', 'cpu'],
+                        default='auto',
+                        help='Compute backend: cuda (NVIDIA), npu (Ascend 910/910C), cpu (dry-run).')
+    # NPU / multi-device parallel layout
+    parser.add_argument('--attn-size', type=int, default=1,
+                        help='Number of devices assigned to the attention role (DP over micro-batches).')
+    parser.add_argument('--ffn-size', type=int, default=1,
+                        help='Number of devices assigned to the FFN role.')
+    parser.add_argument('--ffn-tp-size', type=int, default=1,
+                        help='Tensor-parallel degree within the FFN role (must divide --ffn-size).')
+
     return parser.parse_args()
 
 
@@ -174,7 +187,7 @@ def build_distributed_config(args) -> DistributedConfig:
         rank=rank,
         local_rank=local_rank,
         world_size=world_size,
-        backend="nccl" if torch.cuda.is_available() else "gloo",
+        backend=devmod.DIST_BACKEND,
         init_method="env://" if args.local_test else f"tcp://{args.master_addr}:{args.master_port}",
         master_addr=args.master_addr,
         master_port=args.master_port,
@@ -256,12 +269,10 @@ def run_inference_demo(args):
     def run_with_scheduler(scheduler):
         """Run inference with timing."""
         ctx.barrier()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        devmod.synchronize()
         start = time.perf_counter()
         output = scheduler.run(input_ids, attention_mask)
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        devmod.synchronize()
         elapsed = time.perf_counter() - start
         return output, elapsed
     
@@ -427,8 +438,7 @@ def run_generation_demo(args):
         decode_use_crosslayer=args.crosslayer,
     )
     
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
+    devmod.synchronize()
     gen_time = time.perf_counter() - start_time
     
     # Output results
@@ -479,6 +489,12 @@ def run_generation_demo(args):
 
 def main():
     args = parse_args()
+    # Select device backend FIRST — this patches torch.cuda to torch.npu
+    # (via torch_npu.contrib.transfer_to_npu) when --backend=npu, so any
+    # subsequent torch.cuda.* call inside the codebase transparently runs
+    # on the NPU. Must happen before init_process_group and any .to(device).
+    devmod.init_backend(args.backend)
+    devmod.apply_backend_envs()
     try:
         if args.no_generate:
             # Prefill only (no generation)
