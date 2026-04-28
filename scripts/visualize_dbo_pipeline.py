@@ -47,6 +47,36 @@ MB_COLORS = {
     1: '#2196F3',  # Blue - MB 1
 }
 
+
+def resolve_serial_baseline(cache: dict, mode: str | None) -> tuple[float | None, str | None, str | None]:
+    """Return mode-matched serial baseline and an optional fallback warning."""
+    if mode == 'prefill':
+        value = cache.get('prefill_ms')
+        if value is not None:
+            return value, 'prefill', None
+        return (
+            None,
+            None,
+            "prefill baseline missing; run capture_serial_prefill.sh for this config "
+            "or treat it as unavailable/OOM",
+        )
+
+    if mode == 'decode':
+        value = cache.get('decode_step_ms')
+        if value is not None:
+            return value, 'step', None
+        total = cache.get('total_time_ms')
+        tokens = cache.get('max_new_tokens') or cache.get('tokens')
+        if total is not None and tokens:
+            return (
+                float(total) / int(tokens),
+                'step (total/tokens fallback)',
+                "decode_step_ms missing; using serial total_time_ms / max_new_tokens",
+            )
+        return None, None, "decode baseline missing and total_time_ms/max_new_tokens fallback unavailable"
+
+    return None, None, None
+
 # 泳道定义
 LANES = {
     'A': {'index': 3, 'label': 'A (Attention)', 'height': 0.8},
@@ -405,12 +435,9 @@ def main():
         try:
             with open(args.serial_timing) as f:
                 cache = json.load(f)
-            if args.mode == 'prefill':
-                serial_baseline_ms = cache.get('prefill_ms')
-                serial_baseline_label = 'prefill'
-            elif args.mode == 'decode':
-                serial_baseline_ms = cache.get('decode_step_ms')
-                serial_baseline_label = 'step'
+            serial_baseline_ms, serial_baseline_label, fallback_warning = resolve_serial_baseline(cache, args.mode)
+            if fallback_warning:
+                print(f"  Warning: {fallback_warning}")
             if serial_baseline_ms is None:
                 print(f"  Warning: '{args.mode}' baseline missing from {args.serial_timing}; "
                       f"Speedup will be N/A. Keys present: {list(cache.keys())}")

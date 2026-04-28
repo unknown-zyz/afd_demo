@@ -95,8 +95,15 @@ def _per_layer_table(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
     rows.append(f"| **{totals[0][0]}** | **{totals[0][1]:.3f}** | **{totals[0][2]:.3f}** | "
                 f"**{totals[0][3]:.3f}** | **{totals[0][4]:.3f}** | **{totals[0][5]:.3f}** |")
     rows.append("")
-    rows.append("_Cells report mean / min / max across micro-batches when >1 MB is tracked._")
+    rows.append("_Cells with three values are **mean / min / max across micro-batches**, not repeated runs._")
     rows.append("_L0 is skipped in the Σ row because layer-0 contains pipeline warmup._")
+    if len(layers) == 48 and 21 in layers:
+        rows.append(
+            "_Layer 21 is the default 2-GPU shard boundary for 48-layer Qwen3 "
+            "(21 layers on role GPU0, remaining layers on role GPU1). A large max "
+            "with a normal min usually means only the first micro-batch paid "
+            "cross-device/lazy CUDA warmup cost._"
+        )
     return "\n".join(rows)
 
 

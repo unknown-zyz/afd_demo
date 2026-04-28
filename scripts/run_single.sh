@@ -18,6 +18,9 @@
 # Environment variables:
 #   MODEL_PATH      - 模型路径 (默认: /data/Qwen/Qwen3-30B-A3B/)
 #   MASTER_PORT     - 通信端口 (默认: 29650)
+#   HF_ENABLE_PARALLEL_LOADING / HF_PARALLEL_LOADING_WORKERS
+#                   - 可选 HuggingFace shard 并行加载开关（默认不改动）
+#   LOCAL_FFN_STARTUP_DELAY     - local 模式 FFN 启动后额外等待秒数 (默认: 0)
 #
 # Examples:
 #   ./scripts/run_single.sh local 8 128
@@ -33,6 +36,7 @@
 # set -e disabled: errors are handled explicitly
 cd "$(dirname "$0")/.."
 source venv/bin/activate
+RUN_START_TS=$(date +%s)
 
 show_usage() {
     cat <<'EOF'
@@ -211,7 +215,11 @@ run_local() {
         --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG \
         > "results/prefill_dbo/logs/ffn_${SUFFIX}.log" 2>&1 &
     FFN_PID=$!
-    sleep 5
+    # torch.distributed rendezvous already waits for the peer.  Avoid a fixed
+    # local sleep so short smoke runs do not pay avoidable startup latency.
+    if [ "${LOCAL_FFN_STARTUP_DELAY:-0}" != "0" ]; then
+        sleep "$LOCAL_FFN_STARTUP_DELAY"
+    fi
 
     # Attention node (foreground, output to log file)
     CUDA_VISIBLE_DEVICES=0,1 python -u -m src.main \
@@ -354,3 +362,5 @@ echo ""
 echo "✅ Experiment completed: $SUFFIX"
 echo "   Timing: $ATTN_TIMING"
 echo "   Timing: $FFN_TIMING"
+RUN_END_TS=$(date +%s)
+echo "   Wall time: $((RUN_END_TS - RUN_START_TS))s (includes process startup, model loading, optional warmup, and report generation)"
