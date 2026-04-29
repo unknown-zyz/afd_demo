@@ -106,7 +106,7 @@ def audit_root(root: Path) -> list[Row]:
 def write_csv(rows: list[Row], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(Row.__dataclass_fields__))
+        writer = csv.DictWriter(f, fieldnames=list(Row.__dataclass_fields__), lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow(row.__dict__)

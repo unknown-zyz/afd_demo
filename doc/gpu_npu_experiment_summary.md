@@ -32,7 +32,7 @@ Speedup greater than `1.0x` means DBO is faster than the serial baseline.
 | Root | Mode | Native OK | Fallback | Missing | Notes |
 |---|---|---:|---:|---:|---|
 | `results/` GPU | prefill TTFT-path | 15 | 0 | 0 | All prefill entries have mode-matched `prefill_ms`. |
-| `results/` GPU | decode TPOT | 0 | 0 | 48 | Older decode results must be regenerated to include exact `decode_tpot_ms`. |
+| `results/` GPU | decode TPOT | 2 | 0 | 48 | Exact TPOT sample exists for `b2_s128_t5`; older decode results must be regenerated to include exact `decode_tpot_ms`. |
 | `results_npu/` NPU | prefill TTFT-path | 5 | 0 | 20 | Representative serial prefill split was added for 5 configs. |
 | `results_npu/` NPU | decode TPOT | 0 | 0 | 90 | Older decode results must be regenerated to include exact DBO `decode_tpot_ms`. |
 
@@ -42,6 +42,19 @@ The refreshed audit CSVs are:
 - `results_npu/baseline_audit.csv`
 
 ## GPU result summary
+
+### Exact TPOT sample run
+
+After switching decode speedup to exact full decode-loop TPOT, a GPU sample was
+run with `batch=2`, `seq=128`, `tokens=5`.
+
+| Mode | Serial TPOT | DBO TPOT | Representative ITL | TPOT speedup | Artifacts |
+|---|---:|---:|---:|---:|---|
+| `decode-dbo` | 228.238 ms | 302.959 ms | 285.157 ms | 0.753x | `results/decode-dbo/report_decode-dbo_b2_s128_t5.md`, `results/decode-dbo/pipeline_decode-dbo_b2_s128_t5.png` |
+| `decode-dbo-crosslayer` | 228.238 ms | 266.444 ms | 248.990 ms | 0.857x | `results/decode-dbo-crosslayer/report_decode-dbo-crosslayer_b2_s128_t5.md`, `results/decode-dbo-crosslayer/pipeline_decode-dbo-crosslayer_b2_s128_t5.png` |
+
+This confirms the new plots and reports use `decode_tpot_ms` for speedup while
+still showing representative ITL for Gantt/pipeline inspection.
 
 | Mode | Native samples | Median speedup | Min | Max | Interpretation |
 |---|---:|---:|---:|---:|---|
