@@ -306,9 +306,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         speedup_name = "TTFT"
     elif mode == "decode":
         unit = "TPOT"
-        rep_itl = max(attn_data.get('representative_itl_ms') or attn_data.get('total_time_ms', 0),
-                      ffn_data.get('representative_itl_ms') or ffn_data.get('total_time_ms', 0))
-        dbo_label = f"DBO TPOT: {dbo_full:.1f}ms (rep. ITL: {rep_itl:.1f}ms)"
+        dbo_label = f"DBO TPOT: {dbo_full:.1f}ms"
         speedup_name = "TPOT"
     else:
         unit = "run"
@@ -339,9 +337,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     mode_tag = f" [{mode}]" if mode else ""
     line1 = f'DBO Pipeline{mode_tag} — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
     line2 = f"{dbo_label} | {serial_label} | {speedup_str}"
-    line3 = f"Per-layer avg — Attn: {avg_attn:.2f}ms, FFN: {avg_ffn:.2f}ms, A→F: {a2f_avg:.2f}ms, F→A: {f2a_avg:.2f}ms"
-    
-    ax.set_title(f'{line1}\n{line2}\n{line3}', fontsize=10, pad=10)
+    ax.set_title(f'{line1}\n{line2}', fontsize=10, pad=10)
     
     # 图例
     legend_elements = [

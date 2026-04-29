@@ -109,6 +109,48 @@ def _per_layer_table(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
     return "\n".join(rows)
 
 
+def _layer_average_summary(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
+    """Summarize mean per-layer timing across all layers."""
+    a_events = attn.get("events", []) if attn else []
+    f_events = ffn.get("events", []) if ffn else []
+    a_by = _group_by_layer(a_events)
+    f_by = _group_by_layer(f_events)
+    layers = sorted(set(a_by) | set(f_by))
+    if not layers:
+        return "_No per-layer events recorded._"
+
+    def mean_for_layer(layer: int, by_layer: Dict[int, Dict[str, List[float]]], event_type: str) -> float:
+        values = by_layer.get(layer, {}).get(event_type, [])
+        return statistics.mean(values) if values else 0.0
+
+    def avg_across_layers(selected_layers: List[int], by_layer: Dict[int, Dict[str, List[float]]], event_type: str) -> float:
+        if not selected_layers:
+            return 0.0
+        return statistics.mean(mean_for_layer(layer, by_layer, event_type) for layer in selected_layers)
+
+    scopes = [("All layers", layers)]
+    layers_without_l0 = [layer for layer in layers if layer != 0]
+    if layers_without_l0:
+        scopes.append(("Excl. L0", layers_without_l0))
+
+    rows = [
+        "| Scope | Layers | Attention avg/layer (ms) | A2F avg/layer (ms) | FFN avg/layer (ms) | F2A avg/layer (ms) | F2A recv-wait avg/layer (ms) |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for label, selected_layers in scopes:
+        rows.append(
+            f"| {label} | {len(selected_layers)} | "
+            f"{avg_across_layers(selected_layers, a_by, 'attn_compute'):.3f} | "
+            f"{avg_across_layers(selected_layers, a_by, 'send_transfer'):.3f} | "
+            f"{avg_across_layers(selected_layers, f_by, 'ffn_compute'):.3f} | "
+            f"{avg_across_layers(selected_layers, f_by, 'send_transfer'):.3f} | "
+            f"{avg_across_layers(selected_layers, a_by, 'recv_wait'):.3f} |"
+        )
+    rows.append("")
+    rows.append("_Each value first averages across micro-batches within a layer, then averages those layer means across the selected layer set._")
+    return "\n".join(rows)
+
+
 def _metadata_block(attn: Optional[Dict], ffn: Optional[Dict], args) -> str:
     md = attn or ffn or {}
     mode_str = args.mode or "unknown"
@@ -249,6 +291,9 @@ def main():
     cmp_block = _compare_vs_serial(attn, serial_attn, args.mode)
     if cmp_block:
         out.append(cmp_block)
+    out.append("## Layer averages summary\n")
+    out.append(_layer_average_summary(attn, ffn))
+    out.append("")
     out.append("## Per-layer breakdown\n")
     out.append(_per_layer_table(attn, ffn))
     out.append("")

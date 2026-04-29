@@ -31,6 +31,15 @@
 - This run exact TPOT: **302.959 ms**
 - Δ: +74.721 ms   |   TPOT speedup: **0.753×**
 
+## Layer averages summary
+
+| Scope | Layers | Attention avg/layer (ms) | A2F avg/layer (ms) | FFN avg/layer (ms) | F2A avg/layer (ms) | F2A recv-wait avg/layer (ms) |
+|---|---:|---:|---:|---:|---:|---:|
+| All layers | 48 | 1.963 | 0.155 | 2.496 | 0.174 | 0.579 |
+| Excl. L0 | 47 | 1.968 | 0.155 | 2.500 | 0.174 | 0.583 |
+
+_Each value first averages across micro-batches within a layer, then averages those layer means across the selected layer set._
+
 ## Per-layer breakdown
 
 | Layer | Attention (ms) | A2F send (ms) | FFN (ms) | F2A send (ms) | F2A recv-wait (ms) |
