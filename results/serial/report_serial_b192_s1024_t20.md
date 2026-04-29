@@ -1,0 +1,37 @@
+# Experiment report — serial b192 s1024 t20
+
+## Configuration
+
+- **Mode**: `serial`
+- **Batch size**: 192
+- **Prefill seq**: 1024
+- **Decode tokens**: 20
+- **Layers**: ?
+- **Micro-batches**: ?
+
+## Decode timing (exact TPOT + representative ITL detail)
+
+| Metric | Attention | FFN |
+|---|---:|---:|
+| Representative ITL sample total | 28808.886 ms | 28808.806 ms |
+| Decode loop total | 24809.739 ms | 24809.759 ms |
+| Decode steps | 19 | 19 |
+| Decode TPOT | 1305.776 ms | 1305.777 ms |
+| Compute | - | - |
+| Recv wait | - | - |
+| MoE router | - | - |
+| MoE experts | - | - |
+| MoE shared/dense | - | - |
+| Compute ratio | - | - |
+| Tokens/sec | 0.69 | - |
+
+## Layer averages summary
+
+_No per-layer events recorded._
+
+## Per-layer breakdown
+
+_No per-layer events recorded._
+
+---
+_Generated from `timing_attention_serial_b192_s1024_t20.json` + `timing_ffn_serial_b192_s1024_t20.json`._
