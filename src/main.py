@@ -478,6 +478,7 @@ def run_generation_demo(args):
         logger.info(f"\n=== Generated Text ===\n{output_text}\n{'=' * 22}")
     
     # Save decode timing data if enabled
+    generation_metrics = getattr(model, '_last_generation_metrics', {}) or {}
     if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
         os.makedirs("results/prefill_dbo", exist_ok=True)
         if args.timing_suffix:
@@ -485,6 +486,11 @@ def run_generation_demo(args):
         else:
             suffix = f"decode_b{args.batch_size}_t{args.max_new_tokens}"
             timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+        model._last_decode_timing.prefill_ms = generation_metrics.get("prefill_ms")
+        model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
+        model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
+        model._last_decode_timing.decode_tpot_ms = generation_metrics.get("decode_tpot_ms")
+        model._last_decode_timing.representative_itl_ms = model._last_decode_timing.total_time_ms
         model._last_decode_timing.save(timing_file)
         logger.info(f"Decode timing saved: {timing_file}")
     elif args.timing and (not hasattr(model, '_last_decode_timing') or model._last_decode_timing is None):
@@ -495,6 +501,10 @@ def run_generation_demo(args):
             "mode": "serial",
             "role": ctx.role,
             "total_time_ms": gen_time * 1000,
+            "prefill_ms": generation_metrics.get("prefill_ms"),
+            "decode_loop_ms": generation_metrics.get("decode_loop_ms"),
+            "decode_steps": generation_metrics.get("decode_steps"),
+            "decode_tpot_ms": generation_metrics.get("decode_tpot_ms"),
             "batch_size": args.batch_size,
             "max_new_tokens": args.max_new_tokens,
             "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,

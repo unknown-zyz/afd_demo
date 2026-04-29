@@ -180,7 +180,7 @@ src/
 - **clock_offset** 通过锚事件对齐两节点时钟（line 165 附近）。
 - 模式选择（`--mode {prefill,decode,auto}`）：
   - `prefill` → baseline 用 `prefill_ms`（serial cache 中字段）。
-  - `decode` → baseline 用 `decode_step_ms`（同上）。
+- `decode` → baseline 用 `decode_tpot_ms`，DBO 也必须用 `decode_tpot_ms`；representative ITL 只用于 pipeline 细节。
   - `auto`（默认） → 从 timing JSON 路径推断。
 - Speedup 公式：`speedup = baseline / dbo_total_time_ms`。
   baseline 字段缺失时显示 "N/A"，不再用错误的 amortized 数字。
@@ -193,8 +193,8 @@ src/
 ### 5.3 Serial baseline cache
 
 - 路径：`results/serial/cache/b<B>_s<S>_t<T>.json`
-- 字段：`total_time_ms`、`max_new_tokens`、`prefill_ms`、`decode_step_ms`
-  （`decode_step_ms = (total_ms − prefill_ms) / N`）。
+- 字段：`total_time_ms`、`max_new_tokens`、`prefill_ms`、`decode_loop_ms`、`decode_steps`、`decode_tpot_ms`
+  （`decode_tpot_ms = decode_loop_ms / decode_steps`，旧 cache 补采时用 `(total_ms − prefill_ms) / (max_new_tokens − 1)`）。
 - `scripts/capture_serial_prefill.sh` 用 `--no-generate` 单跑一遍 prefill
   把 `prefill_ms` 合并进 cache。当前 24 个配置中 15 个有 prefill_ms，
   剩下 9 个 prefill-only 路径 OOM（详见 §7）。

@@ -1,6 +1,6 @@
 #!/bin/bash
 # For each serial cache config, run a --no-dbo --no-generate pass to capture
-# pure prefill time, then merge prefill_ms + decode_step_ms into the cache JSON.
+# pure prefill time, then merge prefill_ms + decode_tpot_ms into the cache JSON.
 #
 # Usage: ./scripts/capture_serial_prefill.sh [--skip-existing]
 set -u
@@ -52,10 +52,15 @@ p = json.loads(raw.read_text())
 prefill_ms = float(p["total_time_ms"])
 total_ms   = float(d["total_time_ms"])
 n          = int(d["max_new_tokens"])
+decode_steps = max(n - 1, 0)
+if decode_steps <= 0:
+    raise SystemExit("no decode-loop steps; cannot compute TPOT")
 d["prefill_ms"] = prefill_ms
-d["decode_step_ms"] = (total_ms - prefill_ms) / n if n > 0 else 0.0
+d["decode_step_ms"] = (total_ms - prefill_ms) / decode_steps
+d["decode_tpot_ms"] = d["decode_step_ms"]
+d["decode_steps"] = decode_steps
 cache.write_text(json.dumps(d, indent=2))
-print(f"  merged: prefill={prefill_ms:.1f}ms  decode_step={(total_ms-prefill_ms)/n:.1f}ms  total={total_ms:.1f}ms")
+print(f"  merged: prefill={prefill_ms:.1f}ms  decode_tpot={d['decode_tpot_ms']:.1f}ms  total={total_ms:.1f}ms")
 PY
 done
 

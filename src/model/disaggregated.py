@@ -6,6 +6,7 @@ coordinating between attention and FFN workers across nodes.
 """
 
 import logging
+import time
 from typing import Optional, Tuple, List, Dict, Any
 
 import torch
@@ -17,6 +18,7 @@ from .attention_worker import AttentionWorker
 from .ffn_worker import FFNWorker
 from ..distributed import get_distributed_context
 from ..distributed.communicator import AFDCommunicator
+from ..utils import device as devmod
 from ..utils.sampling import sample_next_token, StoppingCriteria
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,7 @@ class DisaggregatedQwenModel(nn.Module):
         
         # Communicator
         self.communicator: Optional[AFDCommunicator] = None
+        self._last_generation_metrics: Dict[str, Any] = {}
     
     def load_weights(self, model_name: str) -> None:
         """
@@ -591,8 +594,12 @@ class DisaggregatedQwenModel(nn.Module):
             pad_token_id=pad_token_id,
         )
         
+        devmod.synchronize()
+        prefill_start = time.perf_counter()
         # Prefill phase (uses existing DBO scheduler)
         logits = self.forward_prefill(input_ids)
+        devmod.synchronize()
+        prefill_ms = (time.perf_counter() - prefill_start) * 1000
         
         # Sample first token
         next_token_logits = logits[:, -1, :]
@@ -621,8 +628,12 @@ class DisaggregatedQwenModel(nn.Module):
                 use_crosslayer=decode_use_crosslayer,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
-        
+
         # Decode loop
+        decode_steps = max(max_new_tokens - 1, 0)
+        devmod.synchronize()
+        self.ctx.barrier()
+        decode_start = time.perf_counter()
         for step in range(max_new_tokens - 1):
             # Current position = KV cache length (accurate regardless of path)
             cur_pos = self.kv_cache.get_seq_length()
@@ -660,12 +671,28 @@ class DisaggregatedQwenModel(nn.Module):
                 # Still need to complete remaining steps for FFN sync
                 # In future: add proper sync mechanism
                 pass
-        
+        devmod.synchronize()
+        self.ctx.barrier()
+        decode_loop_ms = (time.perf_counter() - decode_start) * 1000
+        decode_tpot_ms = decode_loop_ms / decode_steps if decode_steps > 0 else None
+        self._last_generation_metrics = {
+            "prefill_ms": prefill_ms,
+            "decode_loop_ms": decode_loop_ms,
+            "decode_steps": decode_steps,
+            "decode_tpot_ms": decode_tpot_ms,
+        }
+
         # Log Decode DBO stats
         if decode_scheduler is not None:
             logger.info(f"Decode DBO stats: {decode_scheduler.get_stats()}")
             # Store timing data for external access
             self._last_decode_timing = decode_scheduler.get_timing_data()
+            if self._last_decode_timing is not None:
+                self._last_decode_timing.prefill_ms = prefill_ms
+                self._last_decode_timing.representative_itl_ms = self._last_decode_timing.total_time_ms
+                self._last_decode_timing.decode_loop_ms = decode_loop_ms
+                self._last_decode_timing.decode_steps = decode_steps
+                self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
         
         return generated_ids
     
@@ -688,8 +715,12 @@ class DisaggregatedQwenModel(nn.Module):
         """
         batch_size, prompt_len = input_ids.shape
         
+        devmod.synchronize()
+        prefill_start = time.perf_counter()
         # Prefill (attention node samples first token after this)
         self.forward_prefill(input_ids)
+        devmod.synchronize()
+        prefill_ms = (time.perf_counter() - prefill_start) * 1000
         
         # Initialize Decode DBO scheduler if enabled
         decode_scheduler = None
@@ -706,6 +737,10 @@ class DisaggregatedQwenModel(nn.Module):
         
         # Decode loop: max_new_tokens - 1 iterations
         # (first token is sampled after prefill on attention node)
+        decode_steps = max(max_new_tokens - 1, 0)
+        devmod.synchronize()
+        self.ctx.barrier()
+        decode_start = time.perf_counter()
         for step in range(max_new_tokens - 1):
             # Create dummy token input
             dummy_token = torch.zeros(
@@ -724,11 +759,27 @@ class DisaggregatedQwenModel(nn.Module):
                 )
             else:
                 self.forward_decode(dummy_token)
-        
+        devmod.synchronize()
+        self.ctx.barrier()
+        decode_loop_ms = (time.perf_counter() - decode_start) * 1000
+        decode_tpot_ms = decode_loop_ms / decode_steps if decode_steps > 0 else None
+        self._last_generation_metrics = {
+            "prefill_ms": prefill_ms,
+            "decode_loop_ms": decode_loop_ms,
+            "decode_steps": decode_steps,
+            "decode_tpot_ms": decode_tpot_ms,
+        }
+
         # Log Decode DBO stats for FFN node
         if decode_scheduler is not None:
             logger.info(f"[FFN] Decode DBO stats: {decode_scheduler.get_stats()}")
             self._last_decode_timing = decode_scheduler.get_timing_data()
+            if self._last_decode_timing is not None:
+                self._last_decode_timing.prefill_ms = prefill_ms
+                self._last_decode_timing.representative_itl_ms = self._last_decode_timing.total_time_ms
+                self._last_decode_timing.decode_loop_ms = decode_loop_ms
+                self._last_decode_timing.decode_steps = decode_steps
+                self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
         
         # FFN node doesn't return meaningful output
         return input_ids

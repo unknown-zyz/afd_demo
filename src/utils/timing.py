@@ -83,6 +83,11 @@ class PipelineTiming:
     num_layers: int = 0
     num_micro_batches: int = 0
     total_time_ms: float = 0.0
+    prefill_ms: float | None = None
+    decode_loop_ms: float | None = None
+    decode_steps: int | None = None
+    decode_tpot_ms: float | None = None
+    representative_itl_ms: float | None = None
     events: List[TimingEvent] = field(default_factory=list)
     
     # Aggregated stats
@@ -118,7 +123,7 @@ class PipelineTiming:
         return self.total_compute_ms / self.total_time_ms
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "node": self.node,
             "num_layers": self.num_layers,
             "num_micro_batches": self.num_micro_batches,
@@ -131,6 +136,17 @@ class PipelineTiming:
             "compute_ratio": self.compute_ratio,
             "events": [e.to_dict() for e in self.events],
         }
+        if self.prefill_ms is not None:
+            data["prefill_ms"] = self.prefill_ms
+        if self.decode_loop_ms is not None:
+            data["decode_loop_ms"] = self.decode_loop_ms
+        if self.decode_steps is not None:
+            data["decode_steps"] = self.decode_steps
+        if self.decode_tpot_ms is not None:
+            data["decode_tpot_ms"] = self.decode_tpot_ms
+        if self.representative_itl_ms is not None:
+            data["representative_itl_ms"] = self.representative_itl_ms
+        return data
     
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)

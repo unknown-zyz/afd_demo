@@ -9,7 +9,7 @@
 | `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 4 泳道 pipeline Gantt 图 |
 | `plot_all_pipelines.py` | 批量扫描结果目录并生成所有可视化图 |
 | `audit_experiment_baselines.py` | 扫描 DBO timing 是否有 mode-matched serial baseline |
-| `capture_serial_split.py` | 为 GPU/NPU serial cache 补充 `prefill_ms` / `decode_step_ms` |
+| `capture_serial_split.py` | 为 GPU/NPU serial cache 补充 `prefill_ms` / `decode_tpot_ms` |
 | `capture_serial_prefill.sh` | 旧版 GPU-only split 补采脚本 |
 
 ## 常用命令

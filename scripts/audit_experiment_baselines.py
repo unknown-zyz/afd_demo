@@ -71,7 +71,9 @@ def audit_root(root: Path) -> list[Row]:
 
             dbo_ms = None
             try:
-                dbo_ms = float(_load_json(attn_path).get("total_time_ms") or 0)
+                attn_data = _load_json(attn_path)
+                dbo_key = "decode_tpot_ms" if mode == "decode" else "total_time_ms"
+                dbo_ms = float(attn_data.get(dbo_key) or 0)
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 pass
 
@@ -95,7 +97,7 @@ def audit_root(root: Path) -> list[Row]:
 
             assert baseline.value_ms is not None
             speedup = baseline.value_ms / dbo_ms if dbo_ms and dbo_ms > 0 else None
-            status = "ok" if baseline.source in {"prefill_ms", "decode_step_ms"} else "decode-fallback"
+            status = "ok" if baseline.source in {"prefill_ms", "decode_tpot_ms"} else "baseline-missing"
             rows.append(Row(root.name, mode, tag, batch, seq, tokens, status, str(serial_path), _fmt(baseline.value_ms), _fmt(dbo_ms), _fmt(speedup), baseline.source))
 
     return rows

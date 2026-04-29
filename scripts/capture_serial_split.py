@@ -58,7 +58,7 @@ def has_split(path: Path) -> bool:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return False
-    return "prefill_ms" in data and "decode_step_ms" in data
+    return "prefill_ms" in data and "decode_tpot_ms" in data
 
 
 def build_command(args: argparse.Namespace, config: Config) -> tuple[list[str], Path]:
@@ -118,9 +118,14 @@ def merge_split(cache_path: Path, raw_path: Path) -> tuple[float, float]:
             f"{cache_path} total_time_ms ({total_ms:.3f}) is smaller than captured "
             f"prefill_ms ({prefill_ms:.3f}); serial cache is not a full generation run"
         )
-    decode_step_ms = (total_ms - prefill_ms) / tokens
+    decode_steps = max(tokens - 1, 0)
+    if decode_steps <= 0:
+        raise ValueError(f"{cache_path} has no decode-loop steps")
+    decode_step_ms = (total_ms - prefill_ms) / decode_steps
     cache["prefill_ms"] = prefill_ms
     cache["decode_step_ms"] = decode_step_ms
+    cache["decode_tpot_ms"] = decode_step_ms
+    cache["decode_steps"] = decode_steps
     cache_path.write_text(json.dumps(cache, indent=2) + "\n")
     return prefill_ms, decode_step_ms
 
@@ -193,7 +198,7 @@ def main() -> int:
             print(f"[FAIL] merge failed for {name}: {exc}", file=sys.stderr)
             failures += 1
             continue
-        print(f"[merged] prefill_ms={prefill_ms:.3f} decode_step_ms={decode_step_ms:.3f}")
+        print(f"[merged] prefill_ms={prefill_ms:.3f} decode_tpot_ms={decode_step_ms:.3f}")
 
     return 1 if failures else 0
 

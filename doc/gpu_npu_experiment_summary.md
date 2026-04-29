@@ -22,8 +22,8 @@ validation surface, and `P2PKeepalive` path was not restored.
 | Metric | Definition | Baseline requirement |
 |---|---|---|
 | TTFT-path speedup | `serial_prefill_ms / dbo_prefill_ms` | Serial cache must contain `prefill_ms`. |
-| TPOT speedup | `serial_decode_step_ms / dbo_decode_step_ms` | Serial cache must contain `decode_step_ms`. |
-| TPOT fallback | `serial_total_time_ms / max_new_tokens` | Used only when native `decode_step_ms` is missing; it may include TTFT amortized into decode. |
+| TPOT speedup | `serial_decode_tpot_ms / dbo_decode_tpot_ms` | Both serial and DBO timing must contain `decode_tpot_ms`. |
+| Representative ITL | One fixed DBO decode step used for pipeline Gantt detail | Not used for TPOT speedup. |
 
 Speedup greater than `1.0x` means DBO is faster than the serial baseline.
 
@@ -32,9 +32,9 @@ Speedup greater than `1.0x` means DBO is faster than the serial baseline.
 | Root | Mode | Native OK | Fallback | Missing | Notes |
 |---|---|---:|---:|---:|---|
 | `results/` GPU | prefill TTFT-path | 15 | 0 | 0 | All prefill entries have mode-matched `prefill_ms`. |
-| `results/` GPU | decode TPOT | 30 | 18 | 0 | 18 decode/crosslayer plots still use TPOT fallback. |
+| `results/` GPU | decode TPOT | 0 | 0 | 48 | Older decode results must be regenerated to include exact `decode_tpot_ms`. |
 | `results_npu/` NPU | prefill TTFT-path | 5 | 0 | 20 | Representative serial prefill split was added for 5 configs. |
-| `results_npu/` NPU | decode TPOT | 10 | 80 | 0 | Representative native TPOT split was added for 5 configs across decode and crosslayer. |
+| `results_npu/` NPU | decode TPOT | 0 | 0 | 90 | Older decode results must be regenerated to include exact DBO `decode_tpot_ms`. |
 
 The refreshed audit CSVs are:
 
@@ -100,13 +100,9 @@ native TPOT where available:
   while prefill DBO is slower.
 
 The earlier NPU decode “5x” headline should not be used as a final claim unless
-the corresponding config has native `decode_step_ms`. After adding native split
-for representative configs, NPU decode speedups are mostly `1.2x–2.3x`, not
-uniformly `5x`.
+the corresponding config has native `decode_tpot_ms`. Earlier native split
+results used a representative-step DBO denominator; new runs use exact TPOT.
 
-Remaining NPU fallback entries are not invalid, but their speedups are lower
-confidence because the serial denominator is `total_time_ms / max_new_tokens`
-rather than native per-step TPOT. The current results support a cautious
-conclusion: NPU decode DBO has positive overlap benefit on tested native-split
-configs; GPU decode DBO remains regressionary; full-grid NPU native TPOT still
-requires more serial split captures, constrained by HBM for larger configs.
+Remaining older NPU entries should be regenerated before making TPOT speedup
+claims because they do not contain exact `decode_tpot_ms`. The current code now
+requires exact TPOT fields instead of falling back to `total_time_ms / tokens`.

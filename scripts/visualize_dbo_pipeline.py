@@ -191,7 +191,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         output_path: 输出图片路径
         num_layers: 显示的层数
         start_layer: 原始数据中的起始层号
-        serial_baseline_ms: 与 DBO 对比的串行基线 (mode-matched: prefill_ms or decode_step_ms)
+        serial_baseline_ms: 与 DBO 对比的串行基线 (mode-matched: prefill_ms or decode_tpot_ms)
         serial_baseline_label: 可选标签 (如 "prefill" / "decode_step")
         dbo_total_ms: DBO 端到端时间 (全模型, mode-matched); 默认取 attn JSON total_time_ms
         mode: "prefill" 或 "decode" (仅用于标题显示)
@@ -258,7 +258,8 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     # 计算改进的性能指标
     num_mb = attn_data.get('num_micro_batches', 2)
 
-    # Mode-matched DBO latency from timing JSON (TTFT-path or representative ITL sample).
+    # Mode-matched DBO latency from timing JSON. Decode speedup uses full
+    # decode-loop TPOT; the Gantt bars still visualize one representative ITL.
     dbo_attn_total = attn_data.get('total_time_ms', 0)
     dbo_ffn_total = ffn_data.get('total_time_ms', 0)
     # For decode, total_time_ms is the recorded representative ITL sample.
@@ -290,19 +291,24 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     total_comm = sum(a2f_times + f2a_times)
     
     # ─── Speedup: mode-matched baseline vs DBO full-model time ───────────────
-    # DBO full-model time (one full prefill pass OR one full decode step)
+    # DBO full-model time (one full prefill pass OR exact decode TPOT)
     if dbo_total_ms is not None and dbo_total_ms > 0:
         dbo_full = dbo_total_ms
     else:
-        dbo_full = max(attn_data.get('total_time_ms', 0), ffn_data.get('total_time_ms', 0))
+        if mode == "decode":
+            dbo_full = max(attn_data.get('decode_tpot_ms') or 0, ffn_data.get('decode_tpot_ms') or 0)
+        else:
+            dbo_full = max(attn_data.get('total_time_ms', 0), ffn_data.get('total_time_ms', 0))
 
     if mode == "prefill":
         unit = "TTFT"
         dbo_label = f"DBO TTFT-path: {dbo_full:.1f}ms"
         speedup_name = "TTFT"
     elif mode == "decode":
-        unit = "rep. ITL"
-        dbo_label = f"DBO rep. ITL: {dbo_full:.1f}ms"
+        unit = "TPOT"
+        rep_itl = max(attn_data.get('representative_itl_ms') or attn_data.get('total_time_ms', 0),
+                      ffn_data.get('representative_itl_ms') or ffn_data.get('total_time_ms', 0))
+        dbo_label = f"DBO TPOT: {dbo_full:.1f}ms (rep. ITL: {rep_itl:.1f}ms)"
         speedup_name = "TPOT"
     else:
         unit = "run"
@@ -407,7 +413,7 @@ def main():
     parser.add_argument(
         '--serial-timing',
         default=None,
-        help='Path to serial cache JSON (must contain prefill_ms and/or decode_step_ms)'
+        help='Path to serial cache JSON (must contain prefill_ms and/or decode_tpot_ms)'
     )
     parser.add_argument(
         '--mode',
@@ -445,12 +451,12 @@ def main():
         except Exception as e:
             print(f"  Warning: Failed to read serial timing: {e}")
 
-    # ── DBO total time (full model, one step/pass) from attn JSON ──────────
+    # ── DBO comparison time (TTFT for prefill, TPOT for decode) from attn JSON ─
     dbo_total_ms = None
     try:
         with open(args.attn_timing) as f:
             _attn = json.load(f)
-        dbo_total_ms = _attn.get('total_time_ms')
+        dbo_total_ms = _attn.get('decode_tpot_ms') if args.mode == 'decode' else _attn.get('total_time_ms')
     except Exception:
         pass
     

@@ -4,7 +4,7 @@
 Reads the pair of timing JSON files (attention + FFN) produced by src.main and
 emits a detailed markdown report with:
   - Metadata (mode, batch, seq, tokens, dtype, model)
-  - Model-side TTFT timing for prefill runs, or representative ITL timing for decode runs
+  - Model-side TTFT timing for prefill runs, or exact TPOT timing for decode runs
   - Per-step timing table (if events span multiple steps)
   - Per-layer × {Attention, A2F, FFN, F2A} mean/min/max table
   - Optional comparison vs a cached serial baseline
@@ -13,10 +13,9 @@ Event type mapping (from timing_tracker):
   attention node: attn_compute -> A;   send_transfer -> A2F;   recv_wait -> F2A wait
   ffn       node: ffn_compute  -> FFN; send_transfer -> F2A;   recv_wait -> A2F wait
 
-Decode DBO records ONE representative inter-token-latency (ITL) sample:
-the second DBO decode call (scheduler step=1), with step 0 skipped as warmup.
-That single-step sample is used for pipeline/per-layer analysis; service-level
-decode comparisons are reported as TPOT when a serial TPOT baseline is present.
+Decode DBO still records ONE representative inter-token-latency (ITL) sample for
+pipeline/per-layer analysis. Speedup uses exact full decode-loop TPOT from
+``decode_tpot_ms``.
 """
 from __future__ import annotations
 
@@ -149,6 +148,9 @@ def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
     )
     keys = [
         (total_label, "total_time_ms", "ms"),
+        ("Decode loop total", "decode_loop_ms", "ms"),
+        ("Decode steps", "decode_steps", ""),
+        ("Decode TPOT", "decode_tpot_ms", "ms"),
         ("Compute", "total_compute_ms", "ms"),
         ("Recv wait", "total_recv_wait_ms", "ms"),
         ("MoE router", "total_moe_router_ms", "ms"),
@@ -173,10 +175,13 @@ def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
 def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mode: str) -> str:
     if not cur_attn or not serial_attn:
         return ""
-    cur_value = cur_attn.get("total_time_ms")
     normalized_mode = normalize_mode(mode)
+    cur_value = cur_attn.get("total_time_ms") if normalized_mode == "prefill" else cur_attn.get("decode_tpot_ms")
     if cur_value is None:
-        return ""
+        metric = "TTFT" if normalized_mode == "prefill" else "exact TPOT"
+        return (f"\n## Compared to serial baseline\n\n"
+                f"- This run {metric}: **N/A** (missing required timing field)\n"
+                f"- Speedup: **N/A**\n")
     cur = float(cur_value)
     if cur <= 0:
         return ""
@@ -184,7 +189,7 @@ def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mo
     baseline = resolve_serial_baseline(serial_attn, normalized_mode)
     if not baseline.available:
         warning = baseline.warning or "mode-matched serial baseline unavailable"
-        run_metric = "TTFT" if normalized_mode == "prefill" else "representative ITL sample"
+        run_metric = "TTFT" if normalized_mode == "prefill" else "exact TPOT"
         return (f"\n## Compared to serial baseline\n\n"
                 f"- Serial baseline: **N/A** ({warning})\n"
                 f"- This run {run_metric}: **{cur:.3f} ms**\n"
@@ -194,7 +199,7 @@ def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mo
     assert baseline.unit is not None
     speedup = baseline.value_ms / cur
     delta = cur - baseline.value_ms
-    cur_metric = "TTFT" if normalized_mode == "prefill" else "representative ITL sample"
+    cur_metric = "TTFT" if normalized_mode == "prefill" else "exact TPOT"
     speedup_metric = "TTFT" if normalized_mode == "prefill" else "TPOT"
     source_note = baseline.source
     if baseline.warning:
@@ -236,7 +241,7 @@ def main():
     timing_title = (
         "Model-side TTFT timing (prefill path)"
         if normalize_mode(args.mode) == "prefill"
-        else "Decode timing (representative ITL sample)"
+        else "Decode timing (exact TPOT + representative ITL detail)"
     )
     out.append(f"## {timing_title}\n")
     out.append(_e2e_block(attn, ffn, args.mode))

@@ -38,9 +38,9 @@ def infer_mode_from_path(path: str | Path) -> str | None:
 def resolve_serial_baseline(cache: Mapping[str, Any], mode: str | None) -> BaselineResolution:
     """Return the mode-matched serial baseline.
 
-    Prefill/TTFT comparisons must use ``prefill_ms``. Decode/TPOT
-    comparisons should use ``decode_step_ms``; when it is absent, a generation
-    total can be divided by token count as a marked fallback.
+    Prefill/TTFT comparisons must use ``prefill_ms``. Decode/TPOT comparisons
+    must use ``decode_tpot_ms`` so both serial and DBO use the same full
+    decode-loop TPOT definition.
     """
     mode = normalize_mode(mode)
 
@@ -56,25 +56,24 @@ def resolve_serial_baseline(cache: Mapping[str, Any], mode: str | None) -> Basel
         )
 
     if mode == "decode":
-        value = cache.get("decode_step_ms")
+        value = cache.get("decode_tpot_ms")
         if value is not None:
-            return BaselineResolution(float(value), "TPOT", "decode_step_ms")
+            return BaselineResolution(float(value), "TPOT", "decode_tpot_ms")
 
-        total = cache.get("total_time_ms")
-        tokens = cache.get("max_new_tokens") or cache.get("tokens")
-        if total is not None and tokens:
+        legacy = cache.get("decode_step_ms")
+        if legacy is not None:
             return BaselineResolution(
-                float(total) / int(tokens),
-                "TPOT fallback",
-                "total_time_ms/max_new_tokens fallback",
-                "decode_step_ms missing; using total_time_ms / max_new_tokens. If total_time_ms is full generation latency, this includes TTFT amortized across output tokens.",
+                None,
+                None,
+                "legacy-decode-step-ms",
+                "decode_tpot_ms missing; legacy decode_step_ms is not used for exact TPOT speedup",
             )
 
         return BaselineResolution(
             None,
             None,
             "missing",
-            "TPOT baseline missing and total_time_ms/max_new_tokens fallback unavailable",
+            "exact TPOT baseline missing; decode_tpot_ms unavailable",
         )
 
     return BaselineResolution(None, None, "unknown-mode", "could not infer prefill/decode comparison mode")
