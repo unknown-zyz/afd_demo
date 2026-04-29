@@ -62,22 +62,6 @@
 
 **适合**: 深入 review、定位性能/正确性风险
 
-### [npu_vs_gpu_experiment_analysis.md](npu_vs_gpu_experiment_analysis.md) - GPU/NPU 实验口径审计
-
-- GPU/NPU DBO speedup 的统一计算口径
-- `Speedup: N/A` 可补与不可补分类
-- NPU 分支相对 GPU 主线的改动和可信度风险
-
-**适合**: review GPU/NPU 实验图、判断哪些结果可用于结论
-
-### [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md) - GPU/NPU 实验补采总结
-
-- 当前 GPU/NPU TTFT-path 与 TPOT speedup 汇总
-- native baseline、fallback、missing 的补采状态
-- NPU 910C 与 GPU 结果差异的可信结论
-
-**适合**: 获取当前实验结论、确认哪些配置仍受 OOM 或 fallback 限制
-
 ## 快速导航
 
 ### 我是新用户

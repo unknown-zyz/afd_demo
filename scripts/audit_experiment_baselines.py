@@ -127,7 +127,7 @@ def print_summary(rows: list[Row]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", action="append", default=[],
-                        help="Results root to audit. Can be passed more than once. Defaults to results and results_npu if present.")
+                        help="Results root to audit. Can be passed more than once. Defaults to results.")
     parser.add_argument("--output-csv", default="", help="Optional CSV path for detailed rows")
     args = parser.parse_args()
 
@@ -136,7 +136,7 @@ def main() -> int:
         path = Path(raw_root)
         roots.append(path if path.is_absolute() else ROOT / path)
     if not roots:
-        roots = [ROOT / "results", ROOT / "results_npu"]
+        roots = [ROOT / "results"]
     rows: list[Row] = []
     for root in roots:
         if root.is_dir():

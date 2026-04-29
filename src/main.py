@@ -143,22 +143,13 @@ def parse_args():
     parser.add_argument('--warmup-rounds', type=int, default=3,
                         help='Number of warmup rounds')
     parser.add_argument('--prefill-warmup-rounds', type=int, default=None,
-                        help='Untimed prefill passes to absorb backend JIT/graph-compile '
-                             'overhead before the timed run. Default: 1 on NPU, 0 on CUDA/CPU. '
-                             'Required on Ascend — without it layers 0–1 of mb0 are dominated '
-                             'by per-shape HCCL op compilation (see doc/prefill_l1_anomaly.md).')
+                        help='Untimed prefill passes before the timed run. '
+                             'Default: 0 on CUDA/CPU.')
 
     # Backend (device + distributed backend selection)
-    parser.add_argument('--backend', type=str, choices=['auto', 'cuda', 'npu', 'cpu'],
+    parser.add_argument('--backend', type=str, choices=['auto', 'cuda', 'cpu'],
                         default='auto',
-                        help='Compute backend: cuda (NVIDIA), npu (Ascend 910/910C), cpu (dry-run).')
-    # NPU / multi-device parallel layout
-    parser.add_argument('--attn-size', type=int, default=1,
-                        help='Number of devices assigned to the attention role (DP over micro-batches).')
-    parser.add_argument('--ffn-size', type=int, default=1,
-                        help='Number of devices assigned to the FFN role.')
-    parser.add_argument('--ffn-tp-size', type=int, default=1,
-                        help='Tensor-parallel degree within the FFN role (must divide --ffn-size).')
+                        help='Compute backend: cuda (NVIDIA) or cpu (dry-run).')
 
     return parser.parse_args()
 
@@ -294,11 +285,10 @@ def run_inference_demo(args):
         scheduler = SimplePipelineScheduler(model=model, num_micro_batches=args.num_micro_batches)
         scheduler_name = "SYNC"
 
-    # Prefill warmup — eat per-shape JIT/graph-compile cost before the timed run
-    # so that layer-0/1 of mb0 don't dominate the timing JSON and pipeline plot.
+    # Optional untimed prefill passes before the measured run.
     warmup_rounds = args.prefill_warmup_rounds
     if warmup_rounds is None:
-        warmup_rounds = 1 if devmod.DEVICE_TYPE == 'npu' else 0
+        warmup_rounds = 0
     if warmup_rounds > 0:
         logger.info(f"Running {warmup_rounds} prefill warmup round(s) to absorb JIT compile cost")
         saved_timing = getattr(scheduler, 'enable_timing', False)
@@ -524,10 +514,7 @@ def run_generation_demo(args):
 
 def main():
     args = parse_args()
-    # Select device backend FIRST — this patches torch.cuda to torch.npu
-    # (via torch_npu.contrib.transfer_to_npu) when --backend=npu, so any
-    # subsequent torch.cuda.* call inside the codebase transparently runs
-    # on the NPU. Must happen before init_process_group and any .to(device).
+    # Select device backend before init_process_group and any .to(device).
     devmod.init_backend(args.backend)
     devmod.apply_backend_envs()
     try:

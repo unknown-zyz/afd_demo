@@ -90,8 +90,6 @@ class DistributedContext:
         from ..utils import device as devmod
         if devmod.is_available():
             devmod.set_device(config.local_rank)
-            # device_id param to init_process_group is a torch.device; only
-            # meaningful for nccl. HCCL on NPU uses torch.npu device implicitly.
             if config.backend == "nccl":
                 device_id = torch.device(f"cuda:{config.local_rank}")
         
@@ -149,10 +147,10 @@ class DistributedContext:
     
     @property
     def device(self) -> torch.device:
-        """Get the device for this rank (cuda / npu / cpu)."""
+        """Get the device for this rank (cuda / cpu)."""
         from ..utils import device as devmod
-        if devmod.DEVICE_TYPE in ("cuda", "npu"):
-            return torch.device(f"{devmod.DEVICE_TYPE}:{self.local_rank}")
+        if devmod.DEVICE_TYPE == "cuda":
+            return torch.device(f"cuda:{self.local_rank}")
         return torch.device("cpu")
     
     @property

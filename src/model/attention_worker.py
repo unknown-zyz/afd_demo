@@ -239,7 +239,7 @@ class AttentionWorker(nn.Module):
     def _resolve_role_devices(self, primary_device: torch.device) -> List[torch.device]:
         """Resolve all visible accelerator devices for role-internal layer sharding."""
         from ..utils import device as devmod
-        if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
+        if primary_device.type != "cuda" or not devmod.is_available():
             return [primary_device]
         count = devmod.device_count()
         if count <= 1:

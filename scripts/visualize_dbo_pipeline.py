@@ -379,14 +379,14 @@ def main():
         type=int,
         default=0,
         help='Starting layer to visualize (default: 0, include Layer 0). '
-             'Use --auto-skip-warmup to drop backend JIT warmup layers automatically.'
+            'Use --auto-skip-warmup to drop warmup-skewed layers automatically.'
     )
     parser.add_argument(
         '--auto-skip-warmup',
         action='store_true',
         default=True,
         help='Auto-detect and skip warmup layers whose mb0 duration is >5× the '
-             'median of later layers (for NPU prefill without --prefill-warmup-rounds).'
+            'median of later layers.'
     )
     parser.add_argument(
         '--no-auto-skip-warmup',
@@ -465,7 +465,7 @@ def main():
         print(f"Error: FFN timing file not found: {args.ffn_timing}")
         sys.exit(1)
 
-    # Auto-detect warmup layers (NPU per-shape JIT compile): if mb0 attn durations
+    # Auto-detect warmup-skewed layers: if mb0 attn durations
     # for the first few layers are >5× the median of later layers, bump start_layer.
     auto_skipped = 0
     if args.auto_skip_warmup:

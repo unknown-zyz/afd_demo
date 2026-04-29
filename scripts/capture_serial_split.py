@@ -62,31 +62,6 @@ def has_split(path: Path) -> bool:
 
 
 def build_command(args: argparse.Namespace, config: Config) -> tuple[list[str], Path]:
-    if args.backend == "npu":
-        suffix = f"serial-prefill_npu_b{config.batch}_s{config.seq}_t{config.tokens}"
-        raw = ROOT / "results" / "prefill_dbo" / f"timing_attention_{suffix}.json"
-        cmd = [
-            "bash",
-            "scripts/run_npu.sh",
-            "--attn-size",
-            str(args.attn_size),
-            "--ffn-size",
-            str(args.ffn_size),
-            "--ffn-tp-size",
-            str(args.ffn_tp_size),
-            "--batch",
-            str(config.batch),
-            "--seq",
-            str(config.seq),
-            "--tokens",
-            str(config.tokens),
-            "--model-name",
-            args.model_name,
-            "--no-dbo",
-            "--no-generate",
-        ]
-        return cmd, raw
-
     suffix = f"warmup_serial_{args.deployment}_b{config.batch}_s{config.seq}_t{config.tokens}"
     raw = ROOT / "results" / "prefill_dbo" / f"timing_attention_{suffix}.json"
     cmd = [
@@ -133,7 +108,6 @@ def merge_split(cache_path: Path, raw_path: Path) -> tuple[float, float]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default="results", help="Results root containing serial/cache")
-    parser.add_argument("--backend", choices=("cuda", "npu"), default="cuda")
     parser.add_argument("--deployment", default="local", help="run_single deployment for CUDA/GPU capture")
     parser.add_argument("--batches", default="", help="Comma-separated batch filter")
     parser.add_argument("--seqs", default="", help="Comma-separated sequence filter")
@@ -142,10 +116,6 @@ def main() -> int:
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--warmup-rounds", type=int, default=3)
-    parser.add_argument("--model-name", default=os.environ.get("MODEL_NAME", "/models/Qwen3-30B-A3B"))
-    parser.add_argument("--attn-size", type=int, default=1)
-    parser.add_argument("--ffn-size", type=int, default=1)
-    parser.add_argument("--ffn-tp-size", type=int, default=1)
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -180,8 +150,6 @@ def main() -> int:
 
         raw_path.unlink(missing_ok=True)
         env = os.environ.copy()
-        if args.backend == "npu":
-            env.setdefault("ASCEND_VISIBLE_DEVICES", env.get("VISIBLE_DEVS", "0,1,2,3"))
         env.setdefault("MASTER_PORT", str(29500 + (os.getpid() % 2000)))
         result = subprocess.run(cmd, cwd=ROOT, env=env)
         if result.returncode != 0:

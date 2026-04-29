@@ -1,4 +1,4 @@
-"""Device backend abstraction for CUDA / NPU / CPU.
+"""Device backend abstraction for CUDA / CPU.
 
 Usage:
     from src.utils.device import (
@@ -10,16 +10,14 @@ Usage:
     torch.Tensor([...]).to(DEVICE_TYPE)
 
 Design:
-    - "auto"  → try npu if torch_npu importable, else cuda, else cpu
+    - "auto"  → try cuda, else cpu
     - "cuda"  → require torch.cuda
-    - "npu"   → require torch_npu (imports torch_npu + transfer_to_npu so that
-                existing torch.cuda.* calls redirect to torch.npu.*)
     - "cpu"   → gloo backend, timing Events fall back to perf_counter
 
 Post-init guarantees:
-    - DEVICE_TYPE ∈ {"cuda", "npu", "cpu"}
-    - DIST_BACKEND ∈ {"nccl", "hccl", "gloo"}
-    - device_module() returns torch.cuda / torch.npu / None
+    - DEVICE_TYPE in {"cuda", "cpu"}
+    - DIST_BACKEND in {"nccl", "gloo"}
+    - device_module() returns torch.cuda / None
 """
 from __future__ import annotations
 
@@ -36,18 +34,10 @@ DIST_BACKEND: str = "gloo"
 _INITIALIZED = False
 
 
-def _has_npu() -> bool:
-    try:
-        import torch_npu  # noqa: F401
-        return torch.npu.is_available()
-    except Exception:
-        return False
-
-
 def init_backend(backend: str = "auto") -> str:
     """Select compute backend; idempotent.
 
-    Returns the resolved device type: "cuda" | "npu" | "cpu".
+    Returns the resolved device type: "cuda" | "cpu".
     Must be called BEFORE torch.distributed.init_process_group and before
     any .to(device) / torch.cuda.set_device calls.
     """
@@ -57,27 +47,12 @@ def init_backend(backend: str = "auto") -> str:
 
     backend = backend.lower()
     if backend == "auto":
-        if _has_npu():
-            backend = "npu"
-        elif torch.cuda.is_available():
+        if torch.cuda.is_available():
             backend = "cuda"
         else:
             backend = "cpu"
 
-    if backend == "npu":
-        import torch_npu  # noqa: F401
-        # transfer_to_npu monkey-patches torch.cuda.* to torch.npu.*,
-        # so existing business code stays untouched on NPU.
-        try:
-            from torch_npu.contrib import transfer_to_npu  # noqa: F401
-        except ImportError:
-            logger.warning("torch_npu.contrib.transfer_to_npu not available; "
-                           "torch.cuda.* calls may fail on NPU.")
-        if not torch.npu.is_available():
-            raise RuntimeError("backend=npu requested but torch.npu not available")
-        DEVICE_TYPE = "npu"
-        DIST_BACKEND = "hccl"
-    elif backend == "cuda":
+    if backend == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError("backend=cuda requested but torch.cuda not available")
         DEVICE_TYPE = "cuda"
@@ -95,16 +70,14 @@ def init_backend(backend: str = "auto") -> str:
 
 
 def device_module():
-    """Return torch.cuda / torch.npu / None for cpu."""
+    """Return torch.cuda or None for cpu."""
     if DEVICE_TYPE == "cuda":
         return torch.cuda
-    if DEVICE_TYPE == "npu":
-        return torch.npu
     return None
 
 
 def is_available() -> bool:
-    return DEVICE_TYPE in ("cuda", "npu")
+    return DEVICE_TYPE == "cuda"
 
 
 def device_count() -> int:
@@ -115,8 +88,6 @@ def device_count() -> int:
 def current_device_str(local_rank: int = 0) -> str:
     if DEVICE_TYPE == "cuda":
         return f"cuda:{local_rank}"
-    if DEVICE_TYPE == "npu":
-        return f"npu:{local_rank}"
     return "cpu"
 
 
@@ -144,7 +115,7 @@ def current_stream_synchronize() -> None:
 
 
 def Event(enable_timing: bool = True):
-    """Return a CUDA/NPU Event (for timing). None on CPU."""
+    """Return a CUDA Event for timing; None on CPU."""
     m = device_module()
     if m is None:
         return None
@@ -199,9 +170,4 @@ def apply_backend_envs() -> None:
     if DEVICE_TYPE == "cuda":
         os.environ.setdefault("NCCL_BUFFSIZE", "33554432")
         os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "1")
-    elif DEVICE_TYPE == "npu":
-        # HCCL counterparts; conservative defaults
-        os.environ.setdefault("HCCL_BUFFSIZE", "200")  # in MB on 910C
-        os.environ.setdefault("HCCL_EXEC_TIMEOUT", "1800")
-        os.environ.setdefault("HCCL_CONNECT_TIMEOUT", "600")
     # cpu: no extra env needed

@@ -50,7 +50,7 @@ def plot_one(attn_path: Path, ffn_path: Path, out_png: Path,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default="results",
-                        help="Root directory (default: 'results'; use 'results_npu' for NPU)")
+                        help="Root directory (default: 'results')")
     args = parser.parse_args()
     root_arg = Path(args.root)
     root = root_arg if root_arg.is_absolute() else ROOT / root_arg
