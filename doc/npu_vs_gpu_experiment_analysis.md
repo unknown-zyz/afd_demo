@@ -2,6 +2,11 @@
 
 本文说明当前 GPU `results/` 与 NPU `results_npu/` 实验结果如何用 TTFT / TPOT 口径比较、哪些图上的 `Speedup: N/A` 可以补齐、NPU 分支相对 GPU 主线做了哪些改动，以及目前结论的可信边界。
 
+> **当前状态:** 本文保留口径审计和历史问题说明。GPU/NPU 已完成 fresh
+> full rerun，且 active result roots 的 baseline audit 均为 OK；最终覆盖率、
+> OOM 边界和 speedup 结论以
+> [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md) 为准。
+
 ## 1. 统一比较口径
 
 DBO 图和 report 中继续使用 **Speedup = serial / DBO**（>1 表示 DBO 更快），但 baseline 必须按服务指标匹配：

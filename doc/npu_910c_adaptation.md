@@ -1,13 +1,12 @@
 # NPU-910C Adaptation
 
 This document describes the adaptation of the AFD demo (GPU baseline) for
-Huawei Ascend **NPU-910C** (16 cards per node; initial validation on 4 cards).
-It is scoped to the `feat/npu-910c` branch.
+Huawei Ascend **NPU-910C**. It is scoped to the maintained `npu` branch.
 
-> **Status:** Scaffolding + backend abstraction complete and CPU-dry-run-
-> validated. Full NPU execution has **not** been tested on real 910C hardware
-> in this branch — the author did not have access. Known integration risks are
-> listed in [§6](#6-known-limitations--tested-surface).
+> **Status:** Real 910C execution has been validated in the long-lived
+> `afd-npu-test` container. The fresh matrix results live under
+> `results_npu/`; see [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md)
+> for current TTFT/TPOT coverage, speedups, and OOM boundaries.
 
 ---
 
@@ -24,17 +23,18 @@ It is scoped to the `feat/npu-910c` branch.
 
 ### 1.2 Pip requirements
 
-The baseline `requirements.txt` remains unchanged; install **additionally**:
+The baseline `requirements.txt` remains unchanged; install the CANN-compatible
+`torch` / `torch_npu` pair additionally. The validated 910C container currently
+uses:
 
 ```bash
-# On the 910C host, with CANN already installed:
-pip install torch==2.1.0   # must match torch_npu's supported torch version
-pip install torch_npu==2.1.0.post3   # or the version shipped with your CANN
+torch 2.6.0+cpu
+torch_npu 2.6.0
 ```
 
 Actual version numbers depend on the CANN release on the target machine —
-`torch_npu` is tightly pinned to specific `torch` minor versions. Check
-`https://gitee.com/ascend/pytorch` for the compatibility matrix.
+`torch_npu` is tightly pinned to specific `torch` minor versions. Check the
+Ascend PyTorch compatibility matrix before changing either package.
 
 ### 1.3 Environment variables
 
@@ -190,10 +190,10 @@ hard-coding.
 
 ## 4. Performance & Behaviour Differences
 
-> Numbers below are expected ballpark figures based on public 910C specs and
-> V100 baseline numbers. **None of the 910C numbers are measured on real
-> hardware in this branch.** All real-hardware performance results should be
-> filled in once the branch is exercised on a 910C node.
+Current measured results are summarized in
+[gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md). The table below
+keeps hardware-level expectations for context only; use `results_npu/` for
+measured numbers.
 
 | Axis | V100-32GB (baseline, measured) | 910C (expected) | Notes |
 | --- | --- | --- | --- |

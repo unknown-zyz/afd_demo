@@ -1,0 +1,37 @@
+# Experiment report — serial b256 s256 t20
+
+## Configuration
+
+- **Mode**: `serial`
+- **Batch size**: 256
+- **Prefill seq**: 256
+- **Decode tokens**: 20
+- **Layers**: ?
+- **Micro-batches**: ?
+
+## Decode timing (exact TPOT + representative ITL detail)
+
+| Metric | Attention | FFN |
+|---|---:|---:|
+| Representative ITL sample total | 31412.074 ms | 31411.932 ms |
+| Decode loop total | 28520.183 ms | 28520.145 ms |
+| Decode steps | 19 | 19 |
+| Decode TPOT | 1501.062 ms | 1501.060 ms |
+| Compute | - | - |
+| Recv wait | - | - |
+| MoE router | - | - |
+| MoE experts | - | - |
+| MoE shared/dense | - | - |
+| Compute ratio | - | - |
+| Tokens/sec | 0.64 | - |
+
+## Layer averages summary
+
+_No per-layer events recorded._
+
+## Per-layer breakdown
+
+_No per-layer events recorded._
+
+---
+_Generated from `timing_attention_serial_b256_s256_t20.json` + `timing_ffn_serial_b256_s256_t20.json`._
