@@ -1,114 +1,105 @@
-# Code review guide
+# 05. 代码审查指南
 
-This guide is for reviewing changes to the current AFD/DBO code path. It focuses
-on correctness risks that can invalidate timing, speedup, or distributed
-behavior.
+本文用于审查当前 AFD/DBO 路径的代码和实验变更，重点关注会影响 timing、
+speedup 和分布式正确性的风险。
 
-## 1. Current execution modes
+## 1. 当前执行模式
 
-| Mode | User command | Scheduler | Main metric |
+| 模式 | 命令特征 | Scheduler | 主要指标 |
 |---|---|---|---|
-| Serial | `--no-dbo --generate` | `SimplePipelineScheduler` + generation path | `prefill_ms`, `decode_tpot_ms` |
-| Prefill DBO | default `run_single.sh` prefill-only path | `AsyncPipelineScheduler` | model-side TTFT-path |
-| Decode DBO | `--generate` | `DecodeDBOScheduler` | exact TPOT |
-| Decode crosslayer | `--generate --crosslayer` | `DecodeDBOScheduler(use_crosslayer=True)` | exact TPOT |
+| Serial | `--no-dbo --generate` | `SimplePipelineScheduler` + generation path | `prefill_ms`、`decode_tpot_ms` |
+| Prefill DBO | 默认 prefill-only | `AsyncPipelineScheduler` | 模型侧 TTFT-path |
+| Decode DBO | `--generate` | `DecodeDBOScheduler` | 准确 TPOT |
+| Decode crosslayer | `--generate --crosslayer` | `DecodeDBOScheduler(use_crosslayer=True)` | 准确 TPOT |
 
-Review any change by asking which mode it affects and whether serial and DBO are
-still being compared with the same metric.
+审查任何变更时，先判断它影响哪个模式，以及 serial 和 DBO 是否仍使用相同语义的
+指标对比。
 
-## 2. Files to inspect first
+## 2. 优先检查的文件
 
-| Area | Files |
+| 领域 | 文件 |
 |---|---|
-| CLI / run orchestration | `src/main.py`, `scripts/run_single.sh`, `scripts/run_npu.sh` |
-| Distributed state | `src/distributed/__init__.py`, `src/distributed/warmup.py` |
-| Workers | `src/model/attention_worker.py`, `src/model/ffn_worker.py` |
-| Generation / KV cache | `src/model/disaggregated.py` |
-| Schedulers | `src/pipeline/scheduler.py`, `src/pipeline/async_scheduler.py`, `src/pipeline/decode_scheduler.py` |
-| Timing / reports | `src/utils/timing.py`, `scripts/gen_experiment_report.py`, `scripts/experiment_baselines.py` |
-| Plotting / audits | `scripts/visualize_dbo_pipeline.py`, `scripts/plot_all_pipelines.py`, `scripts/audit_experiment_baselines.py` |
+| CLI / 运行编排 | `src/main.py`、`scripts/run_single.sh`、`scripts/run_npu.sh` |
+| 分布式状态 | `src/distributed/__init__.py`、`src/distributed/warmup.py` |
+| Worker | `src/model/attention_worker.py`、`src/model/ffn_worker.py` |
+| 生成 / KV cache | `src/model/disaggregated.py` |
+| Scheduler | `src/pipeline/scheduler.py`、`src/pipeline/async_scheduler.py`、`src/pipeline/decode_scheduler.py` |
+| Timing / 报告 | `src/utils/timing.py`、`scripts/gen_experiment_report.py`、`scripts/experiment_baselines.py` |
+| 图表 / 审计 | `scripts/visualize_dbo_pipeline.py`、`scripts/plot_all_pipelines.py`、`scripts/audit_experiment_baselines.py` |
 
-## 3. Distributed and tensor-lifetime checks
+## 3. 分布式与张量生命周期
 
-1. Async sends must keep tensor references alive until the send handle is waited.
-2. Do not post NCCL/HCCL receives so early that they block later sends on the
-   same internal stream. Crosslayer uses directional groups for this reason.
-3. After OOM, one rank may wait forever for its peer. Logs must be inspected
-   before killing only the matching stuck peer process.
-4. `NCCL_BUFFSIZE` must cover the tensors being sent on GPU; otherwise `isend`
-   can become flow-control blocked and destroy pipeline timing.
+1. Async send 必须在 `handle.wait()` 完成前保留 tensor 引用。
+2. 不要过早提交会阻塞同一内部 stream 的 NCCL/HCCL receive。
+3. OOM 后一侧 rank 可能一直等对端；必须先检查日志，再只 kill 对应 stuck peer。
+4. GPU 上 `NCCL_BUFFSIZE` 必须覆盖发送 tensor 大小，否则 `isend` 可能被流控阻塞。
 
-## 4. Timing checks
+## 4. 计时审查
 
-The valid speedup fields are:
+有效 speedup 字段：
 
-| Mode | Required serial field | Required DBO field |
+| 模式 | Serial 字段 | DBO 字段 |
 |---|---|---|
 | Prefill | `prefill_ms` | `total_time_ms` |
 | Decode | `decode_tpot_ms` | `decode_tpot_ms` |
 | Crosslayer | `decode_tpot_ms` | `decode_tpot_ms` |
 
-Do not reintroduce:
+不要重新引入：
 
-- `total_time_ms / max_new_tokens` fallback speedup;
-- legacy `decode_step_ms` as a TPOT denominator;
-- representative ITL as the report speedup denominator.
+- `total_time_ms / max_new_tokens` 作为 fallback speedup；
+- legacy `decode_step_ms` 作为最终 TPOT；
+- representative ITL / representative step 作为最终 speedup 分母。
 
-Representative ITL is allowed only for pipeline Gantt detail.
+Representative ITL 只能用于 pipeline Gantt 图解释。
 
-## 5. Scheduler-specific review points
+## 5. 调度器审查点
 
-### Serial
+### 串行基线
 
-- Must remain a stable baseline, not optimized differently from DBO in ways that
-  change semantics.
-- Serial cache must be keyed by `(batch, seq, tokens)`.
-- Serial generation must write exact decode loop fields.
+- Serial 是稳定 baseline，不应被改成语义不同的优化路径。
+- Serial cache 必须按 `(batch, seq, tokens)` 区分。
+- Serial generation 必须写出准确 decode loop 字段。
 
-### Prefill DBO
+### 预填充 DBO
 
-- Check peak memory and in-flight buffers when changing micro-batch logic.
-- Prefill OOM boundaries are expected to differ from decode boundaries because
-  activation memory scales with `batch * seq`.
-- NPU prefill uses untimed warmup to absorb HCCL/JIT compile cost.
+- 修改 micro-batch 逻辑时要检查峰值显存和 in-flight buffer。
+- Prefill OOM 边界通常比 decode 更紧，因为 activation 与 `batch * seq` 强相关。
+- NPU prefill 使用未计时 warmup 吸收 HCCL/JIT 编译开销。
 
-### Decode DBO
+### 解码 DBO
 
-- KV cache slicing must preserve batch order and cache ownership on the
-  attention role.
-- `decode_steps` must match the actual number of decode-loop iterations.
-- Crosslayer changes must be checked for deadlock risk and directional group use.
+- KV cache slicing 必须保持 batch 顺序。
+- KV cache 所有权仍在 Attention role。
+- `decode_steps` 必须等于真实 decode-loop iteration 数。
+- Crosslayer 修改要重点检查 deadlock 风险和方向性 group。
 
-## 6. Script review points
+## 6. 脚本审查点
 
-### GPU matrix
+### GPU 矩阵
 
-`scripts/run_experiment_matrix.sh`:
+`scripts/run_experiment_matrix.sh`：
 
-- rewrites `results/experiment_matrix_summary.csv` unless phase outputs are
-  saved manually;
-- caches serial baselines unless `--no-cache` is set;
-- adds `--warmup-p2p --warmup-rounds 5`;
-- stops larger batch probes for a `(mode, seq)` after OOM.
+- 默认重写 `results/experiment_matrix_summary.csv`；
+- 除非 `--no-cache`，否则复用 serial baseline；
+- 自动加入 `--warmup-p2p --warmup-rounds 5`；
+- 遇到 OOM 后停止同一 `(mode, seq)` 的更大 batch。
 
-### NPU matrix
+### NPU 矩阵
 
-`scripts/run_experiment_matrix_npu.sh`:
+`scripts/run_experiment_matrix_npu.sh`：
 
-- writes to `results_npu/`;
-- supports `--append` for multi-phase experiments;
-- records visible chip pool and active world size;
-- inspects rank logs for OOM.
+- 写入 `results_npu/`；
+- 支持 `--append`；
+- 记录 visible chip pool 和 active world size；
+- 需要检查 rank 日志识别 OOM。
 
-Review NPU changes with the validated active topology in mind:
+当前验证 NPU 拓扑：
 
 ```text
 attn_size=1, ffn_size=1, ffn_tp_size=1
 ```
 
-## 7. Result review checklist
-
-Before trusting a new result set:
+## 7. 结果审查清单
 
 ```bash
 python scripts/plot_all_pipelines.py --root results
@@ -118,25 +109,23 @@ python scripts/plot_all_pipelines.py --root results_npu
 python scripts/audit_experiment_baselines.py --root results_npu --output-csv results_npu/baseline_audit.csv
 ```
 
-Check:
+检查：
 
-1. `baseline_audit.csv` has no missing/fallback rows for cells used in conclusions.
-2. OOM rows are present in matrix summaries and not silently dropped.
-3. Report speedups match `serial / DBO`.
-4. Pipeline PNGs are used for overlap diagnosis, not as the source of final
-   speedup claims.
-5. GPU and NPU conclusions are taken from
-   `doc/gpu_npu_experiment_summary.md`.
+1. 结论引用的 cell 在 `baseline_audit.csv` 中必须是 `ok`。
+2. OOM 行必须保留在 matrix summary 中。
+3. Report speedup 必须等于 `serial / DBO`。
+4. Pipeline PNG 只用于诊断 overlap，不作为最终 speedup 来源。
+5. 最新结论以 [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) 为准。
 
-## 8. Validation before merge
+## 8. 合并前验证
 
-For documentation-only changes:
+文档变更：
 
 ```bash
 git diff --check
 ```
 
-For code or script changes:
+代码或脚本行为变更：
 
 ```bash
 source venv/bin/activate
@@ -144,4 +133,4 @@ python -m compileall -q src scripts tests
 pytest tests/ -q
 ```
 
-For experiment changes, also run a small serial/DBO smoke before large matrices.
+实验流程变更需要先跑小配置 smoke，再跑大矩阵。

@@ -1,28 +1,30 @@
-# AFD Demo: Attention-FFN Disaggregation + DBO
+# AFD Demo：Attention/FFN 分离与 DBO 实验
 
-AFD Demo is an experiment repo for **Attention/FFN disaggregated inference** and
-**Dual Batch Overlap (DBO)** pipeline scheduling. The current primary model is
-Qwen3-30B-A3B. The maintained code paths are:
+AFD Demo 是一个用于研究 **Attention/FFN 分离推理**（Attention-FFN
+Disaggregation, AFD）和 **Dual Batch Overlap**（DBO）流水调度的实验仓库。
+当前主要模型为 **Qwen3-30B-A3B**。
 
-| Branch | Backend | Main result root | Purpose |
+当前维护两条主线：
+
+| 分支 | 后端 | 结果目录 | 用途 |
 |---|---|---|---|
-| `main` | CUDA/NCCL | `results/` | GPU baseline and GPU experiments. |
-| `npu` | Ascend NPU/HCCL | `results_npu/` | 910C adaptation and NPU experiments. |
+| `main` | CUDA / NCCL | `results/` | GPU 基线与 GPU 实验。 |
+| `npu` | Ascend NPU / HCCL | `results_npu/` | 910C 适配与 NPU 实验。 |
 
-## Current capabilities
+## 当前能力
 
-| Capability | Status | Main entry |
+| 能力 | 状态 | 入口 |
 |---|---|---|
-| Attention/FFN disaggregation | Supported | `src/model/disaggregated.py` |
-| Serial AF baseline | Supported | `SimplePipelineScheduler` |
-| Prefill DBO | Supported | `AsyncPipelineScheduler` |
-| Decode DBO | Supported | `DecodeDBOScheduler` |
-| Decode cross-layer pipeline | Experimental | `--crosslayer` |
-| KV cache / autoregressive generation | Supported | HuggingFace `DynamicCache` |
-| TTFT/TPOT reports and pipeline Gantt plots | Supported | `scripts/gen_experiment_report.py`, `scripts/visualize_dbo_pipeline.py` |
-| Ascend 910C execution | Supported on `npu` | `scripts/run_npu.sh`, `scripts/run_experiment_matrix_npu.sh` |
+| Attention/FFN 分离 | 支持 | `src/model/disaggregated.py` |
+| Serial AF baseline | 支持 | `SimplePipelineScheduler` |
+| Prefill DBO | 支持 | `AsyncPipelineScheduler` |
+| Decode DBO | 支持 | `DecodeDBOScheduler` |
+| Decode cross-layer pipeline | 实验性支持 | `--crosslayer` |
+| KV cache / 自回归生成 | 支持 | HuggingFace `DynamicCache` |
+| TTFT/TPOT 报告与 pipeline Gantt 图 | 支持 | `scripts/gen_experiment_report.py`、`scripts/visualize_dbo_pipeline.py` |
+| Ascend 910C 运行 | 在 `npu` 分支支持 | `scripts/run_npu.sh`、`scripts/run_experiment_matrix_npu.sh` |
 
-## Environment
+## 环境准备
 
 ```bash
 python -m venv venv
@@ -31,57 +33,56 @@ pip install -r requirements.txt
 pytest tests/ -q
 ```
 
-GPU runs use:
+GPU 路径：
 
 ```bash
 export MODEL_PATH=/data/Qwen/Qwen3-30B-A3B/
 ```
 
-NPU runs use:
+NPU 路径：
 
 ```bash
 export MODEL_NAME=/models/Qwen3-30B-A3B
 ```
 
-## Quick commands
+## 快速命令
 
-### Serial baseline
+### 串行基线（Serial baseline）
 
-Serial runs disable DBO and generate tokens so they can provide exact
-`decode_tpot_ms` baseline data.
+Serial 关闭 DBO，但仍然使用 A/F 分离结构。Decode baseline 需要生成 token，
+这样才能得到准确的 `decode_tpot_ms`。
 
 ```bash
 ./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo --generate
 ```
 
-### Prefill DBO
+### 预填充 DBO（Prefill DBO）
 
-The default single-run mode is prefill-only DBO.
+`run_single.sh` 默认是 prefill-only DBO；不加 `--generate` 时不会进入自回归
+decode loop。
 
 ```bash
 ./scripts/run_single.sh local 4 128 --tokens 20
 ```
 
-Equivalent explicit Python mode: DBO enabled + `--no-generate`.
-
-### Decode DBO
+### 解码 DBO / 跨层流水（Decode / Crosslayer）
 
 ```bash
 ./scripts/run_single.sh local 4 128 --tokens 20 --generate
 ./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
 ```
 
-### Matrix experiments
+### 矩阵实验
 
 ```bash
-# GPU/CUDA
+# GPU / CUDA 矩阵
 ./scripts/run_experiment_matrix.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64 \
   --seqs 128,256,512 \
   --tokens 20
 
-# NPU/910C, run inside the long-lived NPU container
+# NPU / 910C 矩阵：在 npu 分支的长期容器内运行
 ./scripts/run_experiment_matrix_npu.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64,128,256 \
@@ -90,21 +91,21 @@ Equivalent explicit Python mode: DBO enabled + `--no-generate`.
   --no-cache
 ```
 
-Both matrix scripts stop probing larger batches for the same `(mode, seq)` after
-an OOM and record that OOM in the summary CSV.
+两个矩阵脚本都会在同一个 `(mode, seq)` 下遇到 OOM 后停止继续探测更大的
+batch，并把 OOM 明确写入 summary CSV。
 
-## Outputs
+## 输出目录
 
-| Root | Content |
+| 目录 / 文件 | 含义 |
 |---|---|
-| `results/serial/` / `results_npu/serial/` | Serial timing JSON, reports, and cache baselines. |
-| `results/prefill-dbo/` / `results_npu/prefill-dbo/` | Prefill DBO timing, report, PNG. |
-| `results/decode-dbo/` / `results_npu/decode-dbo/` | Decode DBO timing, report, PNG. |
-| `results/decode-dbo-crosslayer/` / `results_npu/decode-dbo-crosslayer/` | Decode cross-layer timing, report, PNG. |
-| `*/experiment_matrix_summary.csv` | Matrix status (`ok`, `cached`, `OOM`, `FAIL`). |
-| `*/baseline_audit.csv` | Whether each DBO result has a mode-matched serial baseline. |
+| `results/serial/` / `results_npu/serial/` | Serial timing JSON、报告和 baseline cache。 |
+| `results/prefill-dbo/` / `results_npu/prefill-dbo/` | Prefill DBO timing、报告、PNG。 |
+| `results/decode-dbo/` / `results_npu/decode-dbo/` | Decode DBO timing、报告、PNG。 |
+| `results/decode-dbo-crosslayer/` / `results_npu/decode-dbo-crosslayer/` | Decode cross-layer timing、报告、PNG。 |
+| `*/experiment_matrix_summary.csv` | 矩阵状态：`ok`、`cached`、`OOM`、`FAIL`。 |
+| `*/baseline_audit.csv` | 每条 DBO 结果是否存在 mode-matched serial baseline。 |
 
-Post-processing:
+后处理：
 
 ```bash
 python scripts/plot_all_pipelines.py --root results
@@ -114,33 +115,40 @@ python scripts/plot_all_pipelines.py --root results_npu
 python scripts/audit_experiment_baselines.py --root results_npu --output-csv results_npu/baseline_audit.csv
 ```
 
-## Metrics
+## 指标口径
 
-| Mode | Metric | Speedup formula |
+统一使用：
+
+```text
+speedup = serial / DBO
+```
+
+大于 `1.0x` 才表示 DBO 更快。
+
+| 模式 | 指标 | 加速比公式 |
 |---|---|---|
-| `prefill-dbo` | model-side TTFT / TTFT-path | `serial_prefill_ms / dbo_total_time_ms` |
-| `decode-dbo` | exact TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
-| `decode-dbo-crosslayer` | exact TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
+| `prefill-dbo` | 模型侧 TTFT-path | `serial_prefill_ms / dbo_total_time_ms` |
+| `decode-dbo` | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
+| `decode-dbo-crosslayer` | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
 
-Pipeline figures visualize representative layer/step events, but report
-speedups use the exact TTFT/TPOT fields above.
+Pipeline 图中的 representative step / ITL 只用于观察 overlap、气泡和层间事件，
+不能作为最终 speedup 分母。
 
-## Documentation
+旧实验中曾出现 “NPU decode DBO 约 5x 加速” 的误判，根因是把代表性 step
+或 fallback 口径当成了准确 TPOT。当前结论以
+[`doc/08-gpu-npu-experiment-summary.md`](doc/08-gpu-npu-experiment-summary.md)
+为准。
 
-- `doc/01-architecture.md` - current architecture and scheduler design.
-- `doc/02-usage.md` - detailed serial / prefill / decode command manual.
-- `doc/03-api-reference.md` - current public APIs and script interfaces.
-- `doc/04-deployment.md` - GPU local/multinode and NPU container deployment.
-- `doc/05-code-review-guide.md` - review checklist for scheduler/timing/result paths.
-- `doc/npu_910c_adaptation.md` - Ascend 910C backend notes.
-- `doc/gpu_npu_experiment_summary.md` - latest GPU/NPU coverage, speedups, and OOM boundaries.
-- `doc/npu_vs_gpu_experiment_analysis.md` - TTFT/TPOT metric interpretation.
+## 文档
 
-## Current result conclusion
-
-See `doc/gpu_npu_experiment_summary.md` for the exact matrix. In brief:
-
-- Active GPU and NPU result roots now have clean baseline audits.
-- The old “NPU decode 5x” headline should not be used after exact-TPOT rerun.
-- The strongest fresh positive result is NPU prefill DBO.
-- OOM rows are expected capacity boundaries and are kept explicitly in summaries.
+| 文档 | 内容 |
+|---|---|
+| [`doc/README.md`](doc/README.md) | 文档目录与推荐阅读顺序。 |
+| [`doc/01-architecture.md`](doc/01-architecture.md) | 架构、scheduler、KV cache、backend abstraction。 |
+| [`doc/02-usage.md`](doc/02-usage.md) | Serial / prefill / decode / matrix 命令手册。 |
+| [`doc/03-api-reference.md`](doc/03-api-reference.md) | 当前代码与脚本 API 参考。 |
+| [`doc/04-deployment.md`](doc/04-deployment.md) | GPU local、多机、NPU 910C 部署。 |
+| [`doc/05-code-review-guide.md`](doc/05-code-review-guide.md) | 代码审查清单。 |
+| [`doc/06-npu-910c-adaptation.md`](doc/06-npu-910c-adaptation.md) | Ascend 910C / HCCL 适配说明。 |
+| [`doc/07-npu-vs-gpu-experiment-analysis.md`](doc/07-npu-vs-gpu-experiment-analysis.md) | GPU/NPU 指标解释与旧 5x 误判原因。 |
+| [`doc/08-gpu-npu-experiment-summary.md`](doc/08-gpu-npu-experiment-summary.md) | 最新 GPU/NPU 覆盖率、speedup 和 OOM 边界。 |
