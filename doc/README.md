@@ -1,98 +1,64 @@
-# 文档目录
+# Documentation index
 
-本目录包含 AFD Demo 项目的完整文档。
+This directory contains the maintained documentation for AFD Demo. Read the docs
+in this order if you are new to the project.
 
-## 文档列表
+| Document | Purpose |
+|---|---|
+| [01-architecture.md](01-architecture.md) | Current Attention/FFN split, schedulers, backend abstraction, KV cache, and timing semantics. |
+| [02-usage.md](02-usage.md) | Command reference for serial, prefill DBO, decode DBO/crosslayer, matrix runs, plotting, and audits. |
+| [03-api-reference.md](03-api-reference.md) | Public code and script surfaces that are still part of the current path. |
+| [04-deployment.md](04-deployment.md) | GPU local/multinode setup and Ascend 910C container workflow. |
+| [05-code-review-guide.md](05-code-review-guide.md) | Review checklist for scheduler, timing, baseline, OOM, and result-generation changes. |
+| [npu_910c_adaptation.md](npu_910c_adaptation.md) | NPU/HCCL adaptation details and known 910C limitations. |
+| [npu_vs_gpu_experiment_analysis.md](npu_vs_gpu_experiment_analysis.md) | TTFT/TPOT metric interpretation and why representative ITL is not speedup. |
+| [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md) | Latest GPU/NPU matrix coverage, OOM boundaries, baseline audit, and speedup summary. |
 
-### [01-architecture.md](01-architecture.md) - 架构设计
+## Quick navigation
 
-- 系统概述和设计目标
-- 节点分离架构
-- 核心组件说明
-- DBO 流水线实现
-- Prefill vs Decode 阶段对比
-- MoE 支持
-- 性能特征总结
+### I want to run one experiment
 
-**适合**: 了解系统设计原理、DBO 实现细节
+Read [02-usage.md](02-usage.md). The short version:
 
-### [02-usage.md](02-usage.md) - 使用指南
+```bash
+# serial baseline
+./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo --generate
 
-- 快速开始
-- 运行脚本（单机/多机）
-- 命令行参数完整说明
-- 基准测试工具
-- 可视化工具
-- 环境变量配置
-- 故障排查
-- 性能优化建议
+# prefill DBO
+./scripts/run_single.sh local 4 128 --tokens 20
 
-**适合**: 日常使用、运行测试、性能调优
+# decode DBO
+./scripts/run_single.sh local 4 128 --tokens 20 --generate
 
-### [03-api-reference.md](03-api-reference.md) - API 参考
+# decode crosslayer
+./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
+```
 
-- 核心模块 API
-- Worker 接口
-- Pipeline 调度器
-- HuggingFace `DynamicCache` 使用说明
-- 数据结构
-- 工具函数
-- 测试和扩展指南
+### I want to understand the design
 
-**适合**: 代码开发、功能扩展、集成对接
+Start with [01-architecture.md](01-architecture.md), then use
+[05-code-review-guide.md](05-code-review-guide.md) as the implementation review
+checklist.
 
-### [04-deployment.md](04-deployment.md) - 部署指南
+### I want to reproduce the latest figures
 
-- 硬件和软件要求
-- 单机部署步骤
-- 多机部署配置
-- 模型准备
-- 性能调优
-- 生产环境建议
-- 安全建议
-- 故障排查清单
+Read:
 
-**适合**: 环境配置、生产部署、运维管理
+1. [02-usage.md](02-usage.md#5-matrix-experiments)
+2. [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md)
+3. [npu_vs_gpu_experiment_analysis.md](npu_vs_gpu_experiment_analysis.md)
 
-### [05-code-review-guide.md](05-code-review-guide.md) - Code Review 指南
+### I want to run on Ascend 910C
 
-- 当前主路径代码导览
-- 调度器、timing、画图链路
-- 实验结果和已知风险
+Read [04-deployment.md](04-deployment.md#4-ascend-910c-npu-workflow) and
+[npu_910c_adaptation.md](npu_910c_adaptation.md).
 
-**适合**: 深入 review、定位性能/正确性风险
+## Maintenance rules
 
-## 快速导航
-
-### 我是新用户
-1. 先读 [使用指南](02-usage.md#1-快速开始) 的快速开始部分
-2. 运行单元测试和简单示例
-3. 浏览 [架构设计](01-architecture.md#2-系统架构) 了解系统原理
-
-### 我要部署到生产
-1. 阅读 [部署指南](04-deployment.md) 了解资源要求
-2. 按照部署步骤配置环境
-3. 参考 [使用指南](02-usage.md#8-性能优化建议) 进行性能调优
-
-### 我要开发新功能
-1. 阅读 [架构设计](01-architecture.md) 了解整体架构
-2. 查阅 [API 参考](03-api-reference.md) 了解接口
-3. 参考 [API 参考 - 扩展指南](03-api-reference.md#7-扩展指南)
-
-### 我遇到了问题
-1. 查看 [使用指南 - 故障排查](02-usage.md#7-故障排查)
-2. 查看 [部署指南 - 故障排查清单](04-deployment.md#11-故障排查清单)
-3. 查看 `../results/` 中的实验结果和已知问题
-
-## 其他资源
-
-- **代码**: `../src/` - 源代码
-- **测试**: `../tests/` - 单元测试
-- **脚本**: `../scripts/` - 运行脚本和工具
-- **结果**: `../results/` - 实验结果和分析报告
-
-## 文档维护
-
-- 文档版本与代码版本保持同步
-- 更新代码时请同步更新相关文档
-- 报告文档问题请提 Issue
+- Keep command examples synchronized with `scripts/*.sh`.
+- Do not publish speedups unless `baseline_audit.csv` reports `ok`.
+- Distinguish model-side TTFT-path from online end-to-end TTFT.
+- Distinguish exact TPOT from representative ITL used in pipeline figures.
+- Keep GPU and NPU result conclusions in
+  [gpu_npu_experiment_summary.md](gpu_npu_experiment_summary.md), not scattered
+  across older notes.

@@ -1,162 +1,146 @@
 # AFD Demo: Attention-FFN Disaggregation + DBO
 
-AFD Demo 是一个用于研究 **Attention-FFN 分离推理** 和 **Dual Batch Overlap (DBO)** 流水线调度的实验仓库。当前主模型是 Qwen3-30B-A3B；本地 4 GPU 模式用两组 GPU 模拟 Attention 节点和 FFN 节点。
+AFD Demo is an experiment repo for **Attention/FFN disaggregated inference** and
+**Dual Batch Overlap (DBO)** pipeline scheduling. The current primary model is
+Qwen3-30B-A3B. The maintained code paths are:
 
-## 当前能力
+| Branch | Backend | Main result root | Purpose |
+|---|---|---|---|
+| `main` | CUDA/NCCL | `results/` | GPU baseline and GPU experiments. |
+| `npu` | Ascend NPU/HCCL | `results_npu/` | 910C adaptation and NPU experiments. |
 
-| 能力 | 状态 | 入口 |
+## Current capabilities
+
+| Capability | Status | Main entry |
 |---|---|---|
-| Attention/FFN 分离推理 | 可用 | `src/main.py` |
-| Prefill DBO | 可用，主要优化路径 | `AsyncPipelineScheduler` |
-| Decode DBO | 可用，需按结果判断是否启用 | `DecodeDBOScheduler` |
-| Decode cross-layer pipeline | 可用，实验性 | `--crosslayer` |
-| KV cache / 自回归生成 | 可用 | HuggingFace `DynamicCache` |
-| Pipeline timing / Gantt 图 | 可用 | `scripts/visualize_dbo_pipeline.py` |
+| Attention/FFN disaggregation | Supported | `src/model/disaggregated.py` |
+| Serial AF baseline | Supported | `SimplePipelineScheduler` |
+| Prefill DBO | Supported | `AsyncPipelineScheduler` |
+| Decode DBO | Supported | `DecodeDBOScheduler` |
+| Decode cross-layer pipeline | Experimental | `--crosslayer` |
+| KV cache / autoregressive generation | Supported | HuggingFace `DynamicCache` |
+| TTFT/TPOT reports and pipeline Gantt plots | Supported | `scripts/gen_experiment_report.py`, `scripts/visualize_dbo_pipeline.py` |
+| Ascend 910C execution | Supported on `npu` | `scripts/run_npu.sh`, `scripts/run_experiment_matrix_npu.sh` |
 
-## 环境
+## Environment
 
 ```bash
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pytest tests/ -q
 ```
 
-主要依赖见 `requirements.txt`：Python 3.10+、PyTorch 2.7.0、Transformers 5.4.0、Accelerate、matplotlib、pytest。
-
-默认模型路径由脚本环境变量控制：
+GPU runs use:
 
 ```bash
 export MODEL_PATH=/data/Qwen/Qwen3-30B-A3B/
 ```
 
-## 快速验证
+NPU runs use:
 
 ```bash
-source venv/bin/activate
-pytest tests/ -q
+export MODEL_NAME=/models/Qwen3-30B-A3B
+```
 
-# 本地 4 GPU，prefill DBO，batch=4，seq=128
+## Quick commands
+
+### Serial baseline
+
+Serial runs disable DBO and generate tokens so they can provide exact
+`decode_tpot_ms` baseline data.
+
+```bash
+./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo --generate
+```
+
+### Prefill DBO
+
+The default single-run mode is prefill-only DBO.
+
+```bash
 ./scripts/run_single.sh local 4 128 --tokens 20
+```
 
-# 串行 baseline
-./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo
+Equivalent explicit Python mode: DBO enabled + `--no-generate`.
 
-# decode DBO / cross-layer decode
+### Decode DBO
+
+```bash
 ./scripts/run_single.sh local 4 128 --tokens 20 --generate
 ./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
 ```
 
-`run_single.sh local` 默认使用：
-
-| 角色 | GPU |
-|---|---|
-| Attention | `CUDA_VISIBLE_DEVICES=0,1` |
-| FFN | `CUDA_VISIBLE_DEVICES=2,3` |
-
-## 实验矩阵
+### Matrix experiments
 
 ```bash
-# 默认扫 serial / prefill-dbo / decode-dbo / decode-dbo-crosslayer
-./scripts/run_experiment_matrix.sh
+# GPU/CUDA
+./scripts/run_experiment_matrix.sh \
+  --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
+  --batches 2,4,8,16,32,64 \
+  --seqs 128,256,512 \
+  --tokens 20
 
-# 只跑一个小矩阵
-./scripts/run_experiment_matrix.sh --modes serial,prefill-dbo --batches 2,4 --seqs 128
-
-# 只打印命令
-./scripts/run_experiment_matrix.sh --dry-run --modes serial --batches 2 --seqs 128
+# NPU/910C, run inside the long-lived NPU container
+./scripts/run_experiment_matrix_npu.sh \
+  --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --tokens 20 \
+  --no-cache
 ```
 
-输出目录：
+Both matrix scripts stop probing larger batches for the same `(mode, seq)` after
+an OOM and record that OOM in the summary CSV.
 
-| 目录 | 内容 |
+## Outputs
+
+| Root | Content |
 |---|---|
-| `results/serial/` | 串行 baseline timing/report/cache |
-| `results/prefill-dbo/` | prefill DBO timing/report/PNG |
-| `results/decode-dbo/` | decode DBO timing/report/PNG |
-| `results/decode-dbo-crosslayer/` | cross-layer decode timing/report/PNG |
+| `results/serial/` / `results_npu/serial/` | Serial timing JSON, reports, and cache baselines. |
+| `results/prefill-dbo/` / `results_npu/prefill-dbo/` | Prefill DBO timing, report, PNG. |
+| `results/decode-dbo/` / `results_npu/decode-dbo/` | Decode DBO timing, report, PNG. |
+| `results/decode-dbo-crosslayer/` / `results_npu/decode-dbo-crosslayer/` | Decode cross-layer timing, report, PNG. |
+| `*/experiment_matrix_summary.csv` | Matrix status (`ok`, `cached`, `OOM`, `FAIL`). |
+| `*/baseline_audit.csv` | Whether each DBO result has a mode-matched serial baseline. |
 
-## 可视化
+Post-processing:
 
 ```bash
-# 单张图
-python scripts/visualize_dbo_pipeline.py \
-  --attn-timing results/prefill-dbo/timing_attention_prefill-dbo_b4_s128_t20.json \
-  --ffn-timing results/prefill-dbo/timing_ffn_prefill-dbo_b4_s128_t20.json \
-  --output /tmp/pipeline.png \
-  --start-layer 1 --num-layers 4
-
-# 批量重画 results 下已有 timing JSON
 python scripts/plot_all_pipelines.py --root results
+python scripts/audit_experiment_baselines.py --root results --output-csv results/baseline_audit.csv
 
-# 检查哪些 DBO 结果具备可信 serial baseline
-python scripts/audit_experiment_baselines.py --root results
+python scripts/plot_all_pipelines.py --root results_npu
+python scripts/audit_experiment_baselines.py --root results_npu --output-csv results_npu/baseline_audit.csv
 ```
 
-## 多机运行
+## Metrics
 
-自动方式：
+| Mode | Metric | Speedup formula |
+|---|---|---|
+| `prefill-dbo` | model-side TTFT / TTFT-path | `serial_prefill_ms / dbo_total_time_ms` |
+| `decode-dbo` | exact TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
+| `decode-dbo-crosslayer` | exact TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
 
-```bash
-./scripts/run_single.sh multinode 4 128 --tokens 20
-```
+Pipeline figures visualize representative layer/step events, but report
+speedups use the exact TTFT/TPOT fields above.
 
-手动方式：
+## Documentation
 
-```bash
-# FFN 节点
-./scripts/run_node.sh ffn <master_ip> 29500
+- `doc/01-architecture.md` - current architecture and scheduler design.
+- `doc/02-usage.md` - detailed serial / prefill / decode command manual.
+- `doc/03-api-reference.md` - current public APIs and script interfaces.
+- `doc/04-deployment.md` - GPU local/multinode and NPU container deployment.
+- `doc/05-code-review-guide.md` - review checklist for scheduler/timing/result paths.
+- `doc/npu_910c_adaptation.md` - Ascend 910C backend notes.
+- `doc/gpu_npu_experiment_summary.md` - latest GPU/NPU coverage, speedups, and OOM boundaries.
+- `doc/npu_vs_gpu_experiment_analysis.md` - TTFT/TPOT metric interpretation.
 
-# Attention 节点
-./scripts/run_node.sh attention <master_ip> 29500 --batch-size 4 --prefill-seq-len 128
-```
+## Current result conclusion
 
-默认远程节点信息在 `scripts/run_single.sh` 中配置，当前 SSH 命令为：
+See `doc/gpu_npu_experiment_summary.md` for the exact matrix. In brief:
 
-```bash
-ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
-```
-
-## 项目结构
-
-```text
-src/
-  main.py                    # CLI 入口；prefill/generate 分发；timing 落盘
-  distributed/               # 分布式上下文、NCCL P2P、warmup
-  model/                     # DisaggregatedQwenModel、AttentionWorker、FFNWorker
-  pipeline/                  # Simple / prefill DBO / decode DBO 调度器
-  utils/                     # timing、sampling、profiling、tensor validation
-scripts/
-  run_single.sh              # 单配置运行器
-  run_experiment_matrix.sh   # 批量矩阵运行器
-  gen_experiment_report.py   # timing JSON -> markdown report
-  visualize_dbo_pipeline.py  # 单张 Gantt 图
-  plot_all_pipelines.py      # 批量重画 Gantt 图
-  capture_serial_prefill.sh  # 补充 serial cache 的 prefill_ms
-doc/
-  01-architecture.md
-  02-usage.md
-  03-api-reference.md
-  04-deployment.md
-  05-code-review-guide.md
-results/
-  README.md                  # 实验产物说明
-```
-
-## 文档
-
-- `doc/01-architecture.md`：系统结构和调度模型
-- `doc/02-usage.md`：CLI、脚本和实验运行
-- `doc/03-api-reference.md`：当前代码 API
-- `doc/04-deployment.md`：本地/多机部署
-- `doc/05-code-review-guide.md`：面向 review 的关键路径说明
-
-## 已知注意事项
-
-1. `--warmup-p2p --warmup-rounds N` 用于消除 NCCL P2P 冷启动；已删除历史 keepalive 路径。
-2. Decode DBO 的收益依赖 batch/seq/网络和 cross-layer 设置，必须与 serial baseline 对比。
-3. PyTorch + NCCL 退出阶段可能有 `destroy_process_group` 警告；代码选择让进程退出时自然释放 NCCL 资源。
-
-## 参考
-
-- [vLLM AFD #22799](https://github.com/vllm-project/vllm/issues/22799)
-- [vLLM DBO #23693](https://github.com/vllm-project/vllm/pull/23693)
+- Active GPU and NPU result roots now have clean baseline audits.
+- The old “NPU decode 5x” headline should not be used after exact-TPOT rerun.
+- The strongest fresh positive result is NPU prefill DBO.
+- OOM rows are expected capacity boundaries and are kept explicitly in summaries.
