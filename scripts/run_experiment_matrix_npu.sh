@@ -15,7 +15,10 @@
 #   --batches list  Comma-separated batch sizes (default: 2,4,8,16,32,64,128,256)
 #   --seqs list     Comma-separated seq lens   (default: 128,256,512)
 #   --tokens N      max_new_tokens for decode  (default: 20)
-#   --devices list  ASCEND_VISIBLE_DEVICES     (default: 0,1,2,3)
+#   --visible-devs list  ASCEND_VISIBLE_DEVICES
+#                        (default: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)
+#   --attn-devs list     Optional per-attention-rank visible devices
+#   --ffn-devs list      Optional per-FFN-rank visible devices
 #   --no-cache      Force rerun of serial even if cached
 #   --append        Append to existing summary instead of replacing it
 #   --dry-run       Print commands but don't execute

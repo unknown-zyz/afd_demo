@@ -1,47 +1,45 @@
-# API 参考
+# API reference
 
-本文只记录当前主路径仍在使用的接口；已删除的历史 `PipelineScheduler` 抽象、`LayerCommunicator`、手写 `KVCacheManager` 和 baseline validation helper 不再作为公开 API。
+This document lists only the current supported code and script surfaces.
 
-## 1. 分布式上下文
+## 1. Backend/device helpers
 
-**文件**: `src/distributed/__init__.py`
+File: `src/utils/device.py`
+
+| API | Purpose |
+|---|---|
+| `init_backend(name)` | Resolve and initialize `cuda`, `npu`, `cpu`, or `auto`. |
+| `DEVICE_TYPE` | Current logical device type. |
+| `DIST_BACKEND` | Distributed backend (`nccl`, `hccl`, or `gloo`). |
+| `device_module()` | Return backend module such as `torch.cuda` / `torch.npu`. |
+| `set_device`, `synchronize`, `Stream`, `Event` | Backend-neutral accelerator helpers. |
+| `apply_backend_envs()` | Apply backend-specific environment defaults. |
+
+NPU support relies on `torch_npu.contrib.transfer_to_npu` so much of the CUDA
+call surface maps to NPU at runtime.
+
+## 2. Distributed context
+
+File: `src/distributed/__init__.py`
 
 ```python
-from src.distributed import init_distributed, get_distributed_context, DistributedConfig
+from src.distributed import DistributedConfig, init_distributed, get_distributed_context
 ```
 
-`DistributedContext` 负责：
-
-| 属性/方法 | 说明 |
+| Attribute/method | Meaning |
 |---|---|
-| `rank`, `world_size`, `local_rank` | 分布式 rank 信息 |
-| `role` | `"attention"` 或 `"ffn"` |
-| `device` | 当前 rank 使用的 CUDA device |
-| `peer_rank` | 对端 rank |
-| `a2f_group`, `f2a_group` | Decode cross-layer 使用的方向 NCCL group |
-| `initialize(config)` | 初始化 process group |
-| `warmup(num_rounds=3)` | 预热 P2P 和已创建的方向 group |
-| `barrier()` / `cleanup()` | 同步与清理 |
+| `rank`, `world_size`, `local_rank` | Distributed rank metadata. |
+| `role` | `attention` or `ffn`. |
+| `device` | Current backend device. |
+| `peer_rank` | Peer rank for the 2-rank A/F path. |
+| `a2f_group`, `f2a_group` | Directional groups used by decode crosslayer. |
+| `initialize(config)` | Initialize process group and device. |
+| `warmup(num_rounds)` | Warm up P2P communication. |
+| `barrier()`, `cleanup()` | Synchronization and teardown helpers. |
 
-## 2. 通信
+## 3. Model
 
-**文件**: `src/distributed/communicator.py`
-
-`AFDCommunicator` 是模型同步路径使用的通信封装，提供：
-
-| 方法 | 说明 |
-|---|---|
-| `send_sync(tensor, tag)` | 同步发送 |
-| `recv_sync(shape, tag)` | 同步接收 |
-| `send_async(tensor, tag)` | 使用内部 buffer 异步发送 |
-| `recv_async(shape, tag)` / `wait_recv(idx)` | 异步接收并等待 |
-| `wait_all_sends()` / `wait_send()` | 等待 pending send 完成 |
-
-Prefill / decode DBO 中的高性能路径直接使用 `torch.distributed.isend/irecv`，以便控制 NCCL group、tensor lifetime 和 timing。
-
-## 3. 模型入口
-
-**文件**: `src/model/disaggregated.py`
+File: `src/model/disaggregated.py`
 
 ```python
 model = DisaggregatedQwenModel.from_pretrained(
@@ -53,114 +51,114 @@ model = DisaggregatedQwenModel.from_pretrained(
 )
 ```
 
-关键方法：
-
-| 方法 | 说明 |
+| Method | Meaning |
 |---|---|
-| `forward_prefill(input_ids, attention_mask=None)` | 不经 scheduler 的同步 prefill 路径 |
-| `forward_layer_sync(...)` | 单层同步 AFD 前向，被 `SimplePipelineScheduler` 调用 |
-| `generate(...)` | prefill 后自回归 decode，可启用 decode DBO |
+| `forward_prefill(input_ids, attention_mask=None)` | Full-batch prefill helper without scheduler overlap. |
+| `forward_layer_sync(...)` | One layer of synchronous AF execution for serial scheduling. |
+| `forward_decode(next_token)` | One decode token path without decode DBO. |
+| `generate(...)` | Prefill + autoregressive generation, optionally with decode DBO/crosslayer. |
 
-KV cache 当前使用 HuggingFace `DynamicCache`，保存在 Attention 节点，不再维护仓库内手写 cache manager。
+KV cache is HuggingFace `DynamicCache`, owned by the attention role.
 
 ## 4. Workers
 
 ### `AttentionWorker`
 
-**文件**: `src/model/attention_worker.py`
+File: `src/model/attention_worker.py`
 
-| 方法 | 说明 |
+| Method | Meaning |
 |---|---|
-| `embed(input_ids)` | token embedding |
-| `get_position_embeddings(hidden_states, position_ids)` | RoPE position embeddings |
-| `forward_attention_layer(...)` | 单层 attention + residual |
-| `forward_lm_head(hidden_states)` | logits |
+| `embed(input_ids)` | Token embedding. |
+| `get_position_embeddings(hidden_states, position_ids)` | RoPE position embedding preparation. |
+| `forward_attention_layer(...)` | One attention layer plus residual packaging. |
+| `forward_lm_head(hidden_states)` | Final logits. |
 
 ### `FFNWorker`
 
-**文件**: `src/model/ffn_worker.py`
+File: `src/model/ffn_worker.py`
 
-| 方法 | 说明 |
+| Method/property | Meaning |
 |---|---|
-| `forward_ffn_layer(layer_idx, hidden_states)` | 单层 FFN/MoE |
-| `supports_moe_timing` | 是否可记录 MoE router/expert 分段 |
+| `forward_ffn_layer(layer_idx, hidden_states, ...)` | One FFN/MoE layer. |
+| `supports_moe_timing` | Whether router/expert timing can be emitted. |
 
-## 5. 调度器
+## 5. Schedulers
 
 ### `SimplePipelineScheduler`
 
-**文件**: `src/pipeline/scheduler.py`
+File: `src/pipeline/scheduler.py`
 
-同步 serial baseline。逐层逐 micro-batch 执行：
+Serial AF baseline:
 
 ```text
-Attention compute -> A2F send -> FFN compute -> F2A send
+Attention compute -> A2F transfer -> FFN compute -> F2A transfer
 ```
 
-构造：
-
-```python
-SimplePipelineScheduler(model, num_micro_batches=2, enable_timing=False)
-```
+Constructed by `src/main.py` when `--no-dbo` is set.
 
 ### `AsyncPipelineScheduler`
 
-**文件**: `src/pipeline/async_scheduler.py`
+File: `src/pipeline/async_scheduler.py`
 
-Prefill DBO。用 micro-batch + `isend/irecv` 尝试重叠通信和计算。
+Prefill DBO scheduler. Constructed when DBO is enabled and generation is
+disabled (`--no-generate`). Key options:
 
-```python
-AsyncPipelineScheduler(
-    model,
-    num_micro_batches=2,
-    use_cuda_streams=True,
-    enable_timing=True,
-    timing_mode="cuda_events",
-)
-```
+| Argument | Meaning |
+|---|---|
+| `num_micro_batches` | Number of micro-batches, normally `2`. |
+| `use_cuda_streams` | Use accelerator streams for compute/comm separation. |
+| `enable_timing` | Emit timing events. |
+| `timing_mode` | `cuda_events` or `sync`. |
 
 ### `DecodeDBOScheduler`
 
-**文件**: `src/pipeline/decode_scheduler.py`
+File: `src/pipeline/decode_scheduler.py`
 
-Decode DBO。默认记录 step 1 作为 representative step；`use_crosslayer=True` 时使用 `a2f_group` / `f2a_group` 拆分方向通信。
+Decode DBO scheduler. Constructed by `DisaggregatedQwenModel.generate` when DBO
+is enabled for generation.
 
-```python
-DecodeDBOScheduler(
-    model,
-    num_micro_batches=2,
-    enable_timing=True,
-    timing_mode="cuda_events",
-    use_crosslayer=False,
-)
-```
-
-## 6. Timing
-
-**文件**: `src/utils/timing.py`
-
-| 类型 | 说明 |
+| Argument | Meaning |
 |---|---|
-| `EventType` | `ATTN_COMPUTE` / `FFN_COMPUTE` / `SEND_TRANSFER` / `RECV_WAIT` 等 |
-| `TimingTracker` | 记录 per-layer/per-micro-batch 事件 |
-| `PipelineTiming.save(path)` | 保存 JSON |
+| `num_micro_batches` | Decode micro-batches. |
+| `use_crosslayer` | Enable cross-layer directional pipeline. |
+| `enable_timing` | Emit representative decode pipeline events. |
+| `timing_mode` | `cuda_events` or `sync`. |
 
-`timing_mode="cuda_events"` 是默认路径；`sync` 只用于调试，会改变 pipeline 行为和开销。
+## 6. Timing JSON
 
-## 7. 工具函数
+File: `src/utils/timing.py`
 
-| 文件 | 接口 |
+| Concept | Meaning |
 |---|---|
-| `src/utils/sampling.py` | `sample_next_token`、top-k/top-p filtering |
-| `src/utils/profiler.py` | `Timer`、`CUDATimer`、`profile_function` |
-| `src/utils/validation.py` | `compare_tensors`、`validate_output` |
+| `TimingTracker` | Records per-layer/per-micro-batch events. |
+| `PipelineTiming.save(path)` | Writes JSON timing data. |
+| `ATTN_COMPUTE` / `FFN_COMPUTE` | Compute events. |
+| `SEND_TRANSFER` / `RECV_WAIT` | Communication events. |
 
-## 8. 脚本 API
+Important JSON fields:
 
-| 脚本 | 输入 | 输出 |
-|---|---|---|
-| `scripts/run_single.sh` | deployment/batch/seq/options | `results/prefill_dbo/timing_*.json` + report |
-| `scripts/run_experiment_matrix.sh` | mode/batch/seq matrix | `results/{mode}/` + summary CSV |
-| `scripts/gen_experiment_report.py` | attention/ffn timing JSON | markdown report |
-| `scripts/visualize_dbo_pipeline.py` | attention/ffn timing JSON | PNG |
-| `scripts/plot_all_pipelines.py` | results root | batch PNG + `pipelines_index.md` |
+| Field | Meaning |
+|---|---|
+| `total_time_ms` | Timed path total. |
+| `prefill_ms` | Serial prefill baseline. |
+| `decode_loop_ms`, `decode_steps`, `decode_tpot_ms` | Exact decode TPOT components. |
+| `events` | Representative Gantt events. |
+
+## 7. Script APIs
+
+| Script | Purpose |
+|---|---|
+| `scripts/run_single.sh` | One GPU local/multinode config. |
+| `scripts/run_experiment_matrix.sh` | GPU matrix runner for serial/prefill/decode/crosslayer. |
+| `scripts/run_npu.sh` | One local NPU/HCCL config. |
+| `scripts/run_experiment_matrix_npu.sh` | NPU matrix runner under `results_npu/`. |
+| `scripts/gen_experiment_report.py` | Timing JSON pair -> markdown report. |
+| `scripts/visualize_dbo_pipeline.py` | Timing JSON pair -> pipeline PNG. |
+| `scripts/plot_all_pipelines.py` | Batch plot all successful DBO timings under a result root. |
+| `scripts/audit_experiment_baselines.py` | Check mode-matched serial baseline availability. |
+| `scripts/experiment_baselines.py` | Shared TTFT/TPOT baseline resolution helpers. |
+| `scripts/capture_serial_split.py` | Utility for enriching serial cache fields when needed. |
+
+Removed historical helper surfaces such as hand-written KV cache managers,
+generic pipeline base classes, and legacy fallback speedup logic are not public
+APIs.

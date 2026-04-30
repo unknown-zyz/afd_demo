@@ -1,12 +1,17 @@
 #!/bin/bash
 # Launch AFD on Ascend NPU-910C.
 #
-# Layout presets (overrideable via --attn-size/--ffn-size/--ffn-tp-size):
-#   npu-4card  : 2 ATT (DP) + 2 FFN (TP=2)     [default]
+# Layout presets are legacy scaffolding and remain overrideable via
+# --attn-size/--ffn-size/--ffn-tp-size. The validated 910C experiment matrix
+# uses the explicit 2-rank topology:
+#   --attn-size 1 --ffn-size 1 --ffn-tp-size 1
+#
+# Legacy presets:
+#   npu-4card  : 2 ATT (DP) + 2 FFN (TP=2)     [script default]
 #   npu-16card : 4 ATT (DP) + 12 FFN (TP=12)
 #
 # Usage:
-#   ./scripts/run_npu.sh [--preset npu-4card|npu-16card] [--tokens N] [other run_single flags]
+#   ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 [--tokens N] [other run_single flags]
 #
 # This script spawns one torchrun-style process per role on the local node
 # using HCCL as the distributed backend. For multi-node, set MASTER_ADDR and

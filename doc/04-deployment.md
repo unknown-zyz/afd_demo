@@ -1,16 +1,19 @@
-# 部署指南
+# Deployment guide
 
-## 1. 资源要求
+## 1. Resource requirements
 
-| 场景 | 推荐资源 |
+| Scenario | Recommended resources |
 |---|---|
-| 本地开发 | 4 × V100-32GB 或同级 GPU |
-| 最小功能验证 | 2 × 具备足够显存的 GPU |
-| 多机实验 | 2 节点，每节点 2 × GPU，节点间网络互通 |
+| GPU local development | 4 x V100-32GB or similar. |
+| GPU minimal smoke | 2 GPUs with enough HBM for the selected model/config. |
+| GPU multinode | 2 nodes, each with the required role GPUs and reachable NCCL port. |
+| Ascend 910C NPU | Use the prepared privileged long-lived container on the NPU host. |
 
-Qwen3-30B-A3B 的 FFN/MoE 权重占主要显存；本地脚本默认把 Attention 放在 GPU 0,1，FFN 放在 GPU 2,3。
+Qwen3-30B-A3B is MoE-heavy; FFN/MoE weights dominate memory. OOM boundaries are
+tracked in `results/experiment_matrix_summary.csv` and
+`results_npu/experiment_matrix_summary.csv`.
 
-## 2. 软件环境
+## 2. Software setup
 
 ```bash
 python -m venv venv
@@ -19,119 +22,190 @@ pip install -r requirements.txt
 pytest tests/ -q
 ```
 
-模型路径：
+GPU model path:
 
 ```bash
 export MODEL_PATH=/data/Qwen/Qwen3-30B-A3B/
 ```
 
-## 3. 本地部署
+NPU model path inside the validated container:
 
 ```bash
-# prefill DBO
-./scripts/run_single.sh local 4 128 --tokens 20
-
-# serial baseline
-./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo
-
-# decode / cross-layer decode
-./scripts/run_single.sh local 4 128 --tokens 20 --generate
-./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
+export MODEL_NAME=/models/Qwen3-30B-A3B
 ```
 
-建议测试前检查资源：
+## 3. GPU local workflow
+
+Check resources first:
 
 ```bash
 bash .github/skills/testing-workflow/check_resources.sh
 ```
 
-## 4. 多机部署
+Run representative configs:
 
-### 4.1 网络与 SSH
+```bash
+# serial baseline
+./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo --generate
 
-确保本地 Attention 节点和远程 FFN 节点网络互通，端口 29500-29600 可用。
+# prefill DBO
+./scripts/run_single.sh local 4 128 --tokens 20
 
-当前远程机器：
+# decode DBO and crosslayer
+./scripts/run_single.sh local 4 128 --tokens 20 --generate
+./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
+```
+
+GPU tuning defaults set by `run_single.sh`:
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+NCCL_BUFFSIZE=33554432
+NCCL_NCHANNELS_PER_NET_PEER=1
+```
+
+`NCCL_BUFFSIZE` should be at least the tensor size being sent to avoid P2P
+flow-control stalls.
+
+## 4. GPU multinode workflow
+
+The non-NPU remote used by `run_single.sh multinode` is:
 
 ```bash
 ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second
 ```
 
-两台机器都需要相同代码、虚拟环境和模型路径。
+Both machines need the same code, Python environment, model path, and a reachable
+master port.
 
-### 4.2 自动启动
-
-在本地执行：
+Automatic mode:
 
 ```bash
-./scripts/run_single.sh multinode 4 128 --tokens 20
+./scripts/run_single.sh multinode 4 128 --tokens 20 --generate
 ```
 
-`run_single.sh` 会通过 SSH 启动远程 FFN 节点，再在本地运行 Attention 节点，并把 FFN timing JSON 拉回本地。
-
-### 4.3 手动启动
-
-远程 / FFN 节点：
+Manual mode:
 
 ```bash
+# Remote / FFN node
 cd /path/to/afd_demo
 source venv/bin/activate
-./scripts/run_node.sh ffn <local_master_ip> 29500
-```
+./scripts/run_node.sh ffn <master_ip> 29500
 
-本地 / Attention 节点：
-
-```bash
+# Local / attention node
 cd /path/to/afd_demo
 source venv/bin/activate
-./scripts/run_node.sh attention <local_master_ip> 29500 \
+./scripts/run_node.sh attention <master_ip> 29500 \
   --batch-size 4 \
   --prefill-seq-len 128 \
   --max-new-tokens 20
 ```
 
-## 5. 实验矩阵
+## 5. Ascend 910C NPU workflow
+
+Use the NPU host and long-lived container:
 
 ```bash
-./scripts/run_experiment_matrix.sh --deployment local
-./scripts/run_experiment_matrix.sh --deployment multinode --modes serial,prefill-dbo
+ssh schedTeam@1.95.114.229 -p 22 -i ~/.ssh/id_rsa_second
+docker exec -it afd-npu-test bash
 ```
 
-常用参数：
+Do not delete `afd-npu-test`; it is the shared persistent test container.
 
-| 参数 | 说明 |
-|---|---|
-| `--modes` | `serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer` 子集 |
-| `--batches` | 逗号分隔 batch 列表 |
-| `--seqs` | 逗号分隔 prefill seq 列表 |
-| `--tokens` | decode tokens |
-| `--no-cache` | 强制重跑 serial baseline |
-| `--dry-run` | 只打印命令 |
-
-## 6. 性能稳定性建议
+Inside the container:
 
 ```bash
-export NCCL_BUFFSIZE=33554432
-export NCCL_NCHANNELS_PER_NET_PEER=1
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+cd /workspace/afd_demo_npu_rerun_20260429
+export MODEL_NAME=/models/Qwen3-30B-A3B
 ```
 
-这些变量已在 `run_single.sh` 中默认设置。长矩阵实验建议保留 `--warmup-p2p --warmup-rounds 5`，`run_experiment_matrix.sh` 会自动加上。
+Single NPU config:
 
-## 7. 故障排查
+```bash
+# serial
+bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
+  --batch 4 --seq 128 --tokens 20 --model-name "$MODEL_NAME" --no-dbo
 
-| 问题 | 建议 |
+# prefill DBO
+bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
+  --batch 4 --seq 128 --tokens 20 --model-name "$MODEL_NAME" --no-generate
+
+# decode DBO / crosslayer
+bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
+  --batch 4 --seq 128 --tokens 20 --model-name "$MODEL_NAME"
+bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
+  --batch 4 --seq 128 --tokens 20 --model-name "$MODEL_NAME" --crosslayer
+```
+
+NPU matrix:
+
+```bash
+./scripts/run_experiment_matrix_npu.sh \
+  --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --tokens 20 \
+  --no-cache
+```
+
+Relevant environment variables:
+
+| Variable | Meaning |
 |---|---|
-| OOM | 降低 batch/seq；矩阵脚本遇到 OOM 会停止该 seq 的更大 batch |
-| NCCL connection timeout | 检查 `MASTER_ADDR`、端口、防火墙、SSH 隧道 |
-| 首次 P2P 慢 | 使用 warmup；不要恢复历史 keepalive 路径 |
-| 远程 timing 缺失 | 检查远程 `results/prefill_dbo/logs/ffn_*.log` |
-| 退出 warning | NCCL 退出清理 warning 不影响已写出的结果 |
+| `ASCEND_VISIBLE_DEVICES` / `--visible-devs` | Visible NPU chip pool. |
+| `ATTN_DEVICES` / `--attn-devs` | Per-attention-rank device pool. |
+| `FFN_DEVICES` / `--ffn-devs` | Per-FFN-rank device pool. |
+| `HCCL_BUFFSIZE` | HCCL communication buffer size in MB. |
+| `HCCL_CONNECT_TIMEOUT`, `HCCL_EXEC_TIMEOUT` | HCCL connection/execution timeouts. |
 
-## 8. 结果同步与画图
+The fresh validated matrix uses active world size `2` even when the visible pool
+contains 16 chips.
+
+## 6. Matrix experiments
+
+GPU:
+
+```bash
+./scripts/run_experiment_matrix.sh \
+  --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
+  --batches 2,4,8,16,32,64 \
+  --seqs 128,256,512 \
+  --tokens 20
+```
+
+NPU:
+
+```bash
+./scripts/run_experiment_matrix_npu.sh \
+  --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --tokens 20 \
+  --no-cache
+```
+
+For expanded grids and b1024 boundary probes, use the commands in
+`doc/02-usage.md`.
+
+## 7. Post-processing
 
 ```bash
 python scripts/plot_all_pipelines.py --root results
+python scripts/audit_experiment_baselines.py --root results --output-csv results/baseline_audit.csv
+
+python scripts/plot_all_pipelines.py --root results_npu
+python scripts/audit_experiment_baselines.py --root results_npu --output-csv results_npu/baseline_audit.csv
 ```
 
-结果目录结构见 `results/README.md`。
+If the NPU container lacks `matplotlib`, copy `results_npu/` back to a local
+environment with plotting dependencies and run `plot_all_pipelines.py` there.
+
+## 8. Troubleshooting
+
+| Problem | Recommendation |
+|---|---|
+| CUDA/NPU OOM | Treat it as a capacity boundary; reduce batch/seq or stop larger probes for that `(mode, seq)`. |
+| Peer hangs after the other rank OOMs | Inspect logs first; if OOM is confirmed, kill only the matching stuck peer PID. |
+| First NCCL/HCCL transfer is slow | Use explicit warmup. GPU matrix already adds `--warmup-p2p --warmup-rounds 5`; NPU uses prefill warmup to absorb JIT/HCCL compile effects. |
+| Speedup is missing or suspicious | Run `audit_experiment_baselines.py` and check for exact `prefill_ms` / `decode_tpot_ms`. |
+| NPU SSH resets under load | Avoid many concurrent SSH sessions while long matrix jobs are running. |
