@@ -87,7 +87,9 @@ class PipelineTiming:
     decode_loop_ms: float | None = None
     decode_steps: int | None = None
     decode_tpot_ms: float | None = None
-    representative_itl_ms: float | None = None
+    timed_decode_step: int | None = None
+    timed_decode_step_base: str | None = None
+    timed_decode_step_note: str | None = None
     events: List[TimingEvent] = field(default_factory=list)
     
     # Aggregated stats
@@ -144,8 +146,12 @@ class PipelineTiming:
             data["decode_steps"] = self.decode_steps
         if self.decode_tpot_ms is not None:
             data["decode_tpot_ms"] = self.decode_tpot_ms
-        if self.representative_itl_ms is not None:
-            data["representative_itl_ms"] = self.representative_itl_ms
+        if self.timed_decode_step is not None:
+            data["timed_decode_step"] = self.timed_decode_step
+        if self.timed_decode_step_base is not None:
+            data["timed_decode_step_base"] = self.timed_decode_step_base
+        if self.timed_decode_step_note is not None:
+            data["timed_decode_step_note"] = self.timed_decode_step_note
         return data
     
     def to_json(self, indent: int = 2) -> str:

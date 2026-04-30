@@ -9,14 +9,16 @@
 - **Layers**: 48
 - **Micro-batches**: 2
 
-## Decode timing (exact TPOT + representative ITL detail)
+## Decode timing (exact TPOT + decode step detail)
 
-| Metric | Attention | FFN |
+| Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Representative ITL sample total | 891.269 ms | 890.993 ms |
+| Decode step 1 timing total (0-based; 2nd decode-loop iteration) | 891.269 ms | 890.993 ms |
+| Prefill / TTFT-path | 2557.882 ms | 2497.182 ms |
 | Decode loop total | 26552.026 ms | 26551.833 ms |
 | Decode steps | 19 | 19 |
 | Decode TPOT | 1397.475 ms | 1397.465 ms |
+| Legacy decode step (not exact TPOT) | - | - |
 | Compute | 245.191 ms | 848.308 ms |
 | Recv wait | 604.649 ms | 5.337 ms |
 | MoE router | 0.000 ms | 0.000 ms |
@@ -24,10 +26,13 @@
 | MoE shared/dense | 0.000 ms | 0.000 ms |
 | Compute ratio | 0.275 | 0.952 |
 
+- Pipeline detail is recorded for 0-based decode step **1** (2nd decode-loop iteration); source: inferred from current scheduler default.
+- Decode speedup uses exact `decode_tpot_ms`, averaged over all decode-loop steps, not this single step timing.
+
 
 ## Compared to serial baseline
 
-- Serial TPOT: **989.863 ms**  (decode_tpot_ms)
+- Serial TPOT: **989.863 ms**  (decode_tpot_ms from `results/serial/cache/b64_s1024_t20.json`)
 - This run exact TPOT: **1397.475 ms**
 - Δ: +407.612 ms   |   TPOT speedup: **0.708×**
 

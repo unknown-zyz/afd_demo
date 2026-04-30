@@ -131,11 +131,11 @@ speedup = serial / DBO
 | `decode-dbo` | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
 | `decode-dbo-crosslayer` | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
 
-Pipeline 图中的 representative step / ITL 只用于观察 overlap、气泡和层间事件，
-不能作为最终 speedup 分母。
+Decode DBO 的 pipeline 图固定展示 0-based decode step 1（第 2 个 decode-loop
+iteration），只用于观察 overlap、气泡和层间事件，不能作为最终 speedup 分母。
 
-旧实验中曾出现 “NPU decode DBO 约 5x 加速” 的误判，根因是把代表性 step
-或 fallback 口径当成了准确 TPOT。当前结论以
+旧实验中曾出现 “NPU decode DBO 约 5x 加速” 的误判，根因是把 decode step 1
+timing 或 fallback 口径当成了准确 TPOT。当前结论以
 [`doc/08-gpu-npu-experiment-summary.md`](doc/08-gpu-npu-experiment-summary.md)
 为准。
 

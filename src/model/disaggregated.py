@@ -689,7 +689,6 @@ class DisaggregatedQwenModel(nn.Module):
             self._last_decode_timing = decode_scheduler.get_timing_data()
             if self._last_decode_timing is not None:
                 self._last_decode_timing.prefill_ms = prefill_ms
-                self._last_decode_timing.representative_itl_ms = self._last_decode_timing.total_time_ms
                 self._last_decode_timing.decode_loop_ms = decode_loop_ms
                 self._last_decode_timing.decode_steps = decode_steps
                 self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
@@ -776,7 +775,6 @@ class DisaggregatedQwenModel(nn.Module):
             self._last_decode_timing = decode_scheduler.get_timing_data()
             if self._last_decode_timing is not None:
                 self._last_decode_timing.prefill_ms = prefill_ms
-                self._last_decode_timing.representative_itl_ms = self._last_decode_timing.total_time_ms
                 self._last_decode_timing.decode_loop_ms = decode_loop_ms
                 self._last_decode_timing.decode_steps = decode_steps
                 self._last_decode_timing.decode_tpot_ms = decode_tpot_ms

@@ -28,19 +28,19 @@ speedup = serial_baseline / DBO_time
 旧的 “NPU decode DBO 约 5x” 不是硬件真实性能结论，而是指标口径混用导致的
 误判。主要问题有三个：
 
-### 2.1 把代表性 step 当成整体 TPOT
+### 2.1 把 step 1 timing 当成整体 TPOT
 
-DBO decode 的 pipeline 图会挑一个代表性 decode step，用来画 layer / micro-batch
-事件。这类数据可以说明：
+DBO decode 的 pipeline 图不是随机挑选样本，而是固定记录 0-based decode step 1：
+第 2 个 decode-loop iteration。step 0 被跳过，用来避开 warmup / 冷启动影响。
+step 1 timing 可以说明：
 
 - Attention 和 FFN 是否有 overlap；
 - 哪些层存在 bubble；
 - crosslayer 是否减少等待；
-- 某一 step 的局部耗时结构。
+- step 1 的局部耗时结构。
 
-但它不是整个 decode 阶段所有 token 的平均成本。若只拿这个代表性 step 与 serial
-decode 全流程平均值对比，就会把一个局部较优样本误当成整体 TPOT，容易放大
-speedup。
+但它不是整个 decode 阶段所有 token 的平均成本。若只拿 step 1 timing 与 serial
+decode 全流程平均值对比，就会把一个局部 step 误当成整体 TPOT，容易放大 speedup。
 
 ### 2.2 使用了 fallback / legacy 分母
 
@@ -49,14 +49,14 @@ speedup。
 ```text
 total_time_ms / tokens
 legacy decode_step_ms
-representative_itl_ms
+timed decode step 1 / 旧单步 ITL 字段
 ```
 
 这些字段和准确 TPOT 语义不同：
 
 - `total_time_ms / tokens` 可能混入 prefill、首 token、warmup 或调度外开销；
 - legacy `decode_step_ms` 在旧流程中并不总是由完整 decode loop 平均得到；
-- representative ITL 只代表图里展示的一个 step。
+- timed decode step 1 只代表图里展示的第 2 个 decode-loop iteration。
 
 把这些字段与 serial 的准确或近似平均值混用，就会产生看似很高的加速比。
 
@@ -68,8 +68,8 @@ representative_itl_ms
 serial_decode_tpot_ms / dbo_decode_tpot_ms
 ```
 
-旧结论中存在 DBO 使用 representative / fallback，而 serial 使用另一种 TPOT 或
-总时间拆分值的情况。分子分母语义不一致时，speedup 数字没有可解释性。
+旧结论中存在 DBO 使用 step 1 timing / fallback，而 serial 使用另一种 TPOT 或总时间
+拆分值的情况。分子分母语义不一致时，speedup 数字没有可解释性。
 
 ## 3. 修正后的 decode TPOT
 
@@ -102,18 +102,19 @@ serial_prefill_ms / dbo_total_time_ms
 网络传输、流式返回和全局 serving scheduler 开销。因此它适合比较本仓库内的
 serial vs DBO，不应直接写成线上端到端 TTFT。
 
-## 5. 代表性 ITL 的正确用途
+## 5. Decode step 1 timing 的正确用途
 
-Representative timing 可能在以下情况下缺失：
+Decode step 1 timing 可能在以下情况下缺失：
 
 - timing 未开启；
 - DBO 未开启；
 - generation 未开启；
-- `max_new_tokens` 太小，达不到代表性 step；
+- `max_new_tokens` 太小，达不到 decode loop step 1；
 - `batch_size < num_micro_batches`；
 - 运行失败或 OOM。
 
-它的正确用途是看 pipeline 结构，不是算最终 speedup。
+它的正确用途是看 pipeline 结构，不是算最终 speedup。最终 decode speedup 必须使用
+`decode_tpot_ms`，即所有 decode-loop step 的平均 TPOT。
 
 ## 6. 基线审计
 

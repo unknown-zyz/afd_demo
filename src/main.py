@@ -480,7 +480,6 @@ def run_generation_demo(args):
         model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
         model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
         model._last_decode_timing.decode_tpot_ms = generation_metrics.get("decode_tpot_ms")
-        model._last_decode_timing.representative_itl_ms = model._last_decode_timing.total_time_ms
         model._last_decode_timing.save(timing_file)
         logger.info(f"Decode timing saved: {timing_file}")
     elif args.timing and (not hasattr(model, '_last_decode_timing') or model._last_decode_timing is None):

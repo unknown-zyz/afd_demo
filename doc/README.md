@@ -39,7 +39,7 @@
 - Speedup 统一为 `serial / DBO`，大于 `1.0x` 才表示 DBO 更快。
 - Prefill DBO 使用模型侧 TTFT-path：`serial_prefill_ms / dbo_total_time_ms`。
 - Decode DBO 和 crosslayer 使用准确 TPOT：`serial_decode_tpot_ms / dbo_decode_tpot_ms`。
-- Pipeline 图里的 representative step / ITL 只用于观察 overlap，不用于最终加速比。
+- Decode DBO 的 pipeline 明细来自 0-based decode step 1，只用于观察 overlap，不用于最终加速比。
 - 旧的 “NPU decode DBO 约 5x 加速” 是口径误用导致的历史结论，不能继续引用。
 - 当前 fresh rerun 中，最稳定的正收益来自 NPU prefill DBO；GPU DBO 和 NPU decode DBO 的中位数都低于 `1.0x`。
 

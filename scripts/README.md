@@ -22,12 +22,18 @@ NPU/HCCL 脚本位于 `npu` 分支：
 
 | 脚本 | 用途 |
 |---|---|
-| `gen_experiment_report.py` | 从 timing JSON 生成单次运行 Markdown 报告。 |
+| `gen_experiment_report.py` | 从 timing JSON 生成单次运行 Markdown 报告；prefill/decode 对比读取 serial cache。 |
 | `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 pipeline Gantt 图。 |
 | `plot_all_pipelines.py` | 扫描结果目录，为所有有效 DBO 行生成 pipeline 图。 |
 | `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
 | `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |
 | `capture_serial_prefill.sh` | 旧 GPU-only 辅助脚本；新流程优先使用 `capture_serial_split.py`。 |
+
+报告口径：
+
+- Prefill 报告中的 Serial TTFT 来自 `results/serial/cache/b<B>_s<S>_t<T>.json` 的 `prefill_ms`。
+- Decode 报告中的 Serial TPOT 来自同一 cache 的 `decode_tpot_ms`。
+- Decode DBO 的 pipeline 明细固定来自 0-based decode step 1（第 2 个 decode-loop iteration）；step 0 被跳过以避开 warmup / 冷启动，该 step 1 timing 不用于最终 speedup。
 
 ## GPU 示例
 
