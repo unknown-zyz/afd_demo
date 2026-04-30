@@ -1,43 +1,48 @@
-# Script reference
+# 脚本索引
 
-The canonical experiment commands are documented in `doc/02-usage.md`. This
-file is a compact index for scripts in this directory.
+完整实验命令请看 [`doc/02-usage.md`](../doc/02-usage.md)。本文件只作为
+`scripts/` 目录的快速索引。
 
-## Main entrypoints
+## 主要入口
 
-| Script | Purpose |
+| 脚本 | 用途 |
 |---|---|
-| `run_single.sh` | GPU single run: serial, prefill DBO, decode DBO, or decode crosslayer. |
-| `run_experiment_matrix.sh` | GPU batch x sequence x mode sweep; writes `results/experiment_matrix_summary.csv`. |
-| `run_npu.sh` | Ascend 910C single run with HCCL. Use explicit `--attn-size 1 --ffn-size 1 --ffn-tp-size 1` for the validated topology. |
-| `run_experiment_matrix_npu.sh` | Ascend 910C matrix sweep; writes `results_npu/experiment_matrix_summary.csv`. |
-| `run_node.sh` | Manual multinode Attention/FFN process launcher. |
+| `run_single.sh` | GPU 单配置运行：serial、prefill DBO、decode DBO 或 decode crosslayer。 |
+| `run_experiment_matrix.sh` | GPU batch × seq × mode 矩阵扫描，写入 `results/experiment_matrix_summary.csv`。 |
+| `run_node.sh` | 手动启动单个 Attention 或 FFN 节点，用于多机调试。 |
 
-## Reporting and validation
+NPU/HCCL 脚本位于 `npu` 分支：
 
-| Script | Purpose |
+| 脚本 | 用途 |
 |---|---|
-| `gen_experiment_report.py` | Generate per-run markdown reports from timing JSON. |
-| `visualize_dbo_pipeline.py` | Generate one pipeline Gantt figure from timing JSON. |
-| `plot_all_pipelines.py` | Scan a result root and generate pipeline figures for all valid DBO rows. |
-| `audit_experiment_baselines.py` | Check that every DBO row has a mode-matched serial baseline. |
-| `capture_serial_split.py` | Re-capture serial prefill-only timing and merge `prefill_ms` / `decode_tpot_ms` into cache files. |
-| `capture_serial_prefill.sh` | Legacy GPU-only helper kept for old workflows; prefer `capture_serial_split.py`. |
+| `run_npu.sh` | Ascend 910C 单配置运行。当前验证拓扑显式使用 `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`。 |
+| `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`。 |
 
-## GPU examples
+## 报告与验证
+
+| 脚本 | 用途 |
+|---|---|
+| `gen_experiment_report.py` | 从 timing JSON 生成单次运行 Markdown 报告。 |
+| `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 pipeline Gantt 图。 |
+| `plot_all_pipelines.py` | 扫描结果目录，为所有有效 DBO 行生成 pipeline 图。 |
+| `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
+| `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |
+| `capture_serial_prefill.sh` | 旧 GPU-only 辅助脚本；新流程优先使用 `capture_serial_split.py`。 |
+
+## GPU 示例
 
 ```bash
-# serial baseline
+# 串行基线
 ./scripts/run_single.sh local 8 128 --tokens 20 --no-dbo --generate
 
-# prefill DBO, default single-run mode
+# 预填充 DBO，单次运行默认模式
 ./scripts/run_single.sh local 8 128 --tokens 20
 
-# decode DBO / decode crosslayer
+# 解码 DBO / 解码跨层流水
 ./scripts/run_single.sh local 8 128 --tokens 20 --generate
 ./scripts/run_single.sh local 8 128 --tokens 20 --generate --crosslayer
 
-# matrix
+# GPU 矩阵
 ./scripts/run_experiment_matrix.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64 \
@@ -45,24 +50,26 @@ file is a compact index for scripts in this directory.
   --tokens 20
 ```
 
-## NPU examples
+## NPU 示例
+
+以下命令需要在 `npu` 分支和已准备好的 910C 容器 / worktree 内运行。
 
 ```bash
-# serial baseline
+# 串行基线
 ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
   --batch 8 --seq 128 --tokens 20 --model-name "$MODEL_NAME" --no-dbo
 
-# prefill DBO
+# 预填充 DBO
 ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
   --batch 8 --seq 128 --tokens 20 --model-name "$MODEL_NAME" --no-generate
 
-# decode DBO / decode crosslayer
+# 解码 DBO / 解码跨层流水
 ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
   --batch 8 --seq 128 --tokens 20 --model-name "$MODEL_NAME"
 ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
   --batch 8 --seq 128 --tokens 20 --model-name "$MODEL_NAME" --crosslayer
 
-# matrix
+# NPU 矩阵
 ./scripts/run_experiment_matrix_npu.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64,128,256 \
@@ -71,7 +78,7 @@ file is a compact index for scripts in this directory.
   --visible-devs 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 ```
 
-## Post-processing
+## 后处理
 
 ```bash
 # GPU
@@ -83,5 +90,4 @@ python scripts/plot_all_pipelines.py --root results_npu
 python scripts/audit_experiment_baselines.py --root results_npu --output-csv results_npu/baseline_audit.csv
 ```
 
-Use `--help` on the shell scripts and Python scripts for the complete option
-list.
+每个脚本的完整参数以 `--help` 输出为准。

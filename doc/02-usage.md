@@ -1,6 +1,9 @@
-# Usage and experiment command reference
+# 02. 使用与实验命令
 
-## 1. Setup
+本文是当前实验命令手册，按 serial、prefill DBO、decode DBO / crosslayer、
+GPU matrix、NPU matrix 和后处理组织。
+
+## 1. 环境准备
 
 ```bash
 cd /path/to/afd_demo
@@ -10,52 +13,50 @@ pip install -r requirements.txt
 pytest tests/ -q
 ```
 
-GPU model path:
+GPU 模型路径：
 
 ```bash
 export MODEL_PATH=/data/Qwen/Qwen3-30B-A3B/
 ```
 
-NPU model path:
+NPU 模型路径：
 
 ```bash
 export MODEL_NAME=/models/Qwen3-30B-A3B
 ```
 
-## 2. Single-run GPU entry
+## 2. GPU 单次入口
 
 ```bash
 ./scripts/run_single.sh <local|multinode> <batch> <seq> [options]
 ```
 
-Common options:
+常用参数：
 
-| Option | Meaning |
+| 参数 | 含义 |
 |---|---|
-| `--tokens N` | Number of generated tokens / `max_new_tokens`; default `5` for single runs. |
-| `--no-dbo` | Disable DBO and run the serial AF baseline. |
-| `--generate` | Run prefill + autoregressive decode. Without it, `run_single.sh` runs prefill-only. |
-| `--crosslayer` | Enable decode cross-layer pipeline; only meaningful with generation and DBO. |
-| `--visualize` | Generate one pipeline PNG after the run. |
-| `--warmup-p2p` | Run untimed NCCL P2P warmup before timing. |
-| `--warmup-rounds N` | Number of P2P warmup rounds; default `3`, matrix uses `5`. |
-| `--verbose` | More detailed Python logging. |
+| `--tokens N` | 生成 token 数 / `max_new_tokens`；单次默认 `5`。 |
+| `--no-dbo` | 关闭 DBO，运行 serial AF baseline。 |
+| `--generate` | 启用 prefill + autoregressive decode；不加时只跑 prefill。 |
+| `--crosslayer` | 启用 decode cross-layer pipeline；只在 DBO + generation 下有意义。 |
+| `--visualize` | 单次运行结束后生成 pipeline PNG。 |
+| `--warmup-p2p` | timing 前执行未计时 NCCL P2P warmup。 |
+| `--warmup-rounds N` | P2P warmup 轮数；单次默认 `3`，matrix 使用 `5`。 |
+| `--verbose` | 打印更详细日志。 |
 
-## 3. Serial baseline
+## 3. 串行基线（Serial baseline）
 
-Serial means A/F separation is still used, but DBO is disabled.
-
-### Single config
+Serial 表示关闭 DBO，但仍使用 A/F 分离。
 
 ```bash
-# Serial generation baseline: needed for exact decode TPOT.
+# 串行生成基线：用于准确 decode TPOT。
 ./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo --generate
 
-# Serial prefill-only baseline: useful when explicitly capturing prefill_ms.
+# 串行预填充基线：用于补采 prefill_ms。
 ./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo
 ```
 
-Matrix serial baseline:
+矩阵：
 
 ```bash
 ./scripts/run_experiment_matrix.sh \
@@ -66,27 +67,24 @@ Matrix serial baseline:
   --no-cache
 ```
 
-Serial outputs:
+输出：
 
-| Path | Meaning |
+| 路径 | 含义 |
 |---|---|
-| `results/serial/timing_attention_serial_b<B>_s<S>_t<T>.json` | Attention-side serial timing. |
-| `results/serial/timing_ffn_serial_b<B>_s<S>_t<T>.json` | FFN-side serial timing. |
-| `results/serial/cache/b<B>_s<S>_t<T>.json` | Deduplicated baseline cache used by reports/plots. |
+| `results/serial/timing_attention_serial_b<B>_s<S>_t<T>.json` | Attention 侧 serial timing。 |
+| `results/serial/timing_ffn_serial_b<B>_s<S>_t<T>.json` | FFN 侧 serial timing。 |
+| `results/serial/cache/b<B>_s<S>_t<T>.json` | 报告和图表使用的 baseline cache。 |
 
-## 4. Prefill DBO
+## 4. 预填充 DBO（Prefill DBO）
 
-Prefill DBO is DBO enabled with generation disabled. `run_single.sh` defaults to
-prefill-only unless `--generate` is passed.
-
-### Single config
+Prefill DBO 表示 DBO 开启、generation 关闭。`run_single.sh` 默认就是
+prefill-only，除非显式加 `--generate`。
 
 ```bash
 ./scripts/run_single.sh local 4 128 --tokens 20
-./scripts/run_single.sh local 4 128 --tokens 20 --warmup-p2p --warmup-rounds 5
 ```
 
-Matrix:
+矩阵：
 
 ```bash
 ./scripts/run_experiment_matrix.sh \
@@ -96,36 +94,28 @@ Matrix:
   --tokens 20
 ```
 
-Prefill DBO outputs:
-
-```text
-results/prefill-dbo/timing_attention_prefill-dbo_b<B>_s<S>_t<T>.json
-results/prefill-dbo/timing_ffn_prefill-dbo_b<B>_s<S>_t<T>.json
-results/prefill-dbo/report_prefill-dbo_b<B>_s<S>_t<T>.md
-results/prefill-dbo/pipeline_prefill-dbo_b<B>_s<S>_t<T>.png
-```
-
-Speedup uses model-side TTFT-path:
+Prefill speedup 使用模型侧 TTFT-path：
 
 ```text
 serial_prefill_ms / dbo_total_time_ms
 ```
 
-## 5. Decode DBO and crosslayer
+其中 `serial_prefill_ms` 来自 serial cache，`dbo_total_time_ms` 来自 prefill DBO
+timing JSON。
 
-Decode DBO requires generation.
+## 5. 解码 DBO / 跨层流水（Decode DBO / Crosslayer）
 
-### Single config
+Decode DBO 必须加 `--generate`。
 
 ```bash
-# Decode DBO
+# 解码 DBO
 ./scripts/run_single.sh local 4 128 --tokens 20 --generate
 
-# Decode DBO with cross-layer pipeline
+# 解码跨层流水
 ./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
 ```
 
-Matrix:
+矩阵：
 
 ```bash
 ./scripts/run_experiment_matrix.sh \
@@ -135,57 +125,49 @@ Matrix:
   --tokens 20
 ```
 
-Decode outputs:
-
-```text
-results/decode-dbo/timing_attention_decode-dbo_b<B>_s<S>_t<T>.json
-results/decode-dbo/timing_ffn_decode-dbo_b<B>_s<S>_t<T>.json
-results/decode-dbo-crosslayer/timing_attention_decode-dbo-crosslayer_b<B>_s<S>_t<T>.json
-results/decode-dbo-crosslayer/timing_ffn_decode-dbo-crosslayer_b<B>_s<S>_t<T>.json
-```
-
-Speedup uses exact TPOT:
+Decode speedup 使用准确 TPOT：
 
 ```text
 serial_decode_tpot_ms / dbo_decode_tpot_ms
 ```
 
-Representative ITL events in PNGs are for visual inspection only.
+Pipeline PNG 中的 representative ITL / representative step 只用于观察 overlap，
+不用于最终 speedup。
 
-## 6. GPU matrix options
+## 6. GPU 矩阵参数
 
 ```bash
 ./scripts/run_experiment_matrix.sh [options]
 ```
 
-| Option | Default | Meaning |
+| 参数 | 默认值 | 含义 |
 |---|---|---|
-| `--modes list` | `serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer` | Comma-separated mode subset. |
-| `--batches list` | `2,4,8,16,32,64` | Comma-separated batch sizes. |
-| `--seqs list` | `128,256,512` | Comma-separated prefill sequence lengths. |
-| `--tokens N` | `20` | Decode token count for matrix runs. |
-| `--deployment local|multinode` | `local` | Use local 4-GPU or multinode `run_single.sh` mode. |
-| `--no-cache` | false | Force serial rerun even if cache exists. |
-| `--dry-run` | false | Print commands without executing. |
+| `--modes list` | 四种模式全部运行 | `serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer` 的子集。 |
+| `--batches list` | `2,4,8,16,32,64` | batch size 列表。 |
+| `--seqs list` | `128,256,512` | prefill sequence length 列表。 |
+| `--tokens N` | `20` | decode token 数。 |
+| `--deployment` | `local` | `local` 或 `multinode`。 |
+| `--no-cache` | false | 强制重跑 serial，不复用 cache。 |
+| `--dry-run` | false | 只打印命令，不执行。 |
 
-Representative GPU rerun phases:
+代表性 GPU rerun phases：
 
 ```bash
-# Default grid
+# 默认网格
 ./scripts/run_experiment_matrix.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64 \
   --seqs 128,256,512 \
   --tokens 20
 
-# High-batch expansion
+# 高 batch 扩展
 ./scripts/run_experiment_matrix.sh \
-  --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
+  --modes serial,decode-dbo,decode-dbo-crosslayer \
   --batches 96,128,192,256 \
   --seqs 128,256,512 \
   --tokens 20
 
-# Long-sequence expansion
+# 长序列扩展
 ./scripts/run_experiment_matrix.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64,96,128,192,256 \
@@ -193,34 +175,34 @@ Representative GPU rerun phases:
   --tokens 20
 ```
 
-The script rewrites `results/experiment_matrix_summary.csv` at start. Save or
-rename phase summaries if you run multiple phases.
+脚本启动时会重写 `results/experiment_matrix_summary.csv`。如果分阶段运行，需要
+手动保存或合并阶段 summary。
 
-## 7. NPU matrix options
+## 7. NPU 矩阵参数
 
-Run inside the 910C container/worktree.
+NPU matrix 需要在 910C 容器 / worktree 内运行，脚本位于 `npu` 分支。
 
 ```bash
 ./scripts/run_experiment_matrix_npu.sh [options]
 ```
 
-| Option | Default | Meaning |
+| 参数 | 默认值 | 含义 |
 |---|---|---|
-| `--modes list` | all four modes | Same modes as GPU matrix. |
-| `--batches list` | `2,4,8,16,32,64,128,256` | Comma-separated batch sizes. |
-| `--seqs list` | `128,256,512` | Comma-separated prefill sequence lengths. |
-| `--tokens N` | `20` | Decode token count. |
-| `--visible-devs list` | `0..15` | `ASCEND_VISIBLE_DEVICES` pool. |
-| `--attn-devs list` | empty | Per-attention-rank device pool override. |
-| `--ffn-devs list` | empty | Per-FFN-rank device pool override. |
-| `--no-cache` | false | Force serial rerun. |
-| `--append` | false | Append to existing summary instead of replacing it. |
-| `--dry-run` | false | Print commands without executing. |
+| `--modes list` | 四种模式全部运行 | 与 GPU matrix 相同。 |
+| `--batches list` | `2,4,8,16,32,64,128,256` | batch size 列表。 |
+| `--seqs list` | `128,256,512` | prefill sequence length 列表。 |
+| `--tokens N` | `20` | decode token 数。 |
+| `--visible-devs list` | `0..15` | `ASCEND_VISIBLE_DEVICES` 设备池。 |
+| `--attn-devs list` | 空 | Attention rank 的设备池覆盖。 |
+| `--ffn-devs list` | 空 | FFN rank 的设备池覆盖。 |
+| `--no-cache` | false | 强制重跑 serial。 |
+| `--append` | false | 追加到已有 summary，而不是重写。 |
+| `--dry-run` | false | 只打印命令，不执行。 |
 
-Representative NPU rerun phases:
+代表性 NPU rerun phases：
 
 ```bash
-# Default grid
+# 默认网格
 ./scripts/run_experiment_matrix_npu.sh \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
   --batches 2,4,8,16,32,64,128,256 \
@@ -228,7 +210,7 @@ Representative NPU rerun phases:
   --tokens 20 \
   --no-cache
 
-# High-batch b512 probe
+# b512 高 batch 探测
 ./scripts/run_experiment_matrix_npu.sh \
   --append \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
@@ -237,7 +219,7 @@ Representative NPU rerun phases:
   --tokens 20 \
   --no-cache
 
-# Long-sequence grid
+# 长序列网格
 ./scripts/run_experiment_matrix_npu.sh \
   --append \
   --modes serial,prefill-dbo,decode-dbo,decode-dbo-crosslayer \
@@ -246,7 +228,7 @@ Representative NPU rerun phases:
   --tokens 20 \
   --no-cache
 
-# b1024 boundary probes
+# b1024 边界探测
 ./scripts/run_experiment_matrix_npu.sh \
   --append \
   --modes serial,decode-dbo,decode-dbo-crosslayer \
@@ -256,36 +238,35 @@ Representative NPU rerun phases:
   --no-cache
 ```
 
-NPU outputs use `results_npu/` with the same subdirectory layout as GPU. The NPU
-summary has extra columns for visible chip pool and active world size.
+NPU 输出使用 `results_npu/`，目录布局与 GPU 相同，并额外记录 visible chip pool
+和 active world size。
 
-## 8. Reports, plots, and audits
-
-Generate reports during matrix runs; regenerate figures/audits afterward:
+## 8. 后处理
 
 ```bash
+# GPU
 python scripts/plot_all_pipelines.py --root results
 python scripts/audit_experiment_baselines.py --root results --output-csv results/baseline_audit.csv
 
+# NPU
 python scripts/plot_all_pipelines.py --root results_npu
 python scripts/audit_experiment_baselines.py --root results_npu --output-csv results_npu/baseline_audit.csv
 ```
 
-Interpret audit statuses:
+`baseline_audit.csv` 的常见状态：
 
-| Status | Meaning |
+| 状态 | 含义 |
 |---|---|
-| `ok` | Mode-matched baseline exists and speedup is meaningful. |
-| `serial-cache-missing` | Run serial for the same `(batch, seq, tokens)`. |
-| `baseline-missing` | Cache exists but lacks the required `prefill_ms` or `decode_tpot_ms`. |
-| `serial-cache-invalid` | Cache JSON could not be parsed. |
+| `ok` | 存在 mode-matched baseline，speedup 可信。 |
+| `serial-cache-missing` | 缺少相同 `(batch, seq, tokens)` 的 serial cache。 |
+| `baseline-missing` | cache 存在，但缺少 `prefill_ms` 或 `decode_tpot_ms`。 |
+| `serial-cache-invalid` | cache 无法解析。 |
 
-## 9. Troubleshooting
+## 9. 常见问题
 
-| Symptom | Action |
+| 问题 | 处理方式 |
 |---|---|
-| CUDA/NPU OOM | Reduce batch/seq; matrix summaries record the first OOM boundary per `(mode, seq)`. |
-| First P2P send is slow | Use `--warmup-p2p --warmup-rounds 5`; matrix scripts already do this on GPU. |
-| Speedup is `N/A` | Check `baseline_audit.csv`; run or repair the matching serial cache. |
-| NPU plot generation fails in container | Copy results back to an environment with `matplotlib`, or install it in the container. |
-| HCCL/NCCL peer waits forever after OOM | Confirm the peer log contains OOM, then terminate only the matching stuck peer process. |
+| Speedup 是 `N/A` | 检查 `baseline_audit.csv`，补跑或修复对应 serial cache。 |
+| 启动到输出耗时远大于 timing | 多数时间在模型加载、进程启动、warmup，不属于 scheduler timing。 |
+| 只有一个 token 输出 | 确认是否加了 `--generate`，以及 `--tokens` 是否大于 1。 |
+| NPU rank 挂住 | 先看双 rank 日志；确认一侧 OOM 后，只 kill 对应 stuck peer PID。 |

@@ -1,184 +1,165 @@
-# Architecture
+# 01. 架构设计
 
-## 1. Goal
+本文说明当前 AFD Demo 的执行结构、scheduler、KV cache、backend abstraction
+和 timing 口径。
 
-AFD Demo validates **Attention/FFN disaggregated inference** and **Dual Batch
-Overlap (DBO)** for Qwen3-30B-A3B. The model is split by function rather than by
-consecutive layers:
+## 1. 总体目标
 
-```text
-Attention role                         FFN role
-------------------------------         ------------------------------
-Embedding                              Post-attention layernorm
-Self-attention                         MLP / MoE router / experts
-KV cache                               FFN output
-LM head / sampling
-```
-
-The two roles exchange hidden states every transformer layer. The attention
-role owns KV cache because only attention needs keys/values during decode.
-
-## 2. Runtime layout
+AFD Demo 将 Transformer 推理中的 Attention 子图和 FFN / MoE 子图拆成不同
+角色：
 
 ```text
-input_ids
-   |
-   v
-Attention role: embedding + attention
-   |
-   | A2F hidden/residual transfer
-   v
-FFN role: layernorm + MLP/MoE
-   |
-   | F2A hidden transfer
-   v
-Attention role: next layer or lm_head
+输入 token
+   │
+   ▼
+Attention role：embedding、attention、KV cache、采样
+   │  hidden states
+   ▼
+FFN role：MLP / MoE FFN
+   │  hidden states
+   ▼
+Attention role：下一层 attention 或 lm_head
 ```
 
-On GPU local mode, `scripts/run_single.sh local` uses:
+这种拆分允许 Attention 与 FFN 在不同设备、不同 rank 或不同节点上运行。DBO
+在此基础上把 batch 拆成 micro-batch，使 Attention 与 FFN 在层间流水重叠。
 
-| Role | Default visible GPUs |
+## 2. 主要代码结构
+
+| 模块 | 职责 |
 |---|---|
-| Attention | `0,1` |
-| FFN | `2,3` |
+| `src/main.py` | CLI、分布式初始化、模型加载、scheduler 选择、timing 输出。 |
+| `src/model/disaggregated.py` | Qwen3 A/F 拆分模型封装、自回归生成、KV cache 维护。 |
+| `src/model/attention_worker.py` | embedding、attention layer、norm、lm_head、采样。 |
+| `src/model/ffn_worker.py` | FFN / MoE layer 计算。 |
+| `src/pipeline/scheduler.py` | `SimplePipelineScheduler`，serial AF baseline。 |
+| `src/pipeline/async_scheduler.py` | `AsyncPipelineScheduler`，prefill DBO。 |
+| `src/pipeline/decode_scheduler.py` | `DecodeDBOScheduler`，decode DBO 与 crosslayer。 |
+| `src/distributed/__init__.py` | rank、role、process group、P2P group 管理。 |
+| `src/utils/device.py` | CUDA / NPU / CPU 设备与分布式 backend 抽象。 |
+| `src/utils/timing.py` | timing event、layer timing、JSON 输出结构。 |
 
-On NPU, `scripts/run_npu.sh` starts local ranks with HCCL. The validated matrix
-uses active topology `attn_size=1`, `ffn_size=1`, `ffn_tp_size=1`; the visible
-chip pool can be larger than the active world size.
+## 3. 执行模式
 
-## 3. Core modules
+| 模式 | 触发方式 | Scheduler | 主要指标 |
+|---|---|---|---|
+| Serial baseline | `--no-dbo --generate` | `SimplePipelineScheduler` + generation path | `prefill_ms`、`decode_tpot_ms` |
+| Prefill DBO | 默认单次 DBO；不加 `--generate` | `AsyncPipelineScheduler` | 模型侧 TTFT-path |
+| Decode DBO | `--generate` | `DecodeDBOScheduler` | 准确 TPOT |
+| Decode crosslayer | `--generate --crosslayer` | `DecodeDBOScheduler(use_crosslayer=True)` | 准确 TPOT |
 
-| Component | File | Responsibility |
-|---|---|---|
-| Backend helpers | `src/utils/device.py` | Select CUDA/NPU/CPU backend and wrap device APIs. |
-| Distributed context | `src/distributed/__init__.py` | Rank, role, backend, peer ranks, directional groups. |
-| Communicator | `src/distributed/communicator.py` | Basic synchronous/asynchronous tensor transfer helper. |
-| Attention worker | `src/model/attention_worker.py` | Embedding, attention layers, RoPE, LM head. |
-| FFN worker | `src/model/ffn_worker.py` | LayerNorm, MLP/MoE router and experts. |
-| Top-level model | `src/model/disaggregated.py` | Prefill/generation orchestration and KV cache. |
-| Serial scheduler | `src/pipeline/scheduler.py` | Synchronous AF baseline. |
-| Prefill DBO scheduler | `src/pipeline/async_scheduler.py` | Micro-batch overlap for prefill. |
-| Decode DBO scheduler | `src/pipeline/decode_scheduler.py` | Decode micro-batch and optional cross-layer pipeline. |
-| Timing | `src/utils/timing.py` | Per-layer/per-micro-batch event recording. |
+Serial baseline 不是“未拆分模型”，而是关闭 DBO 的 A/F 分离串行路径。它是所有
+speedup 的 mode-matched baseline。
 
-## 4. Schedulers
+## 4. Attention 角色
 
-### 4.1 Serial baseline: `SimplePipelineScheduler`
+Attention role 负责：
 
-Serial mode disables DBO:
+1. token embedding；
+2. 每层 self-attention；
+3. 持有和更新 KV cache；
+4. 与 FFN role 交换 hidden states；
+5. 最后一层之后执行 norm、lm_head 和 sampling。
 
-```bash
-./scripts/run_single.sh local 4 128 --tokens 20 --no-dbo --generate
-```
+KV cache 位于 Attention role，不传给 FFN role。Decode 时每一步只把当前 token
+对应的 hidden states 送到 FFN role。
 
-For each layer and micro-batch:
+## 5. FFN 角色
 
-```text
-Attention compute -> A2F send -> FFN compute -> F2A send -> next layer
-```
+FFN role 负责每层 FFN / MoE FFN 计算。当前 Qwen3-30B-A3B 的 FFN 权重加载和
+MoE 计算是 decode 阶段的重要开销来源，也是 GPU/NPU decode DBO 中位数没有达到
+稳定正收益的主要背景之一。
 
-This path is used as the mode-matched baseline. Serial timing cache files live
-under `results/serial/cache/` or `results_npu/serial/cache/`.
+## 6. 调度器（Scheduler）
 
-### 4.2 Prefill DBO: `AsyncPipelineScheduler`
+### 6.1 SimplePipelineScheduler
 
-Prefill DBO is the default single-run path:
-
-```bash
-./scripts/run_single.sh local 4 128 --tokens 20
-```
-
-It splits the batch into micro-batches, uses asynchronous P2P sends/receives,
-and overlaps A/FFN work where backend scheduling permits. Prefill runs over the
-full prompt length, so activation memory scales with `batch * seq`.
-
-### 4.3 Decode DBO: `DecodeDBOScheduler`
-
-Decode DBO is enabled for generation when DBO is not disabled:
-
-```bash
-./scripts/run_single.sh local 4 128 --tokens 20 --generate
-```
-
-The prefill phase builds the KV cache. Then each decode step processes one new
-token per request while reusing the cache. Timing uses exact decode-loop TPOT:
+`SimplePipelineScheduler` 按层串行执行：
 
 ```text
-decode_tpot_ms = decode_loop_ms / decode_steps
-decode_steps = max_new_tokens - 1
+layer i attention -> send -> layer i ffn -> recv -> layer i+1 attention
 ```
 
-The first sampled token after prefill belongs to the TTFT-path, not the decode
-loop.
+它用于 serial AF baseline，提供 `prefill_ms` 和 `decode_tpot_ms`。
 
-### 4.4 Decode cross-layer
+### 6.2 AsyncPipelineScheduler
 
-Cross-layer decode uses separate directional process groups and posts selected
-receive/send operations earlier across layers:
-
-```bash
-./scripts/run_single.sh local 4 128 --tokens 20 --generate --crosslayer
-```
-
-It is experimental and must be judged by exact TPOT, not by one representative
-Gantt sample.
-
-## 5. KV cache
-
-KV cache uses HuggingFace `DynamicCache` and is owned by the attention role.
-Decode DBO slices cache by batch/micro-batch and keeps the cache local to the
-attention side; keys/values are not transferred to the FFN role.
-
-## 6. Timing and metrics
-
-Each timing run writes one JSON per role:
+`AsyncPipelineScheduler` 用于 prefill DBO。它把 batch 切成 micro-batch，在
+Attention 和 FFN 之间交错发送 hidden states：
 
 ```text
-timing_attention_<tag>.json
-timing_ffn_<tag>.json
+ATT: MB0 L0 ─ send ─ MB1 L0 ─ send ─ MB0 L1 ...
+FFN:      recv ─ MB0 L0 ─ recv ─ MB1 L0 ...
 ```
 
-Important fields:
+Prefill activation 与 `batch * seq` 强相关，因此 prefill DBO 的 OOM 边界会比
+decode 更紧。
 
-| Field | Meaning |
-|---|---|
-| `total_time_ms` | Mode-dependent timed path. For prefill it is the prefill TTFT-path. |
-| `prefill_ms` | Serial prefill-only baseline field. |
-| `decode_loop_ms` | Full decode loop time excluding the prefill first-token path. |
-| `decode_steps` | Number of decode loop steps, normally `max_new_tokens - 1`. |
-| `decode_tpot_ms` | Exact TPOT. |
-| `events` | Representative per-layer/per-micro-batch events used for Gantt plots. |
+### 6.3 DecodeDBOScheduler
 
-Speedup semantics:
+`DecodeDBOScheduler` 用于自回归 decode。每个 decode step 内部也会尝试
+micro-batch overlap。`--crosslayer` 会启用跨层方向性通信组，减少部分层间气泡。
 
-| Mode | Metric | Formula |
-|---|---|---|
-| Prefill DBO | model-side TTFT-path | `serial_prefill_ms / dbo_total_time_ms` |
-| Decode DBO | exact TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
-| Cross-layer decode | exact TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
+Crosslayer 是实验性路径，最终效果必须用准确 `decode_tpot_ms` 判断，不能用某一
+个 representative step 判断。
 
-`events` can show overlap/bubbles, but they are not the denominator for speedup.
+## 7. KV cache 与自回归生成
 
-## 7. Backend abstraction
+当前实现使用 HuggingFace `DynamicCache`。生成流程是：
 
-`src/utils/device.py` resolves:
+1. prefill 处理完整 prompt，初始化 KV cache；
+2. 采样得到第一个 token；
+3. decode loop 每次只处理最新 token；
+4. Attention role 更新 KV cache；
+5. FFN role 只处理 hidden states，不持有 cache。
 
-| Backend | Device API | Distributed backend |
+因此项目已经实现 KV cache 和自回归生成。若单次输出只有一个 token，通常是因为
+未开启 `--generate`、`--tokens` 设置过小，或运行的是 prefill-only DBO。
+
+## 8. 后端抽象
+
+`src/utils/device.py` 统一处理设备与 backend：
+
+| 后端 | 设备 API | 分布式 backend |
 |---|---|---|
 | CUDA | `torch.cuda` | NCCL |
-| NPU | `torch.npu` via `torch_npu.contrib.transfer_to_npu` | HCCL |
-| CPU | no accelerator module | Gloo |
+| Ascend NPU | `torch.npu` / `torch_npu` | HCCL |
+| CPU | `torch.device("cpu")` | Gloo |
 
-The same high-level scheduler code runs on CUDA and NPU. NPU launch scripts set
-HCCL-specific environment variables and device pools.
+NPU 分支使用 `torch_npu.contrib.transfer_to_npu` 兼容部分 CUDA API 表面，但
+NPU/HCCL 仍有独立脚本和环境变量。
 
-## 8. Result interpretation
+## 9. 计时与加速比口径
 
-Do not use old Qwen2-era performance notes as current guidance. The current
-Qwen3 GPU/NPU conclusions are maintained in:
+Timing JSON 中常见字段：
 
-- `doc/gpu_npu_experiment_summary.md`
-- `results/baseline_audit.csv`
-- `results_npu/baseline_audit.csv`
+| 字段 | 含义 |
+|---|---|
+| `total_time_ms` | 当前 scheduler 记录的总时间；prefill DBO speedup 使用它。 |
+| `prefill_ms` | Serial cache 中的 prefill-only 时间。 |
+| `decode_loop_ms` | 自回归 decode loop 总时间，不含 prefill 首 token 路径。 |
+| `decode_steps` | decode loop 的 token step 数，通常是 `max_new_tokens - 1`。 |
+| `decode_tpot_ms` | 准确 TPOT：`decode_loop_ms / decode_steps`。 |
+| `events` | 用于 Gantt 图的代表性 layer / micro-batch 事件。 |
 
-OOM rows in matrix summaries are capacity boundaries, not missing data.
+Speedup 统一为：
+
+```text
+speedup = serial / DBO
+```
+
+| 模式 | 指标 | 公式 |
+|---|---|---|
+| Prefill DBO | 模型侧 TTFT-path | `serial_prefill_ms / dbo_total_time_ms` |
+| Decode DBO | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
+| Crosslayer decode | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
+
+`events` 和 representative ITL 可以解释 overlap，但不能作为最终 speedup 分母。
+
+## 10. 结果解读边界
+
+- 启动耗时很大一部分来自 Qwen3-30B-A3B 权重加载、进程启动和 warmup，不等于
+  scheduler timing。
+- OOM 行是容量边界，不是缺失数据。
+- 旧 Qwen2 时代或旧 fallback 口径的性能结论不能作为当前结论。
+- 当前 GPU/NPU 实验结论见 [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md)。
