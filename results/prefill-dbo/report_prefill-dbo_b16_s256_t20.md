@@ -9,11 +9,16 @@
 - **Layers**: 48
 - **Micro-batches**: 2
 
-## End-to-end decode timing (representative step)
+## Model-side TTFT timing (prefill path)
 
-| Metric | Attention | FFN |
+| Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Representative-step total | 4815.141 ms | 4847.704 ms |
+| Model-side prefill total / TTFT-path | 4815.141 ms | 4847.704 ms |
+| Prefill / TTFT-path | - | - |
+| Decode loop total | - | - |
+| Decode steps | - | - |
+| Decode TPOT | - | - |
+| Legacy decode step (not exact TPOT) | - | - |
 | Compute | 1456.866 ms | 4337.712 ms |
 | Recv wait | 2627.385 ms | 0.806 ms |
 | MoE router | 0.000 ms | 176.911 ms |
@@ -21,12 +26,23 @@
 | MoE shared/dense | 0.000 ms | 0.000 ms |
 | Compute ratio | 0.303 | 0.895 |
 
+- Prefill speedup uses model-side TTFT-path: serial `prefill_ms` / DBO `total_time_ms`.
+
 
 ## Compared to serial baseline
 
-- Serial per-step: **732.117 ms**  (serial full-gen 14642.3 ms / 20 tokens)
-- This run per-step: **4815.141 ms**
-- Δ: +4083.025 ms   |   Speedup: **0.152×**
+- Serial TTFT: **6091.877 ms**  (prefill_ms from `results/serial/cache/b16_s256_t20.json`)
+- This run TTFT: **4815.141 ms**
+- Δ: -1276.735 ms   |   TTFT speedup: **1.265×**
+
+## Layer averages summary
+
+| Scope | Layers | Attention avg/layer (ms) | A2F avg/layer (ms) | FFN avg/layer (ms) | F2A avg/layer (ms) | F2A recv-wait avg/layer (ms) |
+|---|---:|---:|---:|---:|---:|---:|
+| All layers | 48 | 15.176 | 0.175 | 45.184 | 0.178 | 27.369 |
+| Excl. L0 | 47 | 13.320 | 0.173 | 41.568 | 0.175 | 23.722 |
+
+_Each value first averages across micro-batches within a layer, then averages those layer means across the selected layer set._
 
 ## Per-layer breakdown
 
@@ -82,8 +98,9 @@
 | 47 | 13.124 / 13.087 / 13.160 | 0.161 / 0.160 / 0.162 | 35.876 / 35.844 / 35.908 | 0.158 / 0.156 / 0.160 | 0.173 / 0.163 / 0.183 |
 | **Σ (excl. L0)** | **626.023** | **8.129** | **1953.698** | **8.209** | **1114.920** |
 
-_Cells report mean / min / max across micro-batches when >1 MB is tracked._
+_Cells with three values are **mean / min / max across micro-batches**, not repeated runs._
 _L0 is skipped in the Σ row because layer-0 contains pipeline warmup._
+_Layer 21 is the default 2-GPU shard boundary for 48-layer Qwen3 (21 layers on role GPU0, remaining layers on role GPU1). A large max with a normal min usually means only the first micro-batch paid cross-device/lazy CUDA warmup cost._
 
 ---
 _Generated from `timing_attention_prefill-dbo_b16_s256_t20.json` + `timing_ffn_prefill-dbo_b16_s256_t20.json`._

@@ -11,12 +11,14 @@
 
 ## Model-side TTFT timing (prefill path)
 
-| Metric | Attention | FFN |
+| Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Model-side TTFT / prefill total | 436.842 ms | 443.750 ms |
+| Model-side prefill total / TTFT-path | 436.842 ms | 443.750 ms |
+| Prefill / TTFT-path | - | - |
 | Decode loop total | - | - |
 | Decode steps | - | - |
 | Decode TPOT | - | - |
+| Legacy decode step (not exact TPOT) | - | - |
 | Compute | 185.833 ms | 404.892 ms |
 | Recv wait | 225.600 ms | 0.398 ms |
 | MoE router | 0.000 ms | 12.259 ms |
@@ -24,10 +26,12 @@
 | MoE shared/dense | 0.000 ms | 0.000 ms |
 | Compute ratio | 0.425 | 0.912 |
 
+- Prefill speedup uses model-side TTFT-path: serial `prefill_ms` / DBO `total_time_ms`.
+
 
 ## Compared to serial baseline
 
-- Serial TTFT: **1860.942 ms**  (prefill_ms)
+- Serial TTFT: **1860.942 ms**  (prefill_ms from `results_npu/serial/cache/b16_s128_t20.json`)
 - This run TTFT: **436.842 ms**
 - Δ: -1424.100 ms   |   TTFT speedup: **4.260×**
 

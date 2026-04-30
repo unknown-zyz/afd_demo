@@ -99,7 +99,7 @@ class DecodeDBOScheduler:
         self.timing_mode = timing_mode
         self.stats = DecodeDBOStats()
         self._timing_data: Optional[PipelineTiming] = None
-        # Track timing on step 1 (skip step 0 warmup)
+        # Track timing on 0-based step 1: skip step 0 warmup/cold-start effects.
         self._timing_step = 1
         self._current_step = 0
         # Send transfer uses direct handle.wait() timing (no monitor needed)
@@ -168,6 +168,11 @@ class DecodeDBOScheduler:
 
         if should_track and tracker is not None:
             self._timing_data = tracker.finish()
+            self._timing_data.timed_decode_step = self._timing_step
+            self._timing_data.timed_decode_step_base = "0-based"
+            self._timing_data.timed_decode_step_note = (
+                "step 0 skipped to avoid warmup/cold-start timing"
+            )
 
         self.stats.total_time = time.perf_counter() - start_time
         self.stats.num_layers = self.model.num_layers
@@ -563,5 +568,5 @@ class DecodeDBOScheduler:
         return self.stats
 
     def get_timing_data(self) -> Optional[PipelineTiming]:
-        """Get per-layer timing data (tracked for one representative decode step)."""
+        """Get per-layer timing data tracked on 0-based decode step 1."""
         return self._timing_data

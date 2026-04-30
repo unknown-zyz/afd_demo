@@ -100,8 +100,8 @@ decode 更紧。
 `DecodeDBOScheduler` 用于自回归 decode。每个 decode step 内部也会尝试
 micro-batch overlap。`--crosslayer` 会启用跨层方向性通信组，减少部分层间气泡。
 
-Crosslayer 是实验性路径，最终效果必须用准确 `decode_tpot_ms` 判断，不能用某一
-个 representative step 判断。
+Crosslayer 是实验性路径，最终效果必须用准确 `decode_tpot_ms` 判断，不能只用
+decode step 1 timing 判断。
 
 ## 7. KV cache 与自回归生成
 
@@ -140,7 +140,7 @@ Timing JSON 中常见字段：
 | `decode_loop_ms` | 自回归 decode loop 总时间，不含 prefill 首 token 路径。 |
 | `decode_steps` | decode loop 的 token step 数，通常是 `max_new_tokens - 1`。 |
 | `decode_tpot_ms` | 准确 TPOT：`decode_loop_ms / decode_steps`。 |
-| `events` | 用于 Gantt 图的代表性 layer / micro-batch 事件。 |
+| `events` | 用于 Gantt 图的 decode step 1 layer / micro-batch 事件。 |
 
 Speedup 统一为：
 
@@ -154,7 +154,7 @@ speedup = serial / DBO
 | Decode DBO | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
 | Crosslayer decode | 准确 TPOT | `serial_decode_tpot_ms / dbo_decode_tpot_ms` |
 
-`events` 和 representative ITL 可以解释 overlap，但不能作为最终 speedup 分母。
+`events` 和 decode step 1 timing 可以解释 overlap，但不能作为最终 speedup 分母。
 
 ## 10. 结果解读边界
 

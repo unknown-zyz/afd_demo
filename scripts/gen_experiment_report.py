@@ -5,7 +5,7 @@ Reads the pair of timing JSON files (attention + FFN) produced by src.main and
 emits a detailed markdown report with:
   - Metadata (mode, batch, seq, tokens, dtype, model)
   - Model-side TTFT timing for prefill runs, or exact TPOT timing for decode runs
-  - Per-step timing table (if events span multiple steps)
+  - Decode step-1 timing details when DBO decode events are present
   - Per-layer × {Attention, A2F, FFN, F2A} mean/min/max table
   - Optional comparison vs a cached serial baseline
 
@@ -13,9 +13,9 @@ Event type mapping (from timing_tracker):
   attention node: attn_compute -> A;   send_transfer -> A2F;   recv_wait -> F2A wait
   ffn       node: ffn_compute  -> FFN; send_transfer -> F2A;   recv_wait -> A2F wait
 
-Decode DBO still records ONE representative inter-token-latency (ITL) sample for
-pipeline/per-layer analysis. Speedup uses exact full decode-loop TPOT from
-``decode_tpot_ms``.
+Decode DBO records pipeline events for 0-based decode step 1 (the second
+decode-loop iteration; step 0 is skipped to avoid warmup/cold-start timing).
+Speedup uses exact full decode-loop TPOT from ``decode_tpot_ms``.
 """
 from __future__ import annotations
 
@@ -56,6 +56,34 @@ def _fmt_stats(vals: List[float]) -> str:
     if len(vals) == 1:
         return f"{vals[0]:.3f}"
     return f"{statistics.mean(vals):.3f} / {min(vals):.3f} / {max(vals):.3f}"
+
+
+def _has_events(attn: Optional[Dict], ffn: Optional[Dict]) -> bool:
+    return bool((attn and attn.get("events")) or (ffn and ffn.get("events")))
+
+
+def _timed_decode_step(attn: Optional[Dict], ffn: Optional[Dict]) -> Tuple[int, bool]:
+    for data in (attn, ffn):
+        if data and data.get("timed_decode_step") is not None:
+            return int(data["timed_decode_step"]), False
+    return 1, True
+
+
+def _decode_step_ordinal(step: int) -> str:
+    return f"{step + 1}nd" if step == 1 else f"#{step + 1}"
+
+
+def _merge_serial_cache(attn: Optional[Dict], serial_attn: Optional[Dict], mode: str) -> Optional[Dict]:
+    """Fill serial report display fields from the cache without changing JSON files."""
+    if normalize_mode(mode) is not None or not attn or not serial_attn:
+        return attn
+    merged = dict(attn)
+    for key in ("prefill_ms", "decode_loop_ms", "decode_steps", "decode_tpot_ms", "decode_step_ms"):
+        if merged.get(key) is None and serial_attn.get(key) is not None:
+            merged[key] = serial_attn[key]
+    if merged != attn:
+        merged["_serial_cache_merged"] = True
+    return merged
 
 
 def _per_layer_table(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
@@ -170,7 +198,7 @@ def _metadata_block(attn: Optional[Dict], ffn: Optional[Dict], args) -> str:
 
 
 def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
-    lines = ["| Metric | Attention | FFN |", "|---|---:|---:|"]
+    lines = ["| Metric | Attention rank view | FFN rank view |", "|---|---:|---:|"]
 
     def g(d, k):
         return d.get(k) if d else None
@@ -183,16 +211,23 @@ def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
         return str(v)
 
     normalized_mode = normalize_mode(mode)
-    total_label = (
-        "Model-side TTFT / prefill total"
-        if normalized_mode == "prefill"
-        else "Representative ITL sample total"
-    )
+    if normalized_mode == "prefill":
+        total_label = "Model-side prefill total / TTFT-path"
+    elif normalized_mode == "decode":
+        step, _ = _timed_decode_step(attn, ffn)
+        total_label = (
+            f"Decode step {step} timing total "
+            f"(0-based; {_decode_step_ordinal(step)} decode-loop iteration)"
+        )
+    else:
+        total_label = "Model-side generation total"
     keys = [
         (total_label, "total_time_ms", "ms"),
+        ("Prefill / TTFT-path", "prefill_ms", "ms"),
         ("Decode loop total", "decode_loop_ms", "ms"),
         ("Decode steps", "decode_steps", ""),
         ("Decode TPOT", "decode_tpot_ms", "ms"),
+        ("Legacy decode step (not exact TPOT)", "decode_step_ms", "ms"),
         ("Compute", "total_compute_ms", "ms"),
         ("Recv wait", "total_recv_wait_ms", "ms"),
         ("MoE router", "total_moe_router_ms", "ms"),
@@ -214,10 +249,38 @@ def _e2e_block(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
     return "\n".join(lines)
 
 
-def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mode: str) -> str:
+def _timing_notes(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
+    normalized_mode = normalize_mode(mode)
+    lines: List[str] = []
+    if normalized_mode is None:
+        lines.extend([
+            "- `Model-side generation total` is `total_time_ms` for the full generation call.",
+            "- The Attention/FFN columns are rank-level wall-clock views of the same serial run; they are not per-role compute decomposition.",
+            "- `Decode TPOT` is the serial decode baseline used for decode speedup.",
+        ])
+        if attn and attn.get("_serial_cache_merged"):
+            lines.append("- Missing serial display fields were filled from the matching serial cache JSON.")
+        if attn and attn.get("decode_tpot_ms") is None and attn.get("decode_step_ms") is not None:
+            lines.append("- `Legacy decode step` is shown for audit only; it is not exact TPOT and is not used for speedup.")
+    elif normalized_mode == "decode" and _has_events(attn, ffn):
+        step, inferred = _timed_decode_step(attn, ffn)
+        source = "inferred from current scheduler default" if inferred else "recorded in timing JSON"
+        lines.extend([
+            f"- Pipeline detail is recorded for 0-based decode step **{step}** ({_decode_step_ordinal(step)} decode-loop iteration); source: {source}.",
+            "- Decode speedup uses exact `decode_tpot_ms`, averaged over all decode-loop steps, not this single step timing.",
+        ])
+    elif normalized_mode == "prefill":
+        lines.append("- Prefill speedup uses model-side TTFT-path: serial `prefill_ms` / DBO `total_time_ms`.")
+    return "\n".join(lines)
+
+
+def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mode: str,
+                       serial_baseline_path: str = "") -> str:
     if not cur_attn or not serial_attn:
         return ""
     normalized_mode = normalize_mode(mode)
+    if normalized_mode is None:
+        return ""
     cur_value = cur_attn.get("total_time_ms") if normalized_mode == "prefill" else cur_attn.get("decode_tpot_ms")
     if cur_value is None:
         metric = "TTFT" if normalized_mode == "prefill" else "exact TPOT"
@@ -232,7 +295,9 @@ def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mo
     if not baseline.available:
         warning = baseline.warning or "mode-matched serial baseline unavailable"
         run_metric = "TTFT" if normalized_mode == "prefill" else "exact TPOT"
+        source_line = f"- Serial baseline file: `{serial_baseline_path}`\n" if serial_baseline_path else ""
         return (f"\n## Compared to serial baseline\n\n"
+                f"{source_line}"
                 f"- Serial baseline: **N/A** ({warning})\n"
                 f"- This run {run_metric}: **{cur:.3f} ms**\n"
                 f"- Speedup: **N/A**\n")
@@ -246,8 +311,9 @@ def _compare_vs_serial(cur_attn: Optional[Dict], serial_attn: Optional[Dict], mo
     source_note = baseline.source
     if baseline.warning:
         source_note += f"; {baseline.warning}"
+    source_detail = f" from `{serial_baseline_path}`" if serial_baseline_path else ""
     return (f"\n## Compared to serial baseline\n\n"
-            f"- Serial {baseline.unit}: **{baseline.value_ms:.3f} ms**  ({source_note})\n"
+            f"- Serial {baseline.unit}: **{baseline.value_ms:.3f} ms**  ({source_note}{source_detail})\n"
             f"- This run {cur_metric}: **{cur:.3f} ms**\n"
             f"- Δ: {delta:+.3f} ms   |   {speedup_metric} speedup: **{speedup:.3f}×**\n")
 
@@ -273,6 +339,7 @@ def main():
         raise SystemExit(f"ERROR: neither {args.attn_timing} nor {args.ffn_timing} exist")
 
     serial_attn = _load(args.serial_baseline) if args.serial_baseline else None
+    attn = _merge_serial_cache(attn, serial_attn, args.mode)
 
     out = []
     title = f"Experiment report — {args.mode or 'run'} b{args.batch} s{args.seq} t{args.tokens}"
@@ -280,15 +347,21 @@ def main():
     out.append("## Configuration\n")
     out.append(_metadata_block(attn, ffn, args))
     out.append("")
-    timing_title = (
-        "Model-side TTFT timing (prefill path)"
-        if normalize_mode(args.mode) == "prefill"
-        else "Decode timing (exact TPOT + representative ITL detail)"
-    )
+    normalized_mode = normalize_mode(args.mode)
+    if normalized_mode == "prefill":
+        timing_title = "Model-side TTFT timing (prefill path)"
+    elif normalized_mode == "decode":
+        timing_title = "Decode timing (exact TPOT + decode step detail)"
+    else:
+        timing_title = "Serial timing (model-side total + decode fields)"
     out.append(f"## {timing_title}\n")
     out.append(_e2e_block(attn, ffn, args.mode))
+    notes = _timing_notes(attn, ffn, args.mode)
+    if notes:
+        out.append("")
+        out.append(notes)
     out.append("")
-    cmp_block = _compare_vs_serial(attn, serial_attn, args.mode)
+    cmp_block = _compare_vs_serial(attn, serial_attn, args.mode, args.serial_baseline)
     if cmp_block:
         out.append(cmp_block)
     out.append("## Layer averages summary\n")

@@ -259,10 +259,10 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     num_mb = attn_data.get('num_micro_batches', 2)
 
     # Mode-matched DBO latency from timing JSON. Decode speedup uses full
-    # decode-loop TPOT; the Gantt bars still visualize one representative ITL.
+    # decode-loop TPOT; the Gantt bars visualize the recorded decode step.
     dbo_attn_total = attn_data.get('total_time_ms', 0)
     dbo_ffn_total = ffn_data.get('total_time_ms', 0)
-    # For decode, total_time_ms is the recorded representative ITL sample.
+    # For decode, total_time_ms is the recorded decode step timing.
     total_inference_time = max(dbo_attn_total, dbo_ffn_total)
     
     # 计算时间 (从事件中精确计算, 仅统计可视化范围内的层)

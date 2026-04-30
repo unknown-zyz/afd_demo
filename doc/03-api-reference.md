@@ -83,7 +83,7 @@ Attention role 持有 KV cache；FFN role 不应依赖 cache。
 | `decode_steps` | decode loop step 数。 |
 | `decode_tpot_ms` | 准确 TPOT。 |
 | `layers` | 每层 timing。 |
-| `events` | Gantt 图使用的代表性事件。 |
+| `events` | Gantt 图使用的 decode step 1 事件。 |
 
 `events` 是可视化数据，不是 speedup denominator。
 

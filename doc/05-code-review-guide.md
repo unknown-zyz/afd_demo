@@ -48,9 +48,9 @@ speedup 和分布式正确性的风险。
 
 - `total_time_ms / max_new_tokens` 作为 fallback speedup；
 - legacy `decode_step_ms` 作为最终 TPOT；
-- representative ITL / representative step 作为最终 speedup 分母。
+- decode step 1 timing 作为最终 speedup 分母。
 
-Representative ITL 只能用于 pipeline Gantt 图解释。
+Decode step 1 timing 只能用于 pipeline Gantt 图解释。
 
 ## 5. 调度器审查点
 
