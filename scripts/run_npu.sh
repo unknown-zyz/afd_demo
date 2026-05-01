@@ -12,6 +12,7 @@
 #
 # Usage:
 #   ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 [--tokens N] [other run_single flags]
+#   ./scripts/run_npu.sh ... --attn-layer-devices 4 --ffn-layer-devices 12 --layer-shard-policy contiguous
 #   Add --no-timing for profiling-overhead runs.
 #
 # This script spawns one torchrun-style process per role on the local node
@@ -31,6 +32,10 @@ BATCH=8
 SEQ=128
 EXTRA_ARGS=()
 TIMING_ARGS=(--timing)
+ATTN_LAYER_DEVICES="${AFD_ATTENTION_LAYER_DEVICES:-}"
+FFN_LAYER_DEVICES="${AFD_FFN_LAYER_DEVICES:-}"
+LAYER_SHARD_POLICY="${AFD_LAYER_SHARD_POLICY:-legacy}"
+LAYER_SHARD_POLICY_EXPLICIT=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -48,6 +53,9 @@ while [[ $# -gt 0 ]]; do
         --tokens)       TOKENS="$2"; shift 2 ;;
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
+        --attn-layer-devices) ATTN_LAYER_DEVICES="$2"; shift 2 ;;
+        --ffn-layer-devices)  FFN_LAYER_DEVICES="$2";  shift 2 ;;
+        --layer-shard-policy) LAYER_SHARD_POLICY="$2"; LAYER_SHARD_POLICY_EXPLICIT=true; shift 2 ;;
         --no-timing)    TIMING_ARGS=(); shift ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
@@ -58,6 +66,29 @@ if (( FFN_SIZE % FFN_TP_SIZE != 0 )); then
     echo "ERROR: --ffn-size=$FFN_SIZE must be divisible by --ffn-tp-size=$FFN_TP_SIZE" >&2
     exit 1
 fi
+if [ -n "$ATTN_LAYER_DEVICES" ] && ! [[ "$ATTN_LAYER_DEVICES" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --attn-layer-devices must be a positive integer" >&2
+    exit 1
+fi
+if [ -n "$FFN_LAYER_DEVICES" ] && ! [[ "$FFN_LAYER_DEVICES" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --ffn-layer-devices must be a positive integer" >&2
+    exit 1
+fi
+if [ -n "$ATTN_LAYER_DEVICES" ] && [ "$ATTN_LAYER_DEVICES" -lt 1 ]; then
+    echo "ERROR: --attn-layer-devices must be >= 1" >&2
+    exit 1
+fi
+if [ -n "$FFN_LAYER_DEVICES" ] && [ "$FFN_LAYER_DEVICES" -lt 1 ]; then
+    echo "ERROR: --ffn-layer-devices must be >= 1" >&2
+    exit 1
+fi
+if [ "$LAYER_SHARD_POLICY_EXPLICIT" = false ] && { [ -n "$ATTN_LAYER_DEVICES" ] || [ -n "$FFN_LAYER_DEVICES" ]; }; then
+    LAYER_SHARD_POLICY="contiguous"
+fi
+case "$LAYER_SHARD_POLICY" in
+    legacy|contiguous|round_robin) ;;
+    *) echo "ERROR: --layer-shard-policy must be legacy, contiguous, or round_robin" >&2; exit 1 ;;
+esac
 
 echo "=== NPU-910C launch ==="
 echo "preset=$PRESET  attn_size=$ATTN_SIZE  ffn_size=$FFN_SIZE  ffn_tp_size=$FFN_TP_SIZE"
@@ -84,6 +115,7 @@ if [ -z "$ATTN_DEVICES" ] && [ -z "$FFN_DEVICES" ] && [ "$ATTN_SIZE" -eq 1 ] && 
     fi
 fi
 echo "visible_devices=$ASCEND_VISIBLE_DEVICES  attn_devices=${ATTN_DEVICES:-<global>}  ffn_devices=${FFN_DEVICES:-<global>}"
+echo "layer_shard_policy=$LAYER_SHARD_POLICY  attn_layer_devices=${ATTN_LAYER_DEVICES:-<all>}  ffn_layer_devices=${FFN_LAYER_DEVICES:-<all>}"
 export HCCL_BUFFSIZE="${HCCL_BUFFSIZE:-200}"           # MB
 export HCCL_CONNECT_TIMEOUT="${HCCL_CONNECT_TIMEOUT:-600}"
 export HCCL_EXEC_TIMEOUT="${HCCL_EXEC_TIMEOUT:-1800}"
@@ -118,7 +150,11 @@ elif [ "$HAS_CROSSLAYER" = true ]; then
 else
     MODE_TAG="decode-dbo"
 fi
-SUFFIX="${MODE_TAG}_npu_b${BATCH}_s${SEQ}_t${TOKENS}"
+PLACEMENT_TAG=""
+if [ "$LAYER_SHARD_POLICY" != "legacy" ] || [ -n "$ATTN_LAYER_DEVICES" ] || [ -n "$FFN_LAYER_DEVICES" ]; then
+    PLACEMENT_TAG="_layer-a${ATTN_LAYER_DEVICES:-all}-f${FFN_LAYER_DEVICES:-all}-${LAYER_SHARD_POLICY}"
+fi
+SUFFIX="${MODE_TAG}_npu_b${BATCH}_s${SEQ}_t${TOKENS}${PLACEMENT_TAG}"
 
 # Source python venv if present
 if [ -f venv/bin/activate ]; then source venv/bin/activate; fi
@@ -141,6 +177,14 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             export ASCEND_VISIBLE_DEVICES="$RANK_DEVS"
             export ASCEND_RT_VISIBLE_DEVICES="$RANK_DEVS"
             LOCAL_RANK=0  # rank sees only its own devs starting at 0
+        fi
+        export AFD_LAYER_SHARD_POLICY="$LAYER_SHARD_POLICY"
+        if [ "$ROLE" = "attention" ] && [ -n "$ATTN_LAYER_DEVICES" ]; then
+            export AFD_ROLE_LAYER_DEVICES="$ATTN_LAYER_DEVICES"
+        elif [ "$ROLE" = "ffn" ] && [ -n "$FFN_LAYER_DEVICES" ]; then
+            export AFD_ROLE_LAYER_DEVICES="$FFN_LAYER_DEVICES"
+        else
+            unset AFD_ROLE_LAYER_DEVICES
         fi
         RANK=$RANK LOCAL_RANK=$LOCAL_RANK WORLD_SIZE=$WORLD_SIZE \
         MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT \

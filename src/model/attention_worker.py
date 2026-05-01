@@ -11,12 +11,17 @@ This worker runs on the attention node and processes:
 
 import logging
 import inspect
-import math
 from typing import Optional, Tuple, List, Any, Union
 
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
+
+from .layer_placement import (
+    resolve_role_devices,
+    select_layer_device,
+    summarize_layer_devices,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,17 +210,10 @@ class AttentionWorker(nn.Module):
         
         # Extract attention layers
         self.attention_layers = nn.ModuleList()
-        # Reserve GPU memory on device 0 for NCCL/communicator overhead
-        if len(self.role_devices) >= 2:
-            layers_on_dev0 = max(1, self.num_layers // len(self.role_devices) - 3)
-        else:
-            layers_on_dev0 = self.num_layers
+        assigned_layer_devices = []
         for idx, layer in enumerate(model.model.layers):
-            if len(self.role_devices) >= 2:
-                layer_device_idx = 0 if idx < layers_on_dev0 else min(1, len(self.role_devices) - 1)
-            else:
-                layer_device_idx = 0
-            layer_device = self.role_devices[layer_device_idx]
+            layer_device = select_layer_device(idx, self.num_layers, self.role_devices)
+            assigned_layer_devices.append(layer_device)
             attn_layer = AttentionLayer(
                 input_layernorm=layer.input_layernorm.to(device=layer_device, dtype=dtype),
                 self_attn=layer.self_attn.to(device=layer_device, dtype=dtype),
@@ -231,20 +229,15 @@ class AttentionWorker(nn.Module):
         self.lm_head = model.lm_head.to(device=device, dtype=dtype)
         
         logger.info(
-            "AttentionWorker initialized: layers=%d, devices=%s",
+            "AttentionWorker initialized: layers=%d, devices=%s, layer_placement=%s",
             self.num_layers,
             [str(d) for d in self.role_devices],
+            summarize_layer_devices(assigned_layer_devices),
         )
 
     def _resolve_role_devices(self, primary_device: torch.device) -> List[torch.device]:
         """Resolve all visible accelerator devices for role-internal layer sharding."""
-        from ..utils import device as devmod
-        if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
-            return [primary_device]
-        count = devmod.device_count()
-        if count <= 1:
-            return [primary_device]
-        return [torch.device(f"{primary_device.type}:{idx}") for idx in range(count)]
+        return resolve_role_devices(primary_device, role="attention")
     
     def embed(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Embed input tokens."""
