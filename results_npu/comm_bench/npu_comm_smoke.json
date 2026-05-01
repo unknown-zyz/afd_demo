@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "backend": "npu",
+    "dist_backend": "hccl",
+    "dtype": "float16",
+    "warmup": 1,
+    "iters": 3,
+    "sender_delay_ms": 1.0,
+    "world_size": 2,
+    "note": "sender_completion_ms is isend start -> Work.wait completion. It includes real data movement plus queueing/receiver-readiness/scheduling overhead."
+  },
+  "results": [
+    {
+      "size_mib_requested": 0.004,
+      "tensor_bytes": 4194,
+      "tensor_mib": 0.0039997100830078125,
+      "sender_enqueue_ms": {
+        "mean": 0.06256625056266785,
+        "median": 0.05763024091720581,
+        "p95": 0.07143523544073105,
+        "min": 0.05709938704967499,
+        "max": 0.07296912372112274
+      },
+      "sender_completion_ms": {
+        "mean": 0.06902279953161876,
+        "median": 0.06089918315410614,
+        "p95": 0.08328221738338469,
+        "min": 0.060399994254112244,
+        "max": 0.08576922118663788
+      },
+      "receiver_wait_ms": {
+        "mean": 0.07687074442704518,
+        "median": 0.06862916052341461,
+        "p95": 0.09900517761707305,
+        "min": 0.059602782130241394,
+        "max": 0.10238029062747955
+      },
+      "completion_bandwidth_mib_s": 57.94766526639621
+    }
+  ]
+}
