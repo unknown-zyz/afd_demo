@@ -122,6 +122,10 @@ def parse_args():
     parser.add_argument("--crosslayer", action="store_true",
                         help="Enable cross-layer micro-batch pipelining in decode DBO "
                              "(default: off; post next-layer irecvs before draining current-layer sends)")
+    parser.add_argument("--comm-timing-mode", type=str, choices=["enqueue", "completion"],
+                        default="enqueue",
+                        help="Communication timing for send events: enqueue records isend return "
+                             "overhead; completion records effective Work completion latency.")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -312,6 +316,7 @@ def run_inference_demo(args):
             model=model, num_micro_batches=args.num_micro_batches,
             use_cuda_streams=True, enable_timing=args.timing,
             timing_mode=args.timing_mode,
+            comm_timing_mode=args.comm_timing_mode,
         )
         scheduler_name = "DBO"
     else:
@@ -491,6 +496,7 @@ def run_generation_demo(args):
         num_decode_micro_batches=args.num_micro_batches,
         enable_timing=args.timing,
         timing_mode=args.timing_mode,
+        comm_timing_mode=args.comm_timing_mode,
         decode_use_crosslayer=args.crosslayer,
     )
     
@@ -510,6 +516,17 @@ def run_generation_demo(args):
     
     # Save decode timing data if enabled
     generation_metrics = getattr(model, '_last_generation_metrics', {}) or {}
+    if ctx.is_attention_node and generation_metrics:
+        def _fmt_ms(value):
+            return "N/A" if value is None else f"{value:.3f}ms"
+
+        logger.info(
+            "Generation timing: "
+            f"prefill={_fmt_ms(generation_metrics.get('prefill_ms'))}, "
+            f"decode_loop={_fmt_ms(generation_metrics.get('decode_loop_ms'))}, "
+            f"decode_steps={generation_metrics.get('decode_steps')}, "
+            f"decode_tpot={_fmt_ms(generation_metrics.get('decode_tpot_ms'))}"
+        )
     if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
         os.makedirs("results/prefill_dbo", exist_ok=True)
         if args.timing_suffix:

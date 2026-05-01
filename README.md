@@ -143,6 +143,12 @@ iteration），只用于观察 overlap、气泡和层间事件，不能作为最
 wall time。一次 step 会为 batch 内每条序列各生成 1 个 token；如需吞吐，使用
 `1000 * batch / decode_tpot_ms` 换算。
 
+Pipeline 图里的 A2F/F2A send bars 取决于 `comm_timing_mode`：默认 `enqueue`
+只显示 `isend()` 返回/排队开销；`completion` 显示有效 Work 完成跨度，用于观察
+通信是否被 Attention/FFN 计算掩盖。`completion` 不是纯硬件链路时延，可能包含
+队列、接收端 readiness 和完成通知开销。用 `--no-timing`、`enqueue`、`completion`
+跑同一配置可评估 profiling 开销。
+
 旧实验中曾出现 “NPU decode DBO 约 5x 加速” 的误判，根因是把 decode step 1
 timing 或 fallback 口径当成了准确 TPOT。当前结论以
 [`doc/08-gpu-npu-experiment-summary.md`](doc/08-gpu-npu-experiment-summary.md)

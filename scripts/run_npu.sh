@@ -12,6 +12,7 @@
 #
 # Usage:
 #   ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 [--tokens N] [other run_single flags]
+#   Add --no-timing for profiling-overhead runs.
 #
 # This script spawns one torchrun-style process per role on the local node
 # using HCCL as the distributed backend. For multi-node, set MASTER_ADDR and
@@ -29,6 +30,7 @@ TOKENS=5
 BATCH=8
 SEQ=128
 EXTRA_ARGS=()
+TIMING_ARGS=(--timing)
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -46,6 +48,7 @@ while [[ $# -gt 0 ]]; do
         --tokens)       TOKENS="$2"; shift 2 ;;
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
+        --no-timing)    TIMING_ARGS=(); shift ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
@@ -143,7 +146,7 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             --batch-size "$BATCH" \
             --prefill-seq-len "$SEQ" \
             --max-new-tokens "$TOKENS" \
-            --timing \
+            "${TIMING_ARGS[@]}" \
             --timing-suffix "$SUFFIX" \
             --master-addr "$MASTER_ADDR" \
             --master-port "$MASTER_PORT" \

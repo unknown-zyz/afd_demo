@@ -37,6 +37,11 @@ NPU/HCCL 脚本位于 `npu` 分支：
   序列各生成 1 个 token；吞吐可用 `1000 * batch / decode_tpot_ms` 换算。
 - Timing JSON 中的 `prefill_seq_len` 是请求的 prefill 长度，`actual_prompt_len`
   是 tokenizer 后实际输入长度；两者一致时，`s<seq>` 标签才对应真实上下文长度。
+- `comm_timing_mode=enqueue` 时，A2F/F2A bars 是非阻塞 `isend()` 返回开销，不是
+  传输完成时间；`comm_timing_mode=completion` 时，bars 是有效 Work 完成跨度，
+  用于观察通信是否被计算掩盖。
+- 使用 `--no-timing` 可关闭详细 timing，与 enqueue/completion runs 对比 profiling
+  开销。
 - Decode DBO 的 pipeline 明细固定来自 0-based decode step 1（第 2 个 decode-loop iteration）；step 0 被跳过以避开 warmup / 冷启动，该 step 1 timing 不用于最终 speedup。
 
 ## GPU 示例

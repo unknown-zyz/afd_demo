@@ -19,6 +19,8 @@
 #                        (default: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)
 #   --attn-devs list     Optional per-attention-rank visible devices
 #   --ffn-devs list      Optional per-FFN-rank visible devices
+#   --comm-timing-mode enqueue | completion    (default: enqueue)
+#   --no-timing     Disable detailed timing/report output for overhead checks
 #   --no-cache      Force rerun of serial even if cached
 #   --append        Append to existing summary instead of replacing it
 #   --dry-run       Print commands but don't execute
@@ -33,6 +35,8 @@ TOKENS=20
 ATTN_DEVS="${ATTN_DEVS:-}"
 FFN_DEVS="${FFN_DEVS:-}"
 VISIBLE_DEVS="${VISIBLE_DEVS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
+COMM_TIMING_MODE="enqueue"
+TIMING_ENABLED=true
 NO_CACHE=false
 APPEND=false
 DRY_RUN=false
@@ -46,6 +50,8 @@ while [ $# -gt 0 ]; do
         --attn-devs) ATTN_DEVS="$2"; shift 2;;
         --ffn-devs) FFN_DEVS="$2"; shift 2;;
         --visible-devs) VISIBLE_DEVS="$2"; shift 2;;
+        --comm-timing-mode) COMM_TIMING_MODE="$2"; shift 2;;
+        --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
         --append) APPEND=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
@@ -59,6 +65,11 @@ IFS=',' read -ra MODE_ARR  <<< "$MODES"
 IFS=',' read -ra BATCH_ARR <<< "$BATCHES"
 IFS=',' read -ra SEQ_ARR   <<< "$SEQS"
 
+if [[ "$COMM_TIMING_MODE" != "enqueue" && "$COMM_TIMING_MODE" != "completion" ]]; then
+    echo "ERROR: --comm-timing-mode must be enqueue or completion" >&2
+    exit 1
+fi
+
 ROOT_OUT="results_npu"
 mkdir -p $ROOT_OUT/serial/cache $ROOT_OUT/prefill-dbo $ROOT_OUT/decode-dbo $ROOT_OUT/decode-dbo-crosslayer
 mkdir -p results/prefill_dbo  # run_npu.sh writes intermediate timing here; we move out
@@ -69,7 +80,14 @@ mkdir -p results/prefill_dbo  # run_npu.sh writes intermediate timing here; we m
 run_one() {
     local mode="$1" batch="$2" seq="$3" tokens="$4"
     local outdir="$5"
-    local run_suffix="${mode}_b${batch}_s${seq}_t${tokens}"
+    local suffix_extra=""
+    if [ "$COMM_TIMING_MODE" = "completion" ]; then
+        suffix_extra="_comm-completion"
+    fi
+    if [ "$TIMING_ENABLED" = false ]; then
+        suffix_extra="${suffix_extra}_notiming"
+    fi
+    local run_suffix="${mode}_b${batch}_s${seq}_t${tokens}${suffix_extra}"
     local extra=""
     case "$mode" in
         serial)                extra="--no-dbo";;
@@ -83,17 +101,23 @@ run_one() {
     echo "  Running: $run_suffix"
     echo "════════════════════════════════════════════════════════════"
     if [ "$DRY_RUN" = true ]; then
-        echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME $extra"
+        echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         return 0
     fi
 
     local port=$((29500 + (RANDOM % 2000)))
-    rm -f "results/prefill_dbo/timing_attention_${mode}_npu_b${batch}_s${seq}_t${tokens}.json" \
-          "results/prefill_dbo/timing_ffn_${mode}_npu_b${batch}_s${seq}_t${tokens}.json"
+    local raw_suffix="${mode}_npu_b${batch}_s${seq}_t${tokens}"
+    rm -f "results/prefill_dbo/timing_attention_${raw_suffix}.json" \
+          "results/prefill_dbo/timing_ffn_${raw_suffix}.json"
+    local timing_flags=(--comm-timing-mode "$COMM_TIMING_MODE")
+    if [ "$TIMING_ENABLED" = false ]; then
+        timing_flags+=(--no-timing)
+    fi
     ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
         --attn-size 1 --ffn-size 1 --ffn-tp-size 1 \
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
         --model-name "$MODEL_NAME" \
+        "${timing_flags[@]}" \
         $extra
     local rc=$?
 
@@ -109,8 +133,12 @@ run_one() {
         return $rc
     fi
 
+    if [ "$TIMING_ENABLED" = false ]; then
+        echo "[ok] $run_suffix completed without detailed timing"
+        return 0
+    fi
+
     # run_npu.sh writes timing to results/prefill_dbo/timing_{attention,ffn}_${mode}_npu_b{B}_s{S}_t{T}.json
-    local raw_suffix="${mode}_npu_b${batch}_s${seq}_t${tokens}"
     local attn_src="results/prefill_dbo/timing_attention_${raw_suffix}.json"
     local ffn_src="results/prefill_dbo/timing_ffn_${raw_suffix}.json"
     local attn_dst="$outdir/timing_attention_${run_suffix}.json"
@@ -180,7 +208,17 @@ for MODE in "${MODE_ARR[@]}"; do
             elif [ $rc -ne 0 ]; then
                 echo "$MODE,$BATCH,$SEQ,$TOKENS,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,FAIL," >> "$SUMMARY"
             else
-                REPORT="$OUTDIR/report_${MODE}_b${BATCH}_s${SEQ}_t${TOKENS}.md"
+                SUFFIX_EXTRA=""
+                if [ "$COMM_TIMING_MODE" = "completion" ]; then
+                    SUFFIX_EXTRA="_comm-completion"
+                fi
+                if [ "$TIMING_ENABLED" = false ]; then
+                    SUFFIX_EXTRA="${SUFFIX_EXTRA}_notiming"
+                fi
+                REPORT="$OUTDIR/report_${MODE}_b${BATCH}_s${SEQ}_t${TOKENS}${SUFFIX_EXTRA}.md"
+                if [ "$TIMING_ENABLED" = false ]; then
+                    REPORT=""
+                fi
                 echo "$MODE,$BATCH,$SEQ,$TOKENS,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,ok,$REPORT" >> "$SUMMARY"
             fi
         done

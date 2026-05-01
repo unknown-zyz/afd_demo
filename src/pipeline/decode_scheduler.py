@@ -20,7 +20,6 @@ import torch.distributed as dist
 
 from ..distributed import get_distributed_context
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
-from .async_scheduler import _measure_send_transfer
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +89,7 @@ class DecodeDBOScheduler:
         num_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        comm_timing_mode: str = "enqueue",
         use_crosslayer: bool = False,
     ):
         self.model = model
@@ -97,12 +97,15 @@ class DecodeDBOScheduler:
         self.num_micro_batches = num_micro_batches
         self.enable_timing = enable_timing
         self.timing_mode = timing_mode
+        self.comm_timing_mode = comm_timing_mode
         self.stats = DecodeDBOStats()
         self._timing_data: Optional[PipelineTiming] = None
         # Track timing on 0-based step 1: skip step 0 warmup/cold-start effects.
         self._timing_step = 1
         self._current_step = 0
-        # Send transfer uses direct handle.wait() timing (no monitor needed)
+        # Send timing is controlled by comm_timing_mode: enqueue overhead by
+        # default, or effective Work completion latency for communication
+        # overlap profiling.
         # Cross-layer pipelining switch:
         #   - False (default): layer-synchronous — drain current-layer sends
         #     before posting next-layer irecvs. Cleaner baseline.
@@ -113,7 +116,7 @@ class DecodeDBOScheduler:
         _ = self.ctx.a2f_group
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}, "
-            f"use_crosslayer={use_crosslayer}"
+            f"use_crosslayer={use_crosslayer}, comm_timing={comm_timing_mode}"
         )
 
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
@@ -157,8 +160,8 @@ class DecodeDBOScheduler:
                 num_layers=self.model.num_layers,
                 num_micro_batches=actual_num_mb,
                 mode=self.timing_mode,
+                comm_timing_mode=self.comm_timing_mode,
             )
-            # Direct timing approach: handle.wait() after each isend
 
         if self.ctx.is_attention_node:
             result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
@@ -290,14 +293,14 @@ class DecodeDBOScheduler:
             # Wait prev MB's send before issuing the next (overlap compute with send)
             if prev_send_handle is not None:
                 prev_send_handle.wait()
+                if tracker:
+                    tracker.observe_send_completion(prev_send_handle)
 
             send_start = time.perf_counter()
             tag = self._get_tag(layer_idx, mb_idx, "a2f")
             prev_send_handle = dist.isend(packed, dst=peer, tag=tag, group=a2f_group)
             if tracker:
-                send_end = _measure_send_transfer(prev_send_handle, send_start)
-                tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                    send_start, send_end)
+                tracker.record_send(prev_send_handle, layer_idx, mb_idx, send_start, packed)
             if self.use_crosslayer:
                 # Post F2A irecv per-MB on f2a_group (doesn't block a2f_group sends)
                 f2a_tag = self._get_tag(0, mb_idx, "f2a")
@@ -312,6 +315,8 @@ class DecodeDBOScheduler:
 
         if prev_send_handle is not None:
             prev_send_handle.wait()
+            if tracker:
+                tracker.observe_send_completion(prev_send_handle)
 
         if not self.use_crosslayer:
             # Post all F2A irecvs for layer 0 AFTER sends drain
@@ -394,14 +399,14 @@ class DecodeDBOScheduler:
 
                 if prev_send_handle is not None:
                     prev_send_handle.wait()
+                    if tracker:
+                        tracker.observe_send_completion(prev_send_handle)
 
                 send_start = time.perf_counter()
                 tag = self._get_tag(layer_idx, mb_idx, "a2f")
                 prev_send_handle = dist.isend(packed, dst=peer, tag=tag, group=a2f_group)
                 if tracker:
-                    send_end = _measure_send_transfer(prev_send_handle, send_start)
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
+                    tracker.record_send(prev_send_handle, layer_idx, mb_idx, send_start, packed)
                 if self.use_crosslayer:
                     # Post F2A irecv for THIS layer per-MB on f2a_group
                     f2a_tag = self._get_tag(layer_idx, mb_idx, "f2a")
@@ -416,6 +421,8 @@ class DecodeDBOScheduler:
 
             if prev_send_handle is not None:
                 prev_send_handle.wait()
+                if tracker:
+                    tracker.observe_send_completion(prev_send_handle)
 
             if not self.use_crosslayer:
                 # Post all F2A irecvs for this layer AFTER sends drain
@@ -522,9 +529,7 @@ class DecodeDBOScheduler:
                 send_start = time.perf_counter()
                 handle = dist.isend(output, dst=peer, tag=tag, group=f2a_group)
                 if tracker:
-                    send_end = _measure_send_transfer(handle, send_start)
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
+                    tracker.record_send(handle, layer_idx, mb_idx, send_start, output)
                 send_handles.append(handle)
 
             # Post next-layer A2F irecvs.
@@ -553,6 +558,8 @@ class DecodeDBOScheduler:
             # Wait all sends complete
             for handle in send_handles:
                 handle.wait()
+                if tracker:
+                    tracker.observe_send_completion(handle)
 
             if not self.use_crosslayer:
                 _post_next_layer_irecvs()
