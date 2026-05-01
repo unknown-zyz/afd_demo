@@ -168,6 +168,12 @@ A2F/F2A send event 有两种口径：
   包含排队、接收端 readiness、传输和完成通知；它不是纯硬件链路时延，但更适合在
   pipeline 图上观察通信是否被计算掩盖。
 
+换句话说，completion 图展示的是“从框架视角这次 send 何时完成”的上层可观测跨度。
+真实数据搬运发生在这个跨度内，但该跨度还可能包含 NCCL/HCCL 排队、对端尚未 post
+`irecv`、通信流等待和 callback / `wait()` 观察开销。因此它通常大于或等于纯链路传输
+时间，不能直接当作硬件带宽测试；它适合分析 pipeline overlap。若要校准纯通信量级，
+使用 `scripts/bench_comm_transfer.py` 的独立 P2P microbenchmark。
+
 评估 profiling 开销时，对同一配置分别运行：
 
 ```bash
@@ -309,7 +315,45 @@ python scripts/audit_experiment_baselines.py --root results_npu --output-csv res
 | `baseline-missing` | cache 存在，但缺少 `prefill_ms` 或 `decode_tpot_ms`。 |
 | `serial-cache-invalid` | cache 无法解析。 |
 
-## 9. 常见问题
+## 9. 通信 microbenchmark
+
+`scripts/bench_comm_transfer.py` 用两个 rank 独立测相同 payload 下的 P2P 通信：
+
+- sender `isend()` enqueue 时间；
+- sender `isend -> Work.wait()` completion 时间；
+- receiver `irecv -> Work.wait()` 等待时间；
+- 可选 blocking `send/recv`；
+- completion 口径的等效带宽。
+
+GPU 示例：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
+  scripts/bench_comm_transfer.py \
+  --backend cuda \
+  --sizes-mib 0.004,0.031,1,16,32 \
+  --warmup 5 --iters 50 --blocking \
+  --output results/comm_bench/gpu_comm.json
+```
+
+NPU 示例（在 `afd-npu-test` 容器和 `npu` 分支内）：
+
+```bash
+ASCEND_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
+  scripts/bench_comm_transfer.py \
+  --backend npu \
+  --sizes-mib 0.004,0.031,1,16,32 \
+  --warmup 5 --iters 50 --blocking \
+  --output results_npu/comm_bench/npu_comm.json
+```
+
+对比方法：
+
+- decode DBO payload 约为 `batch * 1 * hidden * dtype_bytes`，随 batch 增长，基本不随 prefill seq 增长；
+- prefill DBO payload 约为 `batch * seq * hidden * dtype_bytes`，随 `batch * seq` 增长；
+- 如果 DBO completion 明显大于 microbench completion，多出来的部分通常来自 pipeline 调度、对端 readiness 或 backend queueing，而不是纯数据搬运。
+
+## 10. 常见问题
 
 | 问题 | 处理方式 |
 |---|---|

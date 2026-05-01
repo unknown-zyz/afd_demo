@@ -304,7 +304,8 @@ def _timing_notes(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
         if comm_mode == "completion":
             lines.append(
                 "- A2F/F2A bars show effective send completion latency: `isend()` start to distributed Work completion. "
-                "This includes queueing/receiver readiness/transfer/completion notification, not pure wire latency."
+                "This span includes real data movement, but can also include queueing, receiver readiness, "
+                "communication-stream scheduling, and completion notification; it is not pure hardware wire time."
             )
         else:
             lines.append(

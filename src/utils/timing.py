@@ -35,7 +35,10 @@ class EventType(Enum):
     MOE_EXPERTS = "moe_experts"
     MOE_SHARED_OR_DENSE = "moe_shared_or_dense"
     SEND_START = "send_start"
-    SEND_TRANSFER = "send_transfer"   # 真实传输时间（isend 到传输完成，通过轮询检测）
+    # Send timing span. Meaning depends on PipelineTiming.comm_timing_mode:
+    # "enqueue" records isend() return overhead; "completion" records effective
+    # distributed Work completion span, not pure hardware wire time.
+    SEND_TRANSFER = "send_transfer"
     RECV_POST = "recv_post"
     RECV_WAIT = "recv_wait"
 

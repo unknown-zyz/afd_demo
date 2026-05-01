@@ -149,6 +149,16 @@ Pipeline 图里的 A2F/F2A send bars 取决于 `comm_timing_mode`：默认 `enqu
 队列、接收端 readiness 和完成通知开销。用 `--no-timing`、`enqueue`、`completion`
 跑同一配置可评估 profiling 开销。
 
+如果需要校准“有效完成跨度”和独立通信耗时的关系，可用通信 microbenchmark：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
+  scripts/bench_comm_transfer.py \
+  --backend cuda --sizes-mib 0.004,0.031,1,16,32 \
+  --warmup 5 --iters 50 --blocking \
+  --output results/comm_bench/gpu_comm.json
+```
+
 旧实验中曾出现 “NPU decode DBO 约 5x 加速” 的误判，根因是把 decode step 1
 timing 或 fallback 口径当成了准确 TPOT。当前结论以
 [`doc/08-gpu-npu-experiment-summary.md`](doc/08-gpu-npu-experiment-summary.md)

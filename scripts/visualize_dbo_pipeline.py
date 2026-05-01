@@ -5,6 +5,8 @@
 创建 4 泳道的 Gantt 图，清晰展示 Attention、send event、FFN 模块的重叠关系。
 send_transfer 的含义由 timing JSON 的 comm_timing_mode 决定：
 enqueue 表示 isend 返回/排队开销；completion 表示有效 Work 完成跨度。
+completion span 包含真实数据搬运，但也可能包含 backend 排队、接收端 readiness、
+通信流调度和完成通知，因此不是纯硬件链路传输时间。
 
 特性:
   - 自动跳过 Layer 0 的初始化开销（~91ms vs 其他层 ~1.7ms）
@@ -64,7 +66,7 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     加载并组织 timing 数据，提取指定范围的层。
     
     自动对齐 ATT 和 FFN 进程的时钟差异（不同进程 perf_counter 基准不同）。
-    使用 A→F send 边界作为锚点：ATT send_transfer 结束 ≈ FFN recv_wait 开始。
+    使用 A→F send 边界作为锚点：ATT send_transfer 结束 ≈ FFN recv_wait 结束。
     
     Args:
         attn_path: Attention timing JSON 文件路径
