@@ -17,6 +17,7 @@ import torch.nn as nn
 from transformers import PreTrainedModel
 
 from .layer_placement import (
+    move_tensor_to_device,
     resolve_role_devices,
     select_layer_device,
     summarize_layer_devices,
@@ -81,14 +82,14 @@ class FFNLayer(nn.Module):
             output_device = self.layer_device
 
         if hidden_states.device != self.layer_device:
-            hidden_states = hidden_states.to(self.layer_device, non_blocking=True)
+            hidden_states = move_tensor_to_device(hidden_states, self.layer_device)
 
         stage_timing = FFNStageTiming()
 
         # If residual is provided separately (legacy), add it first
         if residual is not None:
             if residual.device != self.layer_device:
-                residual = residual.to(self.layer_device, non_blocking=True)
+                residual = move_tensor_to_device(residual, self.layer_device)
             hidden_states = residual + hidden_states
 
         # Store for second residual
@@ -120,7 +121,7 @@ class FFNLayer(nn.Module):
         hidden_states = residual + hidden_states
 
         if hidden_states.device != output_device:
-            hidden_states = hidden_states.to(output_device, non_blocking=True)
+            hidden_states = move_tensor_to_device(hidden_states, output_device)
         
         if return_timing:
             return hidden_states, stage_timing

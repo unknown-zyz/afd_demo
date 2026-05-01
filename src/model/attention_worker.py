@@ -18,6 +18,7 @@ import torch.nn as nn
 from transformers import PreTrainedModel
 
 from .layer_placement import (
+    move_tensor_to_device,
     resolve_role_devices,
     select_layer_device,
     summarize_layer_devices,
@@ -87,17 +88,17 @@ class AttentionLayer(nn.Module):
             - present_key_value: Updated cache (if use_cache=True)
         """
         if hidden_states.device != self.layer_device:
-            hidden_states = hidden_states.to(self.layer_device, non_blocking=True)
+            hidden_states = move_tensor_to_device(hidden_states, self.layer_device)
         if attention_mask is not None and attention_mask.device != self.layer_device:
-            attention_mask = attention_mask.to(self.layer_device, non_blocking=True)
+            attention_mask = move_tensor_to_device(attention_mask, self.layer_device)
         if position_ids is not None and position_ids.device != self.layer_device:
-            position_ids = position_ids.to(self.layer_device, non_blocking=True)
+            position_ids = move_tensor_to_device(position_ids, self.layer_device)
         if position_embeddings is not None:
             cos, sin = position_embeddings
             if cos.device != self.layer_device or sin.device != self.layer_device:
                 position_embeddings = (
-                    cos.to(self.layer_device, non_blocking=True),
-                    sin.to(self.layer_device, non_blocking=True),
+                    move_tensor_to_device(cos, self.layer_device),
+                    move_tensor_to_device(sin, self.layer_device),
                 )
 
         residual = hidden_states
@@ -151,9 +152,9 @@ class AttentionLayer(nn.Module):
                 )
 
         if attn_output.device != self.output_device:
-            attn_output = attn_output.to(self.output_device, non_blocking=True)
+            attn_output = move_tensor_to_device(attn_output, self.output_device)
         if residual.device != self.output_device:
-            residual = residual.to(self.output_device, non_blocking=True)
+            residual = move_tensor_to_device(residual, self.output_device)
 
         if use_cache:
             return attn_output, residual, present_key_value

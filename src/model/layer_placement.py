@@ -68,3 +68,11 @@ def select_layer_device(
 def summarize_layer_devices(layer_devices: Sequence[torch.device]) -> dict[str, int]:
     """Return a compact count of how many layers are placed on each device."""
     return dict(Counter(str(device) for device in layer_devices))
+
+
+def move_tensor_to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Move tensors with a conservative NPU D2D path."""
+    if tensor.device == device:
+        return tensor
+    non_blocking = not (tensor.device.type == "npu" and device.type == "npu")
+    return tensor.to(device, non_blocking=non_blocking)
