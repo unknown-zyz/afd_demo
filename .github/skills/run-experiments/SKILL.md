@@ -78,8 +78,10 @@ decode-dbo, decode-dbo-crosslayer}。
 ## 关键环境
 
 - 本机 4×V100-32GB: GPU 0,1 → attention, GPU 2,3 → FFN
-- 多机: 另一机 `ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second`,
-  用 `--deployment multinode` 触发
+- GPU 多机: 另一机 `ssh zyz@192.168.5.32 -p 31310 -i ~/.ssh/id_rsa_second`,
+  用 `--deployment multinode` 触发；这不是 NPU 910C 入口
+- NPU 910C: 使用 `ssh schedTeam@1.95.114.229 -p 22 -i ~/.ssh/id_rsa_second`
+  进入长期容器 `afd-npu-test`，详见 `npu_910c_env_setup_and_run` skill
 - Qwen3-30B-A3B 在 V100 上须 asymmetric split(21/27 层),这是模型代码
   里固定的
 - `NCCL_BUFFSIZE=33554432` 由 `run_single.sh` 设置,避免 A2F 发送时的
