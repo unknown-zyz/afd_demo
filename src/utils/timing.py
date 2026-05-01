@@ -19,6 +19,7 @@ Outputs JSON timeline data for visualization.
 """
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Any
@@ -48,13 +49,15 @@ class TimingEvent:
     start_time: float
     end_time: float
     node: str  # "attention" or "ffn"
+    tensor_bytes: int | None = None
+    completion_source: str | None = None
     
     @property
     def duration_ms(self) -> float:
         return (self.end_time - self.start_time) * 1000
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "type": self.event_type,
             "layer": self.layer_idx,
             "mb": self.mb_idx,
@@ -63,6 +66,12 @@ class TimingEvent:
             "duration_ms": self.duration_ms,
             "node": self.node,
         }
+        if self.tensor_bytes is not None:
+            data["tensor_bytes"] = self.tensor_bytes
+            data["tensor_mib"] = self.tensor_bytes / (1024 * 1024)
+        if self.completion_source is not None:
+            data["completion_source"] = self.completion_source
+        return data
 
 
 @dataclass
@@ -83,6 +92,7 @@ class PipelineTiming:
     num_layers: int = 0
     num_micro_batches: int = 0
     total_time_ms: float = 0.0
+    comm_timing_mode: str = "enqueue"
     prefill_seq_len: int | None = None
     actual_prompt_len: int | None = None
     prefill_ms: float | None = None
@@ -132,6 +142,7 @@ class PipelineTiming:
             "num_layers": self.num_layers,
             "num_micro_batches": self.num_micro_batches,
             "total_time_ms": self.total_time_ms,
+            "comm_timing_mode": self.comm_timing_mode,
             "total_compute_ms": self.total_compute_ms,
             "total_recv_wait_ms": self.total_recv_wait_ms,
             "total_moe_router_ms": self.total_moe_router_ms,
@@ -210,23 +221,32 @@ class TimingTracker:
     """
     
     def __init__(self, node: str, num_layers: int, num_micro_batches: int,
-                 mode: str = "cuda_events"):
+                 mode: str = "cuda_events", comm_timing_mode: str = "enqueue"):
         """
         Args:
             node: "attention" or "ffn"
             num_layers: Number of transformer layers
             num_micro_batches: Number of micro-batches
             mode: "cuda_events" (default, stream-level sync) or "sync" (device-level sync)
+            comm_timing_mode: "enqueue" for isend return overhead, or "completion"
+                for effective Work completion latency.
         """
         self.mode = mode
+        if comm_timing_mode not in {"enqueue", "completion"}:
+            raise ValueError(f"Unsupported comm_timing_mode: {comm_timing_mode}")
+        self.comm_timing_mode = comm_timing_mode
         self.timing = PipelineTiming(
             node=node,
             num_layers=num_layers,
             num_micro_batches=num_micro_batches,
+            comm_timing_mode=comm_timing_mode,
         )
         self.start_time = time.perf_counter()
         self._sync_start_time: float = 0.0
         self._current_event: Optional[Dict] = None
+        self._lock = threading.Lock()
+        self._pending_send_events: Dict[int, Dict[str, Any]] = {}
+        self._send_futures: List[Any] = []
         
         if mode == "cuda_events" and torch.cuda.is_available():
             # Verify CUDA is available for stream sync
@@ -263,8 +283,16 @@ class TimingTracker:
         self.record_event(event_type, layer_idx, mb_idx,
                          self._sync_start_time, end_time)
     
+    @staticmethod
+    def tensor_nbytes(tensor: torch.Tensor | None) -> int | None:
+        if tensor is None:
+            return None
+        return int(tensor.numel() * tensor.element_size())
+
     def record_event(self, event_type: EventType, layer_idx: int, mb_idx: int,
-                     start_time: float, end_time: float):
+                     start_time: float, end_time: float,
+                     tensor_bytes: int | None = None,
+                     completion_source: str | None = None):
         """Directly record a timing event with CPU timestamps (sync mode or comm events)."""
         event = TimingEvent(
             event_type=event_type.value,
@@ -273,8 +301,82 @@ class TimingTracker:
             start_time=start_time - self.start_time,  # Relative to pipeline start
             end_time=end_time - self.start_time,
             node=self.timing.node,
+            tensor_bytes=tensor_bytes,
+            completion_source=completion_source,
         )
-        self.timing.add_event(event)
+        with self._lock:
+            self.timing.add_event(event)
+
+    def record_send(self, handle: Any, layer_idx: int, mb_idx: int,
+                    start_time: float, tensor: torch.Tensor | None = None) -> None:
+        """Record a send event using enqueue or effective completion timing."""
+        tensor_bytes = self.tensor_nbytes(tensor)
+        if self.comm_timing_mode == "enqueue":
+            self.record_event(
+                EventType.SEND_TRANSFER,
+                layer_idx,
+                mb_idx,
+                start_time,
+                time.perf_counter(),
+                tensor_bytes=tensor_bytes,
+                completion_source="enqueue",
+            )
+            return
+
+        key = id(handle)
+        pending = {
+            "event_type": EventType.SEND_TRANSFER,
+            "layer_idx": layer_idx,
+            "mb_idx": mb_idx,
+            "start_time": start_time,
+            "tensor_bytes": tensor_bytes,
+            "recorded": False,
+        }
+        with self._lock:
+            self._pending_send_events[key] = pending
+
+        try:
+            future = handle.get_future()
+        except Exception:
+            return
+
+        def _mark_done(_future):
+            self._complete_send_event(key, time.perf_counter(), "future_callback")
+            return _future
+
+        try:
+            callback_future = future.then(_mark_done)
+            self._send_futures.extend([future, callback_future])
+        except Exception:
+            self._send_futures.append(future)
+
+    def observe_send_completion(self, handle: Any) -> None:
+        """Record completion at an existing mandatory wait point if no callback did."""
+        if self.comm_timing_mode != "completion":
+            return
+        self._complete_send_event(id(handle), time.perf_counter(), "observed_wait")
+
+    def _complete_send_event(self, key: int, end_time: float, source: str) -> None:
+        with self._lock:
+            pending = self._pending_send_events.get(key)
+            if pending is None or pending.get("recorded"):
+                return
+            pending["recorded"] = True
+            event_type = pending["event_type"]
+            layer_idx = pending["layer_idx"]
+            mb_idx = pending["mb_idx"]
+            start_time = pending["start_time"]
+            tensor_bytes = pending["tensor_bytes"]
+
+        self.record_event(
+            event_type,
+            layer_idx,
+            mb_idx,
+            start_time,
+            end_time,
+            tensor_bytes=tensor_bytes,
+            completion_source=source,
+        )
     
     def track(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Return a context manager to track an event (sync mode only)."""
@@ -282,6 +384,8 @@ class TimingTracker:
     
     def finish(self) -> PipelineTiming:
         """Finalize timing and return results."""
+        for key in list(self._pending_send_events.keys()):
+            self._complete_send_event(key, time.perf_counter(), "tracker_finish")
         end_time = time.perf_counter()
         self.timing.total_time_ms = (end_time - self.start_time) * 1000
         return self.timing

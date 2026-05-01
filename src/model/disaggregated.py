@@ -549,6 +549,7 @@ class DisaggregatedQwenModel(nn.Module):
         num_decode_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
     ) -> torch.Tensor:
         """
@@ -567,6 +568,8 @@ class DisaggregatedQwenModel(nn.Module):
             num_decode_micro_batches: Number of micro-batches for decode DBO
             enable_timing: Whether to collect per-layer timing data
             timing_mode: "cuda_events" (zero-overhead) or "sync" (legacy)
+            comm_timing_mode: "enqueue" for isend return overhead or
+                "completion" for effective Work completion latency
             decode_use_crosslayer: Enable cross-layer micro-batch pipelining in decode DBO
         
         Returns:
@@ -577,6 +580,7 @@ class DisaggregatedQwenModel(nn.Module):
             return self._generate_ffn_node(
                 input_ids, max_new_tokens, use_decode_dbo,
                 num_decode_micro_batches, enable_timing, timing_mode,
+                comm_timing_mode,
                 decode_use_crosslayer,
             )
         
@@ -625,6 +629,7 @@ class DisaggregatedQwenModel(nn.Module):
                 num_micro_batches=num_decode_micro_batches,
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
+                comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
@@ -703,6 +708,7 @@ class DisaggregatedQwenModel(nn.Module):
         num_decode_micro_batches: int = 2,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
     ) -> torch.Tensor:
         """
@@ -731,6 +737,7 @@ class DisaggregatedQwenModel(nn.Module):
                 num_micro_batches=num_decode_micro_batches,
                 enable_timing=enable_timing,
                 timing_mode=timing_mode,
+                comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
             )
         

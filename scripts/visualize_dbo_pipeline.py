@@ -2,8 +2,9 @@
 """
 改进的 DBO Pipeline 可视化工具
 
-创建 4 泳道的 Gantt 图，清晰展示 Attention、通信、FFN 模块的重叠关系。
-使用 send_transfer 事件测量真实传输时间（通过后台轮询检测完成）。
+创建 4 泳道的 Gantt 图，清晰展示 Attention、send event、FFN 模块的重叠关系。
+send_transfer 的含义由 timing JSON 的 comm_timing_mode 决定：
+enqueue 表示 isend 返回/排队开销；completion 表示有效 Work 完成跨度。
 
 特性:
   - 自动跳过 Layer 0 的初始化开销（~91ms vs 其他层 ~1.7ms）
@@ -52,9 +53,9 @@ MB_COLORS = {
 # 泳道定义
 LANES = {
     'A': {'index': 3, 'label': 'A (Attention)', 'height': 0.8},
-    'A2F': {'index': 2, 'label': 'A→F (Comm)', 'height': 0.8},
+    'A2F': {'index': 2, 'label': 'A→F Send', 'height': 0.8},
     'F': {'index': 1, 'label': 'F (FFN)', 'height': 0.8},
-    'F2A': {'index': 0, 'label': 'F→A (Comm)', 'height': 0.8},
+    'F2A': {'index': 0, 'label': 'F→A Send', 'height': 0.8},
 }
 
 
@@ -63,7 +64,7 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     加载并组织 timing 数据，提取指定范围的层。
     
     自动对齐 ATT 和 FFN 进程的时钟差异（不同进程 perf_counter 基准不同）。
-    使用 A→F 通信边界作为锚点：ATT send_transfer 结束 ≈ FFN recv_wait 开始。
+    使用 A→F send 边界作为锚点：ATT send_transfer 结束 ≈ FFN recv_wait 开始。
     
     Args:
         attn_path: Attention timing JSON 文件路径
@@ -85,9 +86,8 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
     # === Step 1: 计算 ATT-FFN 时钟偏移 ===
     # 对齐原理：
     #   观测量 = ffn_recv_end - attn_send_end (ffn 时钟 - att 时钟)
-    #   真实关系: ffn_recv_end_真 ≥ 数据到达_真 ≥ attn_send_end_真 + 传输延迟
-    #   所以 观测量 = 真实时钟偏移 + (ffn_recv_end - 数据到达) + 传输延迟 ≥ 真实偏移
-    #   取所有锚点中的最小值，是真实偏移的紧上界（误差 ≈ 传输延迟 ~0.1ms）
+    #   enqueue 模式下 send_transfer 结束是 isend 返回，不是数据到达。
+    #   completion 模式下 send_transfer 结束是 Work 完成或已有 wait 点观测到的完成上界。
     #   相比旧方法（依赖 recv_dur≈0 的假设）对 crosslayer 模式更鲁棒
     
     # Build lookup: (layer, mb) -> ATT send_transfer end time
@@ -276,18 +276,21 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     attn_compute = sum(attn_compute_times)
     ffn_compute = sum(ffn_compute_times)
     
-    # A→F 传输时间 (来自 attention 节点)
+    comm_mode = attn_data.get('comm_timing_mode') or ffn_data.get('comm_timing_mode') or 'enqueue'
+
+    # A→F send event time (来自 attention 节点)
     a2f_times = [e['duration_ms'] for e in attn_events 
                  if e['type'] == 'send_transfer' and start_layer <= e['layer'] < start_layer + num_layers]
     
-    # F→A 传输时间 (来自 FFN 节点)
+    # F→A send event time (来自 FFN 节点)
     f2a_times = [e['duration_ms'] for e in ffn_events 
                  if e['type'] == 'send_transfer' and start_layer <= e['layer'] < start_layer + num_layers]
     
     a2f_avg = sum(a2f_times) / len(a2f_times) if a2f_times else 0
     f2a_avg = sum(f2a_times) / len(f2a_times) if f2a_times else 0
     
-    # 总通信时间
+    # Total send event time. In enqueue mode this is enqueue overhead; in
+    # completion mode it is effective Work completion span, not pure wire time.
     total_comm = sum(a2f_times + f2a_times)
     
     # ─── Speedup: mode-matched baseline vs DBO full-model time ───────────────
@@ -335,7 +338,8 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     else:
         layer_note = ""
     mode_tag = f" [{mode}]" if mode else ""
-    line1 = f'DBO Pipeline{mode_tag} — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches'
+    comm_label = "send completion" if comm_mode == "completion" else "send enqueue"
+    line1 = f'DBO Pipeline{mode_tag} — L{start_layer}–{end_layer}{layer_note}, {num_mb} Micro-batches, {comm_label}'
     line2 = f"{dbo_label} | {serial_label} | {speedup_str}"
     ax.set_title(f'{line1}\n{line2}', fontsize=10, pad=10)
     

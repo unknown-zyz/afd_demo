@@ -14,6 +14,7 @@ helper、legacy fallback 和实验残留不应作为新功能依赖。
 | `--batch-size` | batch size。 |
 | `--prefill-seq-len` | prefill sequence length。 |
 | `--max-new-tokens` | 生成 token 数。 |
+| `--comm-timing-mode` | send event 计时模式：`enqueue` 或 `completion`。 |
 | `--backend` | `cuda`、`npu` 或 `cpu`。 |
 | `--attn-size` | Attention role rank 数。 |
 | `--ffn-size` | FFN role rank 数。 |
@@ -83,6 +84,9 @@ Attention role 持有 KV cache；FFN role 不应依赖 cache。
 | `decode_loop_ms` | decode loop 总时间。 |
 | `decode_steps` | decode loop step 数。 |
 | `decode_tpot_ms` | 准确 TPOT。 |
+| `comm_timing_mode` | send event 口径：`enqueue` 或 `completion`。 |
+| `tensor_bytes` / `tensor_mib` | send event payload 大小。 |
+| `completion_source` | send event 完成来源：`enqueue`、`future_callback`、`observed_wait` 等。 |
 | `layers` | 每层 timing。 |
 | `events` | Gantt 图使用的 decode step 1 事件。 |
 

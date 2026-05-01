@@ -15,6 +15,7 @@
 #   --seqs list     Comma-separated seq lens   (default: 128,256,512)
 #   --tokens N      max_new_tokens for decode  (default: 20)
 #   --deployment    local | multinode          (default: local)
+#   --comm-timing-mode enqueue | completion    (default: enqueue)
 #   --no-cache      Force rerun of serial even if cached
 #   --dry-run       Print commands but don't execute
 #
@@ -35,6 +36,7 @@ BATCHES="2,4,8,16,32,64"
 SEQS="128,256,512"
 TOKENS=20
 DEPLOYMENT="local"
+COMM_TIMING_MODE="enqueue"
 NO_CACHE=false
 DRY_RUN=false
 
@@ -45,6 +47,7 @@ while [ $# -gt 0 ]; do
         --seqs) SEQS="$2"; shift 2;;
         --tokens) TOKENS="$2"; shift 2;;
         --deployment) DEPLOYMENT="$2"; shift 2;;
+        --comm-timing-mode) COMM_TIMING_MODE="$2"; shift 2;;
         --no-cache) NO_CACHE=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
         -h|--help)
@@ -75,6 +78,10 @@ run_one() {
     esac
     # Always warmup P2P for stable timing
     base_flags="$base_flags --warmup-p2p --warmup-rounds 5"
+    base_flags="$base_flags --comm-timing-mode $COMM_TIMING_MODE"
+    if [ "$COMM_TIMING_MODE" != "enqueue" ]; then
+        run_suffix="${run_suffix}_comm-${COMM_TIMING_MODE}"
+    fi
 
     echo ""
     echo "════════════════════════════════════════════════════════════"
@@ -106,6 +113,9 @@ run_one() {
     fi
     if [ "$mode" = "decode-dbo-crosslayer" ]; then
         raw_suffix="${raw_suffix}_crosslayer"
+    fi
+    if [ "$COMM_TIMING_MODE" != "enqueue" ]; then
+        raw_suffix="${raw_suffix}_comm-${COMM_TIMING_MODE}"
     fi
     local attn_src="results/prefill_dbo/timing_attention_${raw_suffix}.json"
     local ffn_src="results/prefill_dbo/timing_ffn_${raw_suffix}.json"

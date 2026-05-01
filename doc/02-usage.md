@@ -42,6 +42,8 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `--visualize` | 单次运行结束后生成 pipeline PNG。 |
 | `--warmup-p2p` | timing 前执行未计时 NCCL P2P warmup。 |
 | `--warmup-rounds N` | P2P warmup 轮数；单次默认 `3`，matrix 使用 `5`。 |
+| `--comm-timing-mode enqueue\|completion` | send event 计时模式；`enqueue` 记录 `isend()` 返回开销，`completion` 记录有效 Work 完成跨度。 |
+| `--no-timing` | 关闭详细 timing / report 输出，用于评估 timing 开销。 |
 | `--verbose` | 打印更详细日志。 |
 
 输入构造：
@@ -157,6 +159,22 @@ decode_tokens_per_sec = 1000 * batch / decode_tpot_ms
 Decode DBO 的 pipeline 明细固定记录 0-based decode step 1，也就是第 2 个
 decode-loop iteration；step 0 被跳过以避开 warmup / 冷启动。这个 step 1 timing
 只用于观察 overlap，不用于最终 speedup。
+
+A2F/F2A send event 有两种口径：
+
+- `enqueue`：默认，记录非阻塞 `isend()` 返回/排队开销，通常约 0.1ms；它不是
+  链路传输完成时间。
+- `completion`：记录从 `isend()` 发起到 distributed Work 完成的有效通信完成跨度，
+  包含排队、接收端 readiness、传输和完成通知；它不是纯硬件链路时延，但更适合在
+  pipeline 图上观察通信是否被计算掩盖。
+
+评估 profiling 开销时，对同一配置分别运行：
+
+```bash
+./scripts/run_single.sh local 2 128 --tokens 20 --generate --no-timing
+./scripts/run_single.sh local 2 128 --tokens 20 --generate --comm-timing-mode enqueue
+./scripts/run_single.sh local 2 128 --tokens 20 --generate --comm-timing-mode completion --visualize
+```
 
 历史注意：旧版本 generation 路径没有按 `--prefill-seq-len` 固定 padding，部分
 decode / serial generation 长序列结果中的 `s512/s1024/s2048` 可能只是文件名标签，

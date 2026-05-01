@@ -56,6 +56,9 @@ Options:
   --warmup-p2p      Run untimed NCCL P2P warmup before timing
   --warmup-rounds N Number of warmup rounds (default: 3)
   --crosslayer      Enable decode cross-layer pipeline
+  --comm-timing-mode MODE
+                    Send timing mode: enqueue (default) or completion
+  --no-timing       Disable detailed timing/report output (for overhead checks)
   -h, --help        Show this help message
 EOF
 }
@@ -96,6 +99,8 @@ GENERATE=false
 WARMUP_P2P=false
 WARMUP_ROUNDS=3
 CROSSLAYER=false
+COMM_TIMING_MODE=enqueue
+TIMING=true
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -129,6 +134,14 @@ while [ $# -gt 0 ]; do
             ;;
         --crosslayer)
             CROSSLAYER=true
+            shift
+            ;;
+        --comm-timing-mode)
+            COMM_TIMING_MODE="$2"
+            shift 2
+            ;;
+        --no-timing)
+            TIMING=false
             shift
             ;;
         *)
@@ -175,6 +188,24 @@ if [ "$CROSSLAYER" = true ]; then
     SUFFIX="${SUFFIX}_crosslayer"
 fi
 
+case "$COMM_TIMING_MODE" in
+    enqueue|completion) ;;
+    *)
+        echo "ERROR: --comm-timing-mode must be enqueue or completion"
+        exit 1
+        ;;
+esac
+
+COMM_TIMING_FLAG="--comm-timing-mode $COMM_TIMING_MODE"
+if [ "$COMM_TIMING_MODE" != "enqueue" ]; then
+    SUFFIX="${SUFFIX}_comm-${COMM_TIMING_MODE}"
+fi
+
+TIMING_FLAGS=""
+if [ "$TIMING" = true ]; then
+    TIMING_FLAGS="--timing --timing-suffix $SUFFIX"
+fi
+
 echo "========================================"
 echo "  $([ "$NO_DBO" = true ] && echo 'Serial ' || echo '')Experiment: $SUFFIX"
 echo "========================================"
@@ -183,6 +214,7 @@ echo "Batch: $BATCH, Seq: $SEQ, Tokens: $TOKENS"
 echo "DBO: $([ "$NO_DBO" = true ] && echo disabled || echo enabled)"
 echo "Generate: $([ "$GENERATE" = true ] && echo enabled || echo disabled)"
 echo "Visualize: $([ "$VISUALIZE" = true ] && echo yes || echo no)"
+echo "Timing: $([ "$TIMING" = true ] && echo enabled || echo disabled), comm=$COMM_TIMING_MODE"
 echo "Output: results/prefill_dbo/timing_*_${SUFFIX}.json"
 echo "========================================"
 
@@ -211,8 +243,8 @@ run_local() {
         --batch-size "$BATCH" \
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS" \
-        --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG \
+        $TIMING_FLAGS \
+        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG $COMM_TIMING_FLAG \
         > "results/prefill_dbo/logs/ffn_${SUFFIX}.log" 2>&1 &
     FFN_PID=$!
     # torch.distributed rendezvous already waits for the peer.  Avoid a fixed
@@ -233,8 +265,8 @@ run_local() {
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS" \
         --prompt "Hello world, this is a test prompt for batch scaling experiments with a longer text." \
-        --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG \
+        $TIMING_FLAGS \
+        --verbose $GENERATE_FLAG $DBO_FLAG $WARMUP_FLAGS $CROSSLAYER_FLAG $COMM_TIMING_FLAG \
         > "results/prefill_dbo/logs/attn_${SUFFIX}.log" 2>&1
 
     wait $FFN_PID 2>/dev/null || true
@@ -265,8 +297,8 @@ run_multinode() {
          --batch-size $BATCH \
          --prefill-seq-len $SEQ \
          --max-new-tokens $TOKENS \
-         --timing --timing-suffix '$SUFFIX' \
-         --verbose $GENERATE_FLAG $DBO_FLAG $CROSSLAYER_FLAG" \
+         $TIMING_FLAGS \
+         --verbose $GENERATE_FLAG $DBO_FLAG $CROSSLAYER_FLAG $COMM_TIMING_FLAG" \
          2>&1 | tee "results/prefill_dbo/logs/ffn_${SUFFIX}.log" | sed 's/^/[FFN] /' &
     REMOTE_PID=$!
     sleep 10
@@ -283,8 +315,8 @@ run_multinode() {
         --prefill-seq-len "$SEQ" \
         --max-new-tokens "$TOKENS" \
         --prompt "Hello world, this is a test prompt for batch scaling experiments with a longer text." \
-        --timing --timing-suffix "$SUFFIX" \
-        --verbose $GENERATE_FLAG $DBO_FLAG $CROSSLAYER_FLAG \
+        $TIMING_FLAGS \
+        --verbose $GENERATE_FLAG $DBO_FLAG $CROSSLAYER_FLAG $COMM_TIMING_FLAG \
         2>&1 | tee "results/prefill_dbo/logs/attn_${SUFFIX}.log" | sed 's/^/[ATTN] /'
 
     wait $REMOTE_PID 2>/dev/null || true
@@ -319,7 +351,7 @@ fi
 ATTN_TIMING="results/prefill_dbo/timing_attention_${SUFFIX}.json"
 FFN_TIMING="results/prefill_dbo/timing_ffn_${SUFFIX}.json"
 
-if [ ! -f "$ATTN_TIMING" ] || [ ! -f "$FFN_TIMING" ]; then
+if [ "$TIMING" = true ] && { [ ! -f "$ATTN_TIMING" ] || [ ! -f "$FFN_TIMING" ]; }; then
     echo "⚠️  Missing timing files for $SUFFIX"
     ls -la results/prefill_dbo/timing_*${SUFFIX}* 2>/dev/null
     # Non-fatal for serial mode (timing may be minimal)
@@ -329,7 +361,7 @@ if [ ! -f "$ATTN_TIMING" ] || [ ! -f "$FFN_TIMING" ]; then
 fi
 
 # ── Visualization (DBO only) ─────────────────────────────────────
-if [ "$VISUALIZE" = true ] && [ "$NO_DBO" = false ]; then
+if [ "$VISUALIZE" = true ] && [ "$NO_DBO" = false ] && [ "$TIMING" = true ]; then
     echo ""
     echo "[INFO] Generating visualization..."
     python scripts/visualize_dbo_pipeline.py \
@@ -341,7 +373,7 @@ if [ "$VISUALIZE" = true ] && [ "$NO_DBO" = false ]; then
 fi
 
 # ── Auto-generate markdown report ────────────────────────────────
-if [ -f "$ATTN_TIMING" ] && [ -f "$FFN_TIMING" ]; then
+if [ "$TIMING" = true ] && [ -f "$ATTN_TIMING" ] && [ -f "$FFN_TIMING" ]; then
     REPORT="results/prefill_dbo/report_${SUFFIX}.md"
     if [ "$NO_DBO" = true ]; then MODE_TAG="serial"
     elif [ "$GENERATE" = false ]; then MODE_TAG="prefill-dbo"

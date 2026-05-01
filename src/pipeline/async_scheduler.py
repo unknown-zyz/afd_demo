@@ -58,25 +58,6 @@ class DBOStats:
         )
 
 
-def _measure_send_transfer(handle: dist.Work, send_start: float) -> float:
-    """
-    Return the time when isend() returned to the caller.
-    
-    NCCL isend() is non-blocking: it enqueues the send on an internal stream
-    and returns immediately (~0.1ms). The actual data transfer happens
-    asynchronously and does NOT block the pipeline.
-    
-    The old polling-thread approach showed 20-30ms due to GIL contention.
-    handle.wait()+sync showed 22ms because NCCL send kernel blocks until
-    the receiver posts irecv (real round-trip latency, not pipeline overhead).
-    
-    This approach records the isend() return time, reflecting ATT's actual
-    blocking time. For pipeline visualization, send_transfer bars will be
-    thin (~0.1ms), correctly showing that sends don't block the pipeline.
-    """
-    return time.perf_counter()
-
-
 class AsyncPipelineScheduler:
     """
     Async scheduler implementing true DBO (Dual Batch Overlap).
@@ -107,6 +88,7 @@ class AsyncPipelineScheduler:
         use_cuda_streams: bool = True,
         enable_timing: bool = False,
         timing_mode: str = "cuda_events",
+        comm_timing_mode: str = "enqueue",
     ):
         """
         Initialize async scheduler.
@@ -124,6 +106,7 @@ class AsyncPipelineScheduler:
         self.use_cuda_streams = use_cuda_streams
         self.enable_timing = enable_timing
         self.timing_mode = timing_mode
+        self.comm_timing_mode = comm_timing_mode
         
         self.mb_manager = MicroBatchManager(
             num_micro_batches=num_micro_batches,
@@ -151,7 +134,8 @@ class AsyncPipelineScheduler:
         # Send transfer uses direct handle.wait() timing (no monitor needed)
 
         logger.info(f"AsyncPipelineScheduler initialized: num_mb={num_micro_batches}, "
-                    f"use_cuda_streams={use_cuda_streams}, timing={enable_timing}")
+                    f"use_cuda_streams={use_cuda_streams}, timing={enable_timing}, "
+                    f"comm_timing={comm_timing_mode}")
     
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
         """Get unique tag for send/recv matching."""
@@ -253,6 +237,7 @@ class AsyncPipelineScheduler:
                 num_layers=self.model.num_layers,
                 num_micro_batches=self.num_micro_batches,
                 mode=self.timing_mode,
+                comm_timing_mode=self.comm_timing_mode,
             )
         
         # Split into micro-batches
@@ -356,8 +341,7 @@ class AsyncPipelineScheduler:
             tag = self._get_tag(0, mb_idx, "attn_to_ffn")
             handle = self._send_async(packed, tag)
             if tracker:
-                send_end = _measure_send_transfer(handle, send_start)
-                tracker.record_event(EventType.SEND_TRANSFER, 0, mb_idx, send_start, send_end)
+                tracker.record_send(handle, 0, mb_idx, send_start, packed)
             prev_send_handles.append(handle)
         
         # === Layers 1 ~ num_layers-1: 交错 recv(prev_layer) + compute(curr_layer) ===
@@ -380,6 +364,8 @@ class AsyncPipelineScheduler:
             # Wait all sends from previous layer (no-op if already waited via timing)
             for handle in prev_send_handles:
                 handle.wait()
+                if tracker:
+                    tracker.observe_send_completion(handle)
             
             # 逐 MB 处理：recv 完一个就立即 compute 下一层，不等其他 MB
             send_handles = []
@@ -428,9 +414,7 @@ class AsyncPipelineScheduler:
                 tag = self._get_tag(layer_idx, mb_idx, "attn_to_ffn")
                 handle = self._send_async(packed, tag)
                 if tracker:
-                    send_end = _measure_send_transfer(handle, send_start)
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
+                    tracker.record_send(handle, layer_idx, mb_idx, send_start, packed)
                 send_handles.append(handle)
             
             prev_send_handles = send_handles
@@ -440,6 +424,8 @@ class AsyncPipelineScheduler:
         
         for handle in prev_send_handles:
             handle.wait()
+            if tracker:
+                tracker.observe_send_completion(handle)
         
         for mb_idx, mb in enumerate(micro_batches):
             recv_start = time.perf_counter()
@@ -589,9 +575,7 @@ class AsyncPipelineScheduler:
                 tag = self._get_tag(layer_idx, mb_idx, "ffn_to_attn")
                 handle = self._send_async(output, tag)
                 if tracker:
-                    send_end = _measure_send_transfer(handle, send_start)
-                    tracker.record_event(EventType.SEND_TRANSFER, layer_idx, mb_idx,
-                                        send_start, send_end)
+                    tracker.record_send(handle, layer_idx, mb_idx, send_start, output)
                 send_handles.append(handle)
                 send_start_times.append(send_start)
             
@@ -618,6 +602,8 @@ class AsyncPipelineScheduler:
             # Wait for all sends (no-op if already waited via timing)
             for mb_idx, handle in enumerate(send_handles):
                 handle.wait()
+                if tracker:
+                    tracker.observe_send_completion(handle)
         
         self._pending_sends.clear()
     

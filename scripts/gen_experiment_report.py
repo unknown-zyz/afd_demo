@@ -10,8 +10,8 @@ emits a detailed markdown report with:
   - Optional comparison vs a cached serial baseline
 
 Event type mapping (from timing_tracker):
-  attention node: attn_compute -> A;   send_transfer -> A2F;   recv_wait -> F2A wait
-  ffn       node: ffn_compute  -> FFN; send_transfer -> F2A;   recv_wait -> A2F wait
+  attention node: attn_compute -> A;   send_transfer -> A2F send;   recv_wait -> F2A wait
+  ffn       node: ffn_compute  -> FFN; send_transfer -> F2A send;   recv_wait -> A2F wait
 
 Decode DBO records pipeline events for 0-based decode step 1 (the second
 decode-loop iteration; step 0 is skipped to avoid warmup/cold-start timing).
@@ -58,6 +58,27 @@ def _fmt_stats(vals: List[float]) -> str:
     return f"{statistics.mean(vals):.3f} / {min(vals):.3f} / {max(vals):.3f}"
 
 
+def _fmt_mib_stats(events: List[Dict[str, Any]], layer: int, event_type: str) -> str:
+    vals = [
+        float(e["tensor_mib"])
+        for e in events
+        if e.get("layer") == layer and e.get("type") == event_type and e.get("tensor_mib") is not None
+    ]
+    return _fmt_stats(vals)
+
+
+def _comm_timing_mode(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
+    for data in (attn, ffn):
+        if data and data.get("comm_timing_mode"):
+            return str(data["comm_timing_mode"])
+    return "enqueue"
+
+
+def _send_label(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
+    mode = _comm_timing_mode(attn, ffn)
+    return "send completion" if mode == "completion" else "send enqueue"
+
+
 def _has_events(attn: Optional[Dict], ffn: Optional[Dict]) -> bool:
     return bool((attn and attn.get("events")) or (ffn and ffn.get("events")))
 
@@ -96,17 +117,22 @@ def _per_layer_table(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
     if not layers:
         return "_No per-layer events recorded._"
 
-    rows = ["| Layer | Attention (ms) | A2F send (ms) | FFN (ms) | F2A send (ms) | F2A recv-wait (ms) |",
-            "|------:|---------------:|--------------:|---------:|--------------:|-------------------:|"]
+    send_label = _send_label(attn, ffn)
+    rows = [
+        f"| Layer | Attention (ms) | A2F {send_label} (ms) | A2F payload (MiB) | FFN (ms) | F2A {send_label} (ms) | F2A payload (MiB) | F2A recv-wait (ms) |",
+        "|------:|---------------:|----------------------:|------------------:|---------:|----------------------:|------------------:|-------------------:|",
+    ]
     for l in layers:
         a = a_by.get(l, {})
         f = f_by.get(l, {})
         att = _fmt_stats(a.get("attn_compute", []))
         a2f = _fmt_stats(a.get("send_transfer", []))
+        a2f_payload = _fmt_mib_stats(a_events, l, "send_transfer")
         ffn_c = _fmt_stats(f.get("ffn_compute", []))
         f2a = _fmt_stats(f.get("send_transfer", []))
+        f2a_payload = _fmt_mib_stats(f_events, l, "send_transfer")
         f2a_wait = _fmt_stats(a.get("recv_wait", []))
-        rows.append(f"| {l} | {att} | {a2f} | {ffn_c} | {f2a} | {f2a_wait} |")
+        rows.append(f"| {l} | {att} | {a2f} | {a2f_payload} | {ffn_c} | {f2a} | {f2a_payload} | {f2a_wait} |")
 
     # Aggregate totals (skip L0 because warmup step is atypically long)
     def _sum_mean(by, typ, skip_first=True):
@@ -123,7 +149,7 @@ def _per_layer_table(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
          _sum_mean(f_by, "ffn_compute"), _sum_mean(f_by, "send_transfer"), _sum_mean(a_by, "recv_wait")),
     ]
     rows.append(f"| **{totals[0][0]}** | **{totals[0][1]:.3f}** | **{totals[0][2]:.3f}** | "
-                f"**{totals[0][3]:.3f}** | **{totals[0][4]:.3f}** | **{totals[0][5]:.3f}** |")
+                f"- | **{totals[0][3]:.3f}** | **{totals[0][4]:.3f}** | - | **{totals[0][5]:.3f}** |")
     rows.append("")
     rows.append("_Cells with three values are **mean / min / max across micro-batches**, not repeated runs._")
     rows.append("_L0 is skipped in the Σ row because layer-0 contains pipeline warmup._")
@@ -162,7 +188,7 @@ def _layer_average_summary(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
         scopes.append(("Excl. L0", layers_without_l0))
 
     rows = [
-        "| Scope | Layers | Attention avg/layer (ms) | A2F avg/layer (ms) | FFN avg/layer (ms) | F2A avg/layer (ms) | F2A recv-wait avg/layer (ms) |",
+        f"| Scope | Layers | Attention avg/layer (ms) | A2F {_send_label(attn, ffn)} avg/layer (ms) | FFN avg/layer (ms) | F2A {_send_label(attn, ffn)} avg/layer (ms) | F2A recv-wait avg/layer (ms) |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for label, selected_layers in scopes:
@@ -189,7 +215,12 @@ def _metadata_block(attn: Optional[Dict], ffn: Optional[Dict], args) -> str:
         f"- **Decode tokens**: {args.tokens}",
         f"- **Layers**: {md.get('num_layers', '?')}",
         f"- **Micro-batches**: {md.get('num_micro_batches', '?')}",
+        f"- **Comm timing mode**: `{md.get('comm_timing_mode', 'enqueue')}`",
     ]
+    if md.get("prefill_seq_len") is not None:
+        lines.append(f"- **Requested prefill seq**: {md.get('prefill_seq_len')}")
+    if md.get("actual_prompt_len") is not None:
+        lines.append(f"- **Actual prompt len**: {md.get('actual_prompt_len')}")
     if args.model:
         lines.append(f"- **Model**: `{args.model}`")
     if args.dtype:
@@ -265,10 +296,21 @@ def _timing_notes(attn: Optional[Dict], ffn: Optional[Dict], mode: str) -> str:
     elif normalized_mode == "decode" and _has_events(attn, ffn):
         step, inferred = _timed_decode_step(attn, ffn)
         source = "inferred from current scheduler default" if inferred else "recorded in timing JSON"
+        comm_mode = _comm_timing_mode(attn, ffn)
         lines.extend([
             f"- Pipeline detail is recorded for 0-based decode step **{step}** ({_decode_step_ordinal(step)} decode-loop iteration); source: {source}.",
             "- Decode speedup uses exact `decode_tpot_ms`, averaged over all decode-loop steps, not this single step timing.",
         ])
+        if comm_mode == "completion":
+            lines.append(
+                "- A2F/F2A bars show effective send completion latency: `isend()` start to distributed Work completion. "
+                "This includes queueing/receiver readiness/transfer/completion notification, not pure wire latency."
+            )
+        else:
+            lines.append(
+                "- A2F/F2A bars show non-blocking `isend()` enqueue/return overhead, not true transfer completion latency. "
+                "Use `--comm-timing-mode completion` for communication-overlap profiling."
+            )
     elif normalized_mode == "prefill":
         lines.append("- Prefill speedup uses model-side TTFT-path: serial `prefill_ms` / DBO `total_time_ms`.")
     return "\n".join(lines)
