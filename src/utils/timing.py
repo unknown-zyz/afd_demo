@@ -83,6 +83,8 @@ class PipelineTiming:
     num_layers: int = 0
     num_micro_batches: int = 0
     total_time_ms: float = 0.0
+    prefill_seq_len: int | None = None
+    actual_prompt_len: int | None = None
     prefill_ms: float | None = None
     decode_loop_ms: float | None = None
     decode_steps: int | None = None
@@ -138,6 +140,10 @@ class PipelineTiming:
             "compute_ratio": self.compute_ratio,
             "events": [e.to_dict() for e in self.events],
         }
+        if self.prefill_seq_len is not None:
+            data["prefill_seq_len"] = self.prefill_seq_len
+        if self.actual_prompt_len is not None:
+            data["actual_prompt_len"] = self.actual_prompt_len
         if self.prefill_ms is not None:
             data["prefill_ms"] = self.prefill_ms
         if self.decode_loop_ms is not None:

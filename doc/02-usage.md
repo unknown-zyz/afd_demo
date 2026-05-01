@@ -44,6 +44,14 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `--warmup-rounds N` | P2P warmup 轮数；单次默认 `3`，matrix 使用 `5`。 |
 | `--verbose` | 打印更详细日志。 |
 
+输入构造：
+
+- `batch` 目前表示把同一个 prompt 复制成 `batch` 份，不是自动构造不同文本样本。
+- `seq` 会传入 `--prefill-seq-len`。在指定该参数时，prefill-only 和 generation
+  都会使用 `padding="max_length"` / `truncation=True`，把输入固定到 `[batch, seq]`。
+- Timing JSON 会写入 `prefill_seq_len` 和 `actual_prompt_len`。两者一致时，说明
+  文件名中的 `s<seq>` 与实际 prompt/KV cache 长度一致。
+
 ## 3. 串行基线（Serial baseline）
 
 Serial 表示关闭 DBO，但仍使用 A/F 分离。
@@ -132,9 +140,28 @@ Decode speedup 使用准确 TPOT：
 serial_decode_tpot_ms / dbo_decode_tpot_ms
 ```
 
+这里的 `decode_tpot_ms` 是 batch-level per-step latency：
+
+```text
+decode_tpot_ms = decode_loop_ms / (max_new_tokens - 1)
+```
+
+一次 decode step 会同时为 batch 内每条序列各生成 1 个 token。因此它表示整个
+batch 每推进一步的平均等待时间，不是 `decode_loop_ms / (batch * steps)` 的
+per-output-token latency。吞吐口径可换算为：
+
+```text
+decode_tokens_per_sec = 1000 * batch / decode_tpot_ms
+```
+
 Decode DBO 的 pipeline 明细固定记录 0-based decode step 1，也就是第 2 个
 decode-loop iteration；step 0 被跳过以避开 warmup / 冷启动。这个 step 1 timing
 只用于观察 overlap，不用于最终 speedup。
+
+历史注意：旧版本 generation 路径没有按 `--prefill-seq-len` 固定 padding，部分
+decode / serial generation 长序列结果中的 `s512/s1024/s2048` 可能只是文件名标签，
+不一定对应真实长 KV cache。修复后的结果应检查 timing JSON 中
+`prefill_seq_len == actual_prompt_len`。
 
 ## 6. GPU 矩阵参数
 
