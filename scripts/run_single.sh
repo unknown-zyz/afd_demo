@@ -386,7 +386,8 @@ if [ "$TIMING" = true ] && [ -f "$ATTN_TIMING" ] && [ -f "$FFN_TIMING" ]; then
     python scripts/gen_experiment_report.py \
         --attn-timing "$ATTN_TIMING" --ffn-timing "$FFN_TIMING" \
         --output "$REPORT" --mode "$MODE_TAG" \
-        --batch "$BATCH" --seq "$SEQ" --tokens "$TOKENS" $CMP \
+        --batch "$BATCH" --seq "$SEQ" --tokens "$TOKENS" \
+        --comm-timing-mode "$COMM_TIMING_MODE" $CMP \
         && echo "   Report: $REPORT" || echo "[WARN] report generation failed"
 fi
 
