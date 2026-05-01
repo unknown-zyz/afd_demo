@@ -67,11 +67,23 @@ echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS"
 # Per-rank device visibility: ATTN_DEVICES (for attention ranks), FFN_DEVICES (for ffn ranks).
 # This isolates each role's layer-sharding pool, so both ranks don't compete for the
 # same physical chips (on shared 910C boxes with limited free HBM per chip).
-# Fallback: if not set, use ASCEND_VISIBLE_DEVICES for all ranks (legacy behavior).
+# For the validated 2-rank NPU topology, split ASCEND_VISIBLE_DEVICES in half by
+# default. Other topologies keep the legacy fallback unless ATTN_DEVICES/FFN_DEVICES
+# are explicitly provided.
 DEFAULT_DEVS=$(seq -s, 0 $((WORLD_SIZE-1)))
 export ASCEND_VISIBLE_DEVICES="${ASCEND_VISIBLE_DEVICES:-$DEFAULT_DEVS}"
 ATTN_DEVICES="${ATTN_DEVICES:-}"
 FFN_DEVICES="${FFN_DEVICES:-}"
+if [ -z "$ATTN_DEVICES" ] && [ -z "$FFN_DEVICES" ] && [ "$ATTN_SIZE" -eq 1 ] && [ "$FFN_SIZE" -eq 1 ]; then
+    IFS=',' read -ra VISIBLE_DEV_ARR <<< "$ASCEND_VISIBLE_DEVICES"
+    if [ "${#VISIBLE_DEV_ARR[@]}" -ge 2 ]; then
+        split_idx=$(( ${#VISIBLE_DEV_ARR[@]} / 2 ))
+        if [ "$split_idx" -lt 1 ]; then split_idx=1; fi
+        ATTN_DEVICES=$(IFS=','; echo "${VISIBLE_DEV_ARR[*]:0:$split_idx}")
+        FFN_DEVICES=$(IFS=','; echo "${VISIBLE_DEV_ARR[*]:$split_idx}")
+    fi
+fi
+echo "visible_devices=$ASCEND_VISIBLE_DEVICES  attn_devices=${ATTN_DEVICES:-<global>}  ffn_devices=${FFN_DEVICES:-<global>}"
 export HCCL_BUFFSIZE="${HCCL_BUFFSIZE:-200}"           # MB
 export HCCL_CONNECT_TIMEOUT="${HCCL_CONNECT_TIMEOUT:-600}"
 export HCCL_EXEC_TIMEOUT="${HCCL_EXEC_TIMEOUT:-1800}"
