@@ -3,6 +3,11 @@
 本文总结分支清理和准确 TTFT/TPOT 口径修正后的最新全量重跑。Speedup 统一为
 `serial / DBO`，大于 `1.0x` 表示 DBO 更快。
 
+注意：早期 generation 路径曾未按 `--prefill-seq-len` 固定 padding，decode /
+serial generation 的部分长序列 `s512/s1024/s2048` 历史结果可能没有真实使用对应
+长度的 KV cache。修复后应以 timing JSON 中 `prefill_seq_len == actual_prompt_len`
+的数据作为长上下文 decode 结论依据。
+
 ## 1. 分支与产物
 
 | 平台 | 分支 / 来源 | 结果目录 | 说明 |

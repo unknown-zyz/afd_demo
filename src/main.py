@@ -158,6 +158,33 @@ def get_dtype(dtype_str: str) -> torch.dtype:
     return {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[dtype_str]
 
 
+def get_effective_prefill_seq_len(prefill_seq_len: int | None, max_seq_len: int) -> int:
+    """Return the prompt length that prefill/generation should allocate for."""
+    return prefill_seq_len if prefill_seq_len is not None else max_seq_len
+
+
+def tokenize_batch_prompts(tokenizer, prompts, prefill_seq_len: int | None, max_seq_len: int):
+    """Tokenize prompts using a fixed length when an experiment seq is provided."""
+    target_seq_len = get_effective_prefill_seq_len(prefill_seq_len, max_seq_len)
+    if prefill_seq_len is not None:
+        inputs = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=target_seq_len,
+        )
+    else:
+        inputs = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=target_seq_len,
+        )
+    return inputs, target_seq_len
+
+
 def build_distributed_config(args) -> DistributedConfig:
     """Create distributed config from args/env."""
     if args.local_test:
@@ -208,12 +235,14 @@ def run_inference_demo(args):
     # Log initialization (concise)
     logger.info(f"[{ctx.role.upper()}] rank={ctx.rank}, device={device}, dtype={dtype}")
     
+    prefill_seq_len = get_effective_prefill_seq_len(args.prefill_seq_len, args.max_seq_len)
+
     # Load model
     if args.verbose:
         logger.info(f"Loading model: {args.model_name}")
     model = DisaggregatedQwenModel.from_pretrained(
         args.model_name, device=device, dtype=dtype,
-        max_seq_len=args.max_seq_len, max_batch_size=args.batch_size,
+        max_seq_len=prefill_seq_len, max_batch_size=args.batch_size,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
@@ -243,23 +272,18 @@ def run_inference_demo(args):
     # Prepare input
     if ctx.is_attention_node:
         prompts = [args.prompt] * args.batch_size
-        
-        # 如果指定了 prefill_seq_len，先 tokenize 然后 pad/truncate
-        if args.prefill_seq_len:
-            inputs = tokenizer(prompts, return_tensors="pt", padding="max_length",
-                              truncation=True, max_length=args.prefill_seq_len)
+        inputs, _target_seq_len = tokenize_batch_prompts(
+            tokenizer, prompts, args.prefill_seq_len, args.max_seq_len
+        )
+        if args.prefill_seq_len is not None:
             logger.info(f"Prefill seq_len set to {args.prefill_seq_len}")
-        else:
-            inputs = tokenizer(prompts, return_tensors="pt", padding=True,
-                              truncation=True, max_length=args.max_seq_len)
-        
+
         input_ids = inputs["input_ids"].to(device)
         attention_mask = inputs["attention_mask"].to(device)
         logger.info(f"Input shape: {input_ids.shape}")
     else:
         # FFN 节点：创建占位符
-        seq_len = args.prefill_seq_len if args.prefill_seq_len else args.max_seq_len
-        input_ids = torch.zeros(args.batch_size, seq_len, dtype=torch.long, device=device)
+        input_ids = torch.zeros(args.batch_size, prefill_seq_len, dtype=torch.long, device=device)
         attention_mask = None
     
     def run_with_scheduler(scheduler):
@@ -317,6 +341,8 @@ def run_inference_demo(args):
         timing_data = scheduler.get_timing_data()
         if timing_data:
             os.makedirs("results/prefill_dbo", exist_ok=True)
+            timing_data.prefill_seq_len = prefill_seq_len
+            timing_data.actual_prompt_len = input_ids.shape[1]
             # Build timing file name with configuration info
             if args.timing_suffix:
                 timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
@@ -336,7 +362,8 @@ def run_inference_demo(args):
             "role": ctx.role,
             "total_time_ms": elapsed * 1000,
             "batch_size": args.batch_size,
-            "prefill_seq_len": getattr(args, 'prefill_seq_len', 1),
+            "prefill_seq_len": prefill_seq_len,
+            "actual_prompt_len": input_ids.shape[1],
             "max_new_tokens": args.max_new_tokens,
         }
         if args.timing_suffix:
@@ -375,8 +402,10 @@ def run_generation_demo(args):
     logger.info(f"[{ctx.role.upper()}] rank={ctx.rank}, device={device}, dtype={dtype}")
     logger.info(f"Generation mode: max_new_tokens={args.max_new_tokens}, temp={args.temperature}")
     
+    prefill_seq_len = get_effective_prefill_seq_len(args.prefill_seq_len, args.max_seq_len)
+
     # Load model with larger max_seq_len for generation
-    max_total_len = args.max_seq_len + args.max_new_tokens
+    max_total_len = prefill_seq_len + args.max_new_tokens
     model = DisaggregatedQwenModel.from_pretrained(
         args.model_name, device=device, dtype=dtype,
         max_seq_len=max_total_len, max_batch_size=args.batch_size,
@@ -408,9 +437,11 @@ def run_generation_demo(args):
     if ctx.is_attention_node:
         # Parse prompts: if batch_size > 1 and single prompt, repeat it
         prompts = [args.prompt] * args.batch_size
-        
-        inputs = tokenizer(prompts, return_tensors="pt", padding=True,
-                          truncation=True, max_length=args.max_seq_len)
+        inputs, _target_seq_len = tokenize_batch_prompts(
+            tokenizer, prompts, args.prefill_seq_len, args.max_seq_len
+        )
+        if args.prefill_seq_len is not None:
+            logger.info(f"Generation prefill seq_len set to {args.prefill_seq_len}")
         input_ids = inputs["input_ids"].to(device)
         batch_size, prompt_len = input_ids.shape
         
@@ -480,6 +511,8 @@ def run_generation_demo(args):
         model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
         model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
         model._last_decode_timing.decode_tpot_ms = generation_metrics.get("decode_tpot_ms")
+        model._last_decode_timing.prefill_seq_len = prefill_seq_len
+        model._last_decode_timing.actual_prompt_len = prompt_len
         model._last_decode_timing.save(timing_file)
         logger.info(f"Decode timing saved: {timing_file}")
     elif args.timing and (not hasattr(model, '_last_decode_timing') or model._last_decode_timing is None):
@@ -495,6 +528,8 @@ def run_generation_demo(args):
             "decode_steps": generation_metrics.get("decode_steps"),
             "decode_tpot_ms": generation_metrics.get("decode_tpot_ms"),
             "batch_size": args.batch_size,
+            "prefill_seq_len": prefill_seq_len,
+            "actual_prompt_len": prompt_len,
             "max_new_tokens": args.max_new_tokens,
             "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,
         }

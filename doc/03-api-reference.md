@@ -76,6 +76,7 @@ Attention role 持有 KV cache；FFN role 不应依赖 cache。
 | 字段 | 含义 |
 |---|---|
 | `batch_size`、`prefill_seq_len`、`max_new_tokens` | 配置参数。 |
+| `actual_prompt_len` | tokenizer 后实际输入长度；用于审计 `s<seq>` 标签是否真实生效。 |
 | `mode` | `serial`、`prefill-dbo`、`decode-dbo` 或 `decode-dbo-crosslayer`。 |
 | `total_time_ms` | scheduler 记录的总时间。 |
 | `prefill_ms` | serial prefill-only 时间。 |

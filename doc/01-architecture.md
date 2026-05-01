@@ -140,6 +140,8 @@ Timing JSON 中常见字段：
 | `decode_loop_ms` | 自回归 decode loop 总时间，不含 prefill 首 token 路径。 |
 | `decode_steps` | decode loop 的 token step 数，通常是 `max_new_tokens - 1`。 |
 | `decode_tpot_ms` | 准确 TPOT：`decode_loop_ms / decode_steps`。 |
+| `prefill_seq_len` | 实验请求的 prefill 长度。 |
+| `actual_prompt_len` | tokenizer 后实际输入长度；用于审计 `s<seq>` 标签是否真实生效。 |
 | `events` | 用于 Gantt 图的 decode step 1 layer / micro-batch 事件。 |
 
 Speedup 统一为：

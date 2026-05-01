@@ -94,6 +94,11 @@ decode loop。
 两个矩阵脚本都会在同一个 `(mode, seq)` 下遇到 OOM 后停止继续探测更大的
 batch，并把 OOM 明确写入 summary CSV。
 
+`batch` 默认是同一个 prompt 复制成多份；指定 `seq` 时，prefill 和 generation
+都会 pad/truncate 到该长度。Timing JSON 中的 `prefill_seq_len` 与
+`actual_prompt_len` 可用于确认文件名里的 `s<seq>` 是否等于真实 prompt/KV cache
+长度。
+
 ## 输出目录
 
 | 目录 / 文件 | 含义 |
@@ -133,6 +138,10 @@ speedup = serial / DBO
 
 Decode DBO 的 pipeline 图固定展示 0-based decode step 1（第 2 个 decode-loop
 iteration），只用于观察 overlap、气泡和层间事件，不能作为最终 speedup 分母。
+
+多 batch 下，`decode_tpot_ms` 表示整个 batch 每推进 1 个 decode step 的平均
+wall time。一次 step 会为 batch 内每条序列各生成 1 个 token；如需吞吐，使用
+`1000 * batch / decode_tpot_ms` 换算。
 
 旧实验中曾出现 “NPU decode DBO 约 5x 加速” 的误判，根因是把 decode step 1
 timing 或 fallback 口径当成了准确 TPOT。当前结论以
