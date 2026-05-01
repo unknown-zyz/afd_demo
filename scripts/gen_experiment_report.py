@@ -208,6 +208,7 @@ def _layer_average_summary(attn: Optional[Dict], ffn: Optional[Dict]) -> str:
 def _metadata_block(attn: Optional[Dict], ffn: Optional[Dict], args) -> str:
     md = attn or ffn or {}
     mode_str = args.mode or "unknown"
+    comm_timing_mode = args.comm_timing_mode or _comm_timing_mode(attn, ffn)
     lines = [
         f"- **Mode**: `{mode_str}`",
         f"- **Batch size**: {args.batch}",
@@ -215,7 +216,7 @@ def _metadata_block(attn: Optional[Dict], ffn: Optional[Dict], args) -> str:
         f"- **Decode tokens**: {args.tokens}",
         f"- **Layers**: {md.get('num_layers', '?')}",
         f"- **Micro-batches**: {md.get('num_micro_batches', '?')}",
-        f"- **Comm timing mode**: `{md.get('comm_timing_mode', 'enqueue')}`",
+        f"- **Comm timing mode**: `{comm_timing_mode}`",
     ]
     if md.get("prefill_seq_len") is not None:
         lines.append(f"- **Requested prefill seq**: {md.get('prefill_seq_len')}")
@@ -372,6 +373,8 @@ def main():
     ap.add_argument("--tokens", type=int, default=0)
     ap.add_argument("--model", default="")
     ap.add_argument("--dtype", default="")
+    ap.add_argument("--comm-timing-mode", default="",
+                    help="Command-level communication timing mode; useful for serial JSON without comm events.")
     ap.add_argument("--serial-baseline", default="",
                     help="Optional path to serial attention timing JSON for comparison")
     args = ap.parse_args()

@@ -142,6 +142,7 @@ run_one() {
         --ffn-timing "$ffn_dst" \
         --output "$outdir/report_${run_suffix}.md" \
         --mode "$mode" --batch "$batch" --seq "$seq" --tokens "$tokens" \
+        --comm-timing-mode "$COMM_TIMING_MODE" \
         $cmp_flag || true
     return 0
 }
