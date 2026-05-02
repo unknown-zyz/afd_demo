@@ -136,10 +136,13 @@ class ShardedExperts(nn.Module):
         partial = torch.zeros_like(hidden_2d)
         active = 0
         assignments = 0
-        for expert_id in self.local_expert_ids:
+        active_expert_ids = [
+            int(expert_id)
+            for expert_id in torch.unique(selected_experts).detach().cpu().tolist()
+            if int(expert_id) in self.local_expert_id_set
+        ]
+        for expert_id in active_expert_ids:
             token_idx, topk_idx = torch.where(selected_experts == expert_id)
-            if token_idx.numel() == 0:
-                continue
             active += 1
             assignments += int(token_idx.numel())
             x = hidden_2d[token_idx].contiguous()
