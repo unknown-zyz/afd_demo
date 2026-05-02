@@ -258,6 +258,9 @@ class AsyncPipelineScheduler:
         # For now, use a simpler approach: process layers with async communication
         if self.ctx.is_attention_node:
             result = self._run_attention_node_simple(micro_batches)
+        elif self.ctx.is_ffn_expert_only and self.ctx.ffn_ep_enabled:
+            self._run_ffn_ep_expert_node(micro_batches)
+            result = None
         else:
             self._run_ffn_node_simple(micro_batches)
             result = None
@@ -446,6 +449,37 @@ class AsyncPipelineScheduler:
             mb.hidden_states = recv_tensor.clone()
         
         self._pending_sends.clear()
+
+    def _run_ffn_ep_expert_node(
+        self,
+        micro_batches: List[MicroBatch],
+    ) -> None:
+        """FFN EP non-coordinator ranks only participate in FFN collectives."""
+        assert self.model.ffn_worker is not None
+        tracker = self._timing_tracker
+
+        for layer_idx in range(self.model.num_layers):
+            for mb_idx, mb in enumerate(micro_batches):
+                batch_size = getattr(mb, '_actual_batch_size', mb.batch_size)
+                seq_len = getattr(mb, '_actual_seq_len', mb.seq_len)
+                hidden_states = torch.empty(
+                    batch_size,
+                    seq_len,
+                    self.model.hidden_size,
+                    device=self.model.device,
+                    dtype=self.model.dtype,
+                )
+                compute_start = time.perf_counter()
+                ffn_result = self.model.ffn_worker.forward_ffn_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=hidden_states,
+                    return_timing=bool(tracker and self.model.supports_moe_timing),
+                )
+                if tracker:
+                    torch.cuda.current_stream().synchronize()
+                    tracker.record_event(EventType.FFN_COMPUTE, layer_idx, mb_idx, compute_start, time.perf_counter())
+                if isinstance(ffn_result, tuple):
+                    del ffn_result
         
         # Generate logits
         results = []

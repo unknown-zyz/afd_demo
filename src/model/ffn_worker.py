@@ -17,6 +17,9 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
 
+from .ep_moe import EPFFNLayer, ExpertShardPlan, ShardedExperts
+from ..distributed import get_distributed_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +29,14 @@ class FFNStageTiming:
     router_s: float = 0.0
     experts_s: float = 0.0
     shared_or_dense_s: float = 0.0
+    ep_dispatch_s: float = 0.0
+    ep_local_experts_s: float = 0.0
+    ep_reduce_s: float = 0.0
+    ep_dispatch_wait_s: float = 0.0
+    ep_reduce_wait_s: float = 0.0
+    ep_overlap_hidden_s: float = 0.0
+    ep_active_experts: int = 0
+    ep_local_assignments: int = 0
 
 
 class FFNLayer(nn.Module):
@@ -153,6 +164,8 @@ class FFNWorker(nn.Module):
         self.hidden_size = model.config.hidden_size
         self.num_layers = model.config.num_hidden_layers
         self.role_devices = self._resolve_role_devices(device)
+        self.ctx = get_distributed_context()
+        self.use_ep = self.ctx.ffn_ep_enabled
         
         # Extract and move components
         logger.info("Extracting FFN components from model...")
@@ -171,21 +184,56 @@ class FFNWorker(nn.Module):
             else:
                 layer_device_idx = 0
             layer_device = self.role_devices[layer_device_idx]
-            ffn_layer = FFNLayer(
-                post_attention_layernorm=layer.post_attention_layernorm.to(device=layer_device, dtype=dtype),
-                mlp=layer.mlp.to(device=layer_device, dtype=dtype),
-                hidden_size=self.hidden_size,
-                layer_idx=idx,
-                layer_device=layer_device,
-            )
+            if self.use_ep and hasattr(layer.mlp, "experts"):
+                experts = layer.mlp.experts
+                plan = ExpertShardPlan(
+                    num_experts=int(experts.num_experts),
+                    ep_size=self.ctx.ffn_ep_size,
+                    ep_rank=self.ctx.ffn_ep_rank,
+                    policy=self.ctx.config.ep_expert_policy,
+                )
+                sharded_experts = ShardedExperts(
+                    experts,
+                    plan,
+                    device=layer_device,
+                    dtype=dtype,
+                )
+                top_k = int(getattr(layer.mlp.gate, "top_k", getattr(model.config, "num_experts_per_tok", 8)))
+                ffn_layer = EPFFNLayer(
+                    post_attention_layernorm=(
+                        layer.post_attention_layernorm.to(device=layer_device, dtype=dtype)
+                        if self.ctx.is_ffn_coordinator
+                        else None
+                    ),
+                    gate=(
+                        layer.mlp.gate.to(device=layer_device, dtype=dtype)
+                        if self.ctx.is_ffn_coordinator
+                        else None
+                    ),
+                    sharded_experts=sharded_experts,
+                    hidden_size=self.hidden_size,
+                    top_k=top_k,
+                    layer_idx=idx,
+                    layer_device=layer_device,
+                    ctx=self.ctx,
+                )
+            else:
+                ffn_layer = FFNLayer(
+                    post_attention_layernorm=layer.post_attention_layernorm.to(device=layer_device, dtype=dtype),
+                    mlp=layer.mlp.to(device=layer_device, dtype=dtype),
+                    hidden_size=self.hidden_size,
+                    layer_idx=idx,
+                    layer_device=layer_device,
+                )
             self.ffn_layers.append(ffn_layer)
         self.supports_moe_timing = any(layer.is_sparse_moe for layer in self.ffn_layers)
 
         logger.info(
-            "FFNWorker initialized: layers=%d, devices=%s, moe_timing=%s",
+            "FFNWorker initialized: layers=%d, devices=%s, moe_timing=%s, ep=%s",
             self.num_layers,
             [str(d) for d in self.role_devices],
             self.supports_moe_timing,
+            self.use_ep,
         )
 
     def _resolve_role_devices(self, primary_device: torch.device) -> list[torch.device]:

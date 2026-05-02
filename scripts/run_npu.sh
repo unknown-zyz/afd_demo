@@ -9,6 +9,10 @@
 # Legacy presets:
 #   npu-4card  : 2 ATT (DP) + 2 FFN (TP=2)     [script default]
 #   npu-16card : 4 ATT (DP) + 12 FFN (TP=12)
+# EP presets:
+#   npu-ep4    : 1 ATT + 4 FFN EP ranks
+#   npu-ep8    : 1 ATT + 8 FFN EP ranks
+#   npu-ep15   : 1 ATT + 15 FFN EP ranks (all 16 cards)
 #
 # Usage:
 #   ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 [--tokens N] [other run_single flags]
@@ -26,6 +30,9 @@ PRESET="npu-4card"
 ATTN_SIZE=2
 FFN_SIZE=2
 FFN_TP_SIZE=2
+FFN_EP_SIZE=1
+FFN_EP_BACKEND="broadcast_reduce_sync"
+EP_EXPERT_POLICY="round_robin"
 TOKENS=5
 BATCH=8
 SEQ=128
@@ -37,14 +44,20 @@ while [[ $# -gt 0 ]]; do
         --preset)
             PRESET="$2"
             case "$PRESET" in
-                npu-4card)  ATTN_SIZE=2; FFN_SIZE=2;  FFN_TP_SIZE=2 ;;
-                npu-16card) ATTN_SIZE=4; FFN_SIZE=12; FFN_TP_SIZE=12 ;;
+                npu-4card)  ATTN_SIZE=2; FFN_SIZE=2;  FFN_TP_SIZE=2;  FFN_EP_SIZE=1 ;;
+                npu-16card) ATTN_SIZE=4; FFN_SIZE=12; FFN_TP_SIZE=12; FFN_EP_SIZE=1 ;;
+                npu-ep4)    ATTN_SIZE=1; FFN_SIZE=4;  FFN_TP_SIZE=1;  FFN_EP_SIZE=4 ;;
+                npu-ep8)    ATTN_SIZE=1; FFN_SIZE=8;  FFN_TP_SIZE=1;  FFN_EP_SIZE=8 ;;
+                npu-ep15)   ATTN_SIZE=1; FFN_SIZE=15; FFN_TP_SIZE=1;  FFN_EP_SIZE=15 ;;
                 *) echo "Unknown preset: $PRESET" >&2; exit 1 ;;
             esac
             shift 2 ;;
         --attn-size)    ATTN_SIZE="$2"; shift 2 ;;
         --ffn-size)     FFN_SIZE="$2";  shift 2 ;;
         --ffn-tp-size)  FFN_TP_SIZE="$2"; shift 2 ;;
+        --ffn-ep-size)  FFN_EP_SIZE="$2"; shift 2 ;;
+        --ffn-ep-backend) FFN_EP_BACKEND="$2"; shift 2 ;;
+        --ep-expert-policy) EP_EXPERT_POLICY="$2"; shift 2 ;;
         --tokens)       TOKENS="$2"; shift 2 ;;
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
@@ -58,9 +71,13 @@ if (( FFN_SIZE % FFN_TP_SIZE != 0 )); then
     echo "ERROR: --ffn-size=$FFN_SIZE must be divisible by --ffn-tp-size=$FFN_TP_SIZE" >&2
     exit 1
 fi
+if (( FFN_EP_SIZE > 1 && FFN_EP_SIZE != FFN_SIZE )); then
+    echo "ERROR: EP MVP requires --ffn-ep-size=$FFN_EP_SIZE to equal --ffn-size=$FFN_SIZE" >&2
+    exit 1
+fi
 
 echo "=== NPU-910C launch ==="
-echo "preset=$PRESET  attn_size=$ATTN_SIZE  ffn_size=$FFN_SIZE  ffn_tp_size=$FFN_TP_SIZE"
+echo "preset=$PRESET  attn_size=$ATTN_SIZE  ffn_size=$FFN_SIZE  ffn_tp_size=$FFN_TP_SIZE  ffn_ep_size=$FFN_EP_SIZE"
 echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS"
 
 # ── NPU / HCCL environment ───────────────────────────────────────
@@ -118,7 +135,11 @@ elif [ "$HAS_CROSSLAYER" = true ]; then
 else
     MODE_TAG="decode-dbo"
 fi
-SUFFIX="${MODE_TAG}_npu_b${BATCH}_s${SEQ}_t${TOKENS}"
+if (( FFN_EP_SIZE > 1 )); then
+    SUFFIX="${MODE_TAG}_npu_ep${FFN_EP_SIZE}_${FFN_EP_BACKEND}_b${BATCH}_s${SEQ}_t${TOKENS}"
+else
+    SUFFIX="${MODE_TAG}_npu_b${BATCH}_s${SEQ}_t${TOKENS}"
+fi
 
 # Source python venv if present
 if [ -f venv/bin/activate ]; then source venv/bin/activate; fi
@@ -130,6 +151,9 @@ PIDS=()
 for (( R=0; R<WORLD_SIZE; R++ )); do
     if (( R < ATTN_SIZE )); then ROLE=attention; RANK_DEVS="$ATTN_DEVICES"
     else ROLE=ffn;                               RANK_DEVS="$FFN_DEVICES"
+    fi
+    if (( FFN_EP_SIZE > 1 )); then
+        RANK_DEVS="$R"
     fi
     LOCAL_RANK=$R
     RANK=$R
@@ -143,6 +167,8 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             LOCAL_RANK=0  # rank sees only its own devs starting at 0
         fi
         RANK=$RANK LOCAL_RANK=$LOCAL_RANK WORLD_SIZE=$WORLD_SIZE \
+        ATTN_SIZE=$ATTN_SIZE FFN_SIZE=$FFN_SIZE FFN_EP_SIZE=$FFN_EP_SIZE \
+        FFN_COORDINATOR_RANK=$ATTN_SIZE FFN_EP_BACKEND=$FFN_EP_BACKEND EP_EXPERT_POLICY=$EP_EXPERT_POLICY \
         MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT \
         python -u -m src.main \
             --backend npu \
@@ -155,6 +181,10 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             --attn-size "$ATTN_SIZE" \
             --ffn-size "$FFN_SIZE" \
             --ffn-tp-size "$FFN_TP_SIZE" \
+            --ffn-ep-size "$FFN_EP_SIZE" \
+            --ffn-ep-backend "$FFN_EP_BACKEND" \
+            --ffn-coordinator-rank "$ATTN_SIZE" \
+            --ep-expert-policy "$EP_EXPERT_POLICY" \
             --batch-size "$BATCH" \
             --prefill-seq-len "$SEQ" \
             --max-new-tokens "$TOKENS" \

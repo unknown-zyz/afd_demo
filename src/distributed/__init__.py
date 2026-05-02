@@ -29,6 +29,12 @@ class DistributedConfig:
     # Role assignment
     attn_node_rank: int = 0
     ffn_node_rank: int = 1
+    attn_size: int = 1
+    ffn_size: int = 1
+    ffn_ep_size: int = 1
+    ffn_coordinator_rank: Optional[int] = None
+    ffn_ep_backend: str = "broadcast_reduce_sync"
+    ep_expert_policy: str = "round_robin"
 
 
 class DistributedContext:
@@ -55,6 +61,9 @@ class DistributedContext:
         self._initialized = False
         self._a2f_group = None   # ATT→FFN directional group
         self._f2a_group = None   # FFN→ATT directional group
+        self._ffn_ep_group = None
+        self._ffn_ep_dispatch_group = None
+        self._ffn_ep_reduce_group = None
         self._warmup_result: Optional[dict] = None
         
     def initialize(self, config: Optional[DistributedConfig] = None) -> None:
@@ -108,7 +117,14 @@ class DistributedContext:
         # Create directional NCCL process groups lazily (only when DBO is used).
         # See a2f_group / f2a_group properties below.
         # Store comm_ranks for lazy creation.
-        self._comm_ranks = [config.attn_node_rank, config.ffn_node_rank]
+        self._comm_ranks = [config.attn_node_rank, self.ffn_coordinator_rank]
+
+        if self.ffn_ep_enabled:
+            # new_group must be called by all world ranks in the same order.
+            logger.info("Creating FFN EP groups: ranks=%s", self.ffn_ranks)
+            self._ffn_ep_group = dist.new_group(ranks=self.ffn_ranks)
+            self._ffn_ep_dispatch_group = dist.new_group(ranks=self.ffn_ranks)
+            self._ffn_ep_reduce_group = dist.new_group(ranks=self.ffn_ranks)
         
         self._initialized = True
         logger.info(
@@ -126,6 +142,16 @@ class DistributedContext:
             init_method=os.environ.get("INIT_METHOD", "env://"),
             master_addr=os.environ.get("MASTER_ADDR"),
             master_port=os.environ.get("MASTER_PORT"),
+            attn_size=int(os.environ.get("ATTN_SIZE", 1)),
+            ffn_size=int(os.environ.get("FFN_SIZE", 1)),
+            ffn_ep_size=int(os.environ.get("FFN_EP_SIZE", 1)),
+            ffn_coordinator_rank=(
+                int(os.environ["FFN_COORDINATOR_RANK"])
+                if "FFN_COORDINATOR_RANK" in os.environ
+                else None
+            ),
+            ffn_ep_backend=os.environ.get("FFN_EP_BACKEND", "broadcast_reduce_sync"),
+            ep_expert_policy=os.environ.get("EP_EXPERT_POLICY", "round_robin"),
         )
     
     @property
@@ -157,14 +183,15 @@ class DistributedContext:
     
     @property
     def role(self) -> str:
-        """Get the role of this node: 'attention' or 'ffn'."""
+        """Get the role of this node."""
         assert self.config is not None
-        if self.config.rank == self.config.attn_node_rank:
+        if self.config.rank in self.attn_ranks:
             return "attention"
-        elif self.config.rank == self.config.ffn_node_rank:
+        if self.config.rank in self.ffn_ranks:
+            if self.ffn_ep_enabled:
+                return "ffn_coordinator" if self.config.rank == self.ffn_coordinator_rank else "ffn_expert"
             return "ffn"
-        else:
-            return "unknown"
+        return "unknown"
     
     @property
     def is_attention_node(self) -> bool:
@@ -172,16 +199,71 @@ class DistributedContext:
     
     @property
     def is_ffn_node(self) -> bool:
-        return self.role == "ffn"
+        return self.role in ("ffn", "ffn_coordinator", "ffn_expert")
+
+    @property
+    def is_ffn_coordinator(self) -> bool:
+        return self.role in ("ffn", "ffn_coordinator")
+
+    @property
+    def is_ffn_expert_only(self) -> bool:
+        return self.role == "ffn_expert"
+
+    @property
+    def attn_ranks(self) -> list[int]:
+        assert self.config is not None
+        return list(range(self.config.attn_node_rank, self.config.attn_node_rank + self.config.attn_size))
+
+    @property
+    def ffn_ranks(self) -> list[int]:
+        assert self.config is not None
+        return list(range(self.config.ffn_node_rank, self.config.ffn_node_rank + self.config.ffn_size))
+
+    @property
+    def ffn_coordinator_rank(self) -> int:
+        assert self.config is not None
+        return (
+            self.config.ffn_coordinator_rank
+            if self.config.ffn_coordinator_rank is not None
+            else self.config.ffn_node_rank
+        )
+
+    @property
+    def ffn_ep_enabled(self) -> bool:
+        assert self.config is not None
+        return self.config.ffn_ep_size > 1 and self.config.ffn_size > 1
+
+    @property
+    def ffn_ep_size(self) -> int:
+        assert self.config is not None
+        return self.config.ffn_ep_size if self.ffn_ep_enabled else 1
+
+    @property
+    def ffn_ep_rank(self) -> int:
+        if not self.is_ffn_node:
+            return -1
+        return self.ffn_ranks.index(self.rank)
     
     @property
     def peer_rank(self) -> int:
         """Get the rank of the peer node."""
         assert self.config is not None
         if self.is_attention_node:
-            return self.config.ffn_node_rank
+            return self.ffn_coordinator_rank
         else:
             return self.config.attn_node_rank
+
+    @property
+    def ffn_ep_group(self):
+        return self._ffn_ep_group
+
+    @property
+    def ffn_ep_dispatch_group(self):
+        return self._ffn_ep_dispatch_group
+
+    @property
+    def ffn_ep_reduce_group(self):
+        return self._ffn_ep_reduce_group
     
     @property
     def a2f_group(self):
@@ -209,11 +291,12 @@ class DistributedContext:
         self._a2f_group = dist.new_group(ranks=self._comm_ranks)
         self._f2a_group = dist.new_group(ranks=self._comm_ranks)
         # Warm up the new groups to avoid cold-start latency
-        from .warmup import warmup_p2p
-        warmup_p2p(
-            self.peer_rank, self.device, num_rounds=3,
-            extra_groups=[self._a2f_group, self._f2a_group],
-        )
+        if self.rank in self._comm_ranks:
+            from .warmup import warmup_p2p
+            warmup_p2p(
+                self.peer_rank, self.device, num_rounds=3,
+                extra_groups=[self._a2f_group, self._f2a_group],
+            )
         logger.info("Directional NCCL groups created and warmed up")
     
     def warmup(self, num_rounds=3):

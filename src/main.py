@@ -163,6 +163,17 @@ def parse_args():
                         help='Number of devices assigned to the FFN role.')
     parser.add_argument('--ffn-tp-size', type=int, default=1,
                         help='Tensor-parallel degree within the FFN role (must divide --ffn-size).')
+    parser.add_argument('--ffn-ep-size', type=int, default=1,
+                        help='Expert-parallel degree within the FFN role. 1 disables EP.')
+    parser.add_argument('--ffn-ep-backend', type=str,
+                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap'],
+                        default='broadcast_reduce_sync',
+                        help='FFN EP backend. Overlap mode is experimental.')
+    parser.add_argument('--ffn-coordinator-rank', type=int, default=None,
+                        help='Global FFN rank that communicates with Attention. Defaults to --ffn-node-rank.')
+    parser.add_argument('--ep-expert-policy', type=str,
+                        choices=['round_robin', 'contiguous'], default='round_robin',
+                        help='Expert assignment policy for FFN EP.')
 
     return parser.parse_args()
 
@@ -229,6 +240,12 @@ def build_distributed_config(args) -> DistributedConfig:
         master_port=args.master_port,
         attn_node_rank=args.attn_node_rank,
         ffn_node_rank=args.ffn_node_rank,
+        attn_size=args.attn_size,
+        ffn_size=args.ffn_size,
+        ffn_ep_size=args.ffn_ep_size,
+        ffn_coordinator_rank=args.ffn_coordinator_rank,
+        ffn_ep_backend=args.ffn_ep_backend,
+        ep_expert_policy=args.ep_expert_policy,
     )
 
 

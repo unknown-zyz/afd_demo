@@ -165,6 +165,9 @@ class DecodeDBOScheduler:
 
         if self.ctx.is_attention_node:
             result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
+        elif self.ctx.is_ffn_expert_only and self.ctx.ffn_ep_enabled:
+            self._run_ffn_ep_expert_decode(batch_size, tracker)
+            result = None
         else:
             self._run_ffn_decode(batch_size, tracker)
             result = None
@@ -569,6 +572,38 @@ class DecodeDBOScheduler:
                 a2f_recv_tensors = next_a2f_tensors
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
+
+    def _run_ffn_ep_expert_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
+        """FFN EP non-coordinator decode loop: only participate in EP collectives."""
+        assert self.model.ffn_worker is not None
+
+        num_layers = self.model.num_layers
+        mb_sizes = self._compute_mb_sizes(batch_size)
+        num_mb = len(mb_sizes)
+
+        for layer_idx in range(num_layers):
+            for mb_idx in range(num_mb):
+                hidden_states = torch.empty(
+                    mb_sizes[mb_idx],
+                    1,
+                    self.model.hidden_size,
+                    dtype=self.model.dtype,
+                    device=self.model.device,
+                )
+                if tracker:
+                    tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                compute_start = time.perf_counter()
+                output = self.model.ffn_worker.forward_ffn_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=hidden_states,
+                )
+                if isinstance(output, tuple):
+                    del output
+                if tracker:
+                    tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                compute_time = time.perf_counter() - compute_start
+                self.stats.compute_time += compute_time
+                self.stats.ffn_compute_time += compute_time
 
     def get_stats(self) -> DecodeDBOStats:
         """Get statistics from last run."""
