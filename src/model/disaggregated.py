@@ -358,6 +358,13 @@ class DisaggregatedQwenModel(nn.Module):
         else:
             # FFN node
             assert self.ffn_worker is not None
+
+            if self.ctx.is_ffn_expert_only and self.ctx.ffn_ep_enabled:
+                output = self.ffn_worker.forward_ffn_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=hidden_states,
+                )
+                return output[0] if isinstance(output, tuple) else output
             
             batch_size, seq_len, _ = hidden_states.shape
             packed = self.communicator.recv_sync(
