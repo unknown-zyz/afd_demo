@@ -334,9 +334,6 @@ class DecodeDBOScheduler:
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
-        if self._use_ep_overlap(num_mb):
-            self._run_ffn_ep_overlap_decode(batch_size, tracker, is_coordinator=True)
-            return
         peer = self.ctx.peer_rank
         a2f_group = self.ctx.a2f_group
         f2a_group = self.ctx.f2a_group
@@ -597,6 +594,9 @@ class DecodeDBOScheduler:
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
+        if self._use_ep_overlap(num_mb):
+            self._run_ffn_ep_overlap_decode(batch_size, tracker, is_coordinator=True)
+            return
         peer = self.ctx.peer_rank
         a2f_group = self.ctx.a2f_group
         f2a_group = self.ctx.f2a_group
