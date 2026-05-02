@@ -2,7 +2,7 @@
 
 本目录用于下一阶段 NPU FFN/MoE backend 实验，独立于已有 `results_npu/{serial,prefill-dbo,decode-dbo,...}` baseline。
 
-## 当前已完成：单层 MoE microbenchmark
+## 当前已完成 1：单层 MoE microbenchmark
 
 实验分支：`exp/npu-moe-backend`
 
@@ -51,10 +51,59 @@
 - `moe_stage_breakdown.png`
 - `moe_shape_scaling.png`
 
+## 当前已完成 2：torch_npu MoE API smoke
+
+脚本：
+
+- `scripts/probe_npu_moe_api.py`
+- `scripts/plot_npu_moe_api_probe.py`
+
+输出目录：
+
+```text
+api_smoke/
+```
+
+测试 API：
+
+- `torch_npu.npu_moe_gating_top_k_softmax`
+- `torch_npu.npu_moe_token_permute`
+- `torch_npu.npu_moe_token_unpermute`
+- `torch_npu.npu_grouped_matmul`
+
+关键 latency 结果：
+
+| Shape | HF experts (ms) | Router topk (ms) | Token permute roundtrip (ms) | Grouped experts (ms) | Grouped / HF |
+|---|---:|---:|---:|---:|---:|
+| decode `32x1` | 4.616 | 0.198 | 0.255 | 50.933 | 11.0x |
+| decode `64x1` | 4.828 | 0.100 | 0.199 | 53.791 | 11.1x |
+| decode `128x1` | 5.167 | 0.100 | 0.201 | 57.540 | 11.1x |
+| prefill `16x512` | 19.071 | 0.120 | 0.872 | 112.421 | 5.9x |
+| prefill `32x512` | 34.745 | 0.151 | 1.528 | 170.130 | 4.9x |
+
+正确性：
+
+- Router topk 与 HF topk 完全一致，routing weight mean abs error 约 `2e-4`。
+- Token permute/unpermute roundtrip 可用，decode 误差为 0，prefill mean abs error 在 `1e-7` 量级。
+- Grouped experts 输出与 HF experts bf16 结果接近，mean abs error 约 `5e-4`。
+
+结论：
+
+- `npu_moe_gating_top_k_softmax` 和 token permute API 可用，但它们不是主瓶颈。
+- `npu_grouped_matmul(group_type=-1)` 在当前 list-of-experts 调用方式下 correctness 通过，但 latency 明显劣于 HF experts，不应接入主 pipeline。
+- 当前不实现 `AFD_NPU_MOE_BACKEND=torch_npu_fused` 主路径，避免引入确定的负优化。
+
+位于 `api_smoke/`：
+
+- `torch_npu_moe_api_probe.json`
+- `correctness_summary.csv`
+- `api_latency_comparison.png`
+- `correctness_error.png`
+
 ## 下一步
 
 基于这些真实 shape，继续验证：
 
-1. `torch_npu.npu_moe_gating_top_k_softmax` 是否可替换 router。
-2. `torch_npu.npu_grouped_matmul` 是否能替换 HF Qwen3 当前 Python expert loop。
-3. 若 correctness 通过，再接入显式开启的 `AFD_NPU_MOE_BACKEND=torch_npu_fused` 原型。
+1. 优先尝试 decode 固定 shape 的 NPUGraph/aclgraph，降低 HF experts eager 调度开销。
+2. 如果 graph 仍不足，再单独开 `exp/npu-ep-prototype` 做真实 expert-parallel 拓扑，而不是继续 list grouped matmul 路线。
+3. 若后续发现更合适的 single-tensor grouped matmul 或 fused MoE 调用方式，再重新进入 fused backend 原型。
