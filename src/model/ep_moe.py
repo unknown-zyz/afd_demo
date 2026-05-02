@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import os
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -152,6 +153,8 @@ class ShardedExperts(nn.Module):
 
 
 def sync_if_needed(device: torch.device) -> None:
+    if os.environ.get("AFD_EP_SYNC_TIMING", "0") != "1":
+        return
     if device.type == "npu" and hasattr(torch, "npu"):
         torch.npu.synchronize()
     elif device.type == "cuda":
