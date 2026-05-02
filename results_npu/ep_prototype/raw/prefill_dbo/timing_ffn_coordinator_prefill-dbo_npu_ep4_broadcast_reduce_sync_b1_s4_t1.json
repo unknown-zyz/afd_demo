@@ -1,0 +1,2321 @@
+{
+  "node": "ffn",
+  "num_layers": 48,
+  "num_micro_batches": 2,
+  "total_time_ms": 501.5687607228756,
+  "comm_timing_mode": "enqueue",
+  "total_compute_ms": 420.62732577323914,
+  "total_recv_wait_ms": 0.139530748128891,
+  "total_moe_router_ms": 9.68562439084053,
+  "total_moe_experts_ms": 349.3720907717943,
+  "total_moe_shared_or_dense_ms": 0.0,
+  "compute_ratio": 0.8386234524794142,
+  "events": [
+    {
+      "type": "recv_wait",
+      "layer": 0,
+      "mb": 0,
+      "start": 0.0008187051862478256,
+      "end": 0.0008240770548582077,
+      "duration_ms": 0.00537186861038208,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 0,
+      "mb": 0,
+      "start": 0.003585509955883026,
+      "end": 0.012871161103248596,
+      "duration_ms": 9.28565114736557,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 0,
+      "mb": 0,
+      "start": 0.003585509955883026,
+      "end": 0.003788059577345848,
+      "duration_ms": 0.20254962146282196,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 0,
+      "mb": 0,
+      "start": 0.003788059577345848,
+      "end": 0.011456958949565887,
+      "duration_ms": 7.668899372220039,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 0,
+      "mb": 0,
+      "start": 0.012900471687316895,
+      "end": 0.012996641919016838,
+      "duration_ms": 0.09617023169994354,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.013099800795316696,
+      "end": 0.013103142380714417,
+      "duration_ms": 0.003341585397720337,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.014634273946285248,
+      "end": 0.023568835109472275,
+      "duration_ms": 8.934561163187027,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.014634273946285248,
+      "end": 0.014835495501756668,
+      "duration_ms": 0.2012215554714203,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.014835495501756668,
+      "end": 0.02226046286523342,
+      "duration_ms": 7.424967363476753,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 1,
+      "mb": 0,
+      "start": 0.023597614839673042,
+      "end": 0.023674676194787025,
+      "duration_ms": 0.07706135511398315,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.023766545578837395,
+      "end": 0.023769265040755272,
+      "duration_ms": 0.0027194619178771973,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.025271378457546234,
+      "end": 0.03455167077481747,
+      "duration_ms": 9.280292317271233,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.025271378457546234,
+      "end": 0.025473222136497498,
+      "duration_ms": 0.20184367895126343,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.025473222136497498,
+      "end": 0.03316013514995575,
+      "duration_ms": 7.686913013458252,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 2,
+      "mb": 0,
+      "start": 0.034573450684547424,
+      "end": 0.03468708135187626,
+      "duration_ms": 0.11363066732883453,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.03484249301254749,
+      "end": 0.034847063943743706,
+      "duration_ms": 0.0045709311962127686,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.03634233586490154,
+      "end": 0.045942582190036774,
+      "duration_ms": 9.600246325135231,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.03634233586490154,
+      "end": 0.03660180792212486,
+      "duration_ms": 0.25947205722332,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.03660180792212486,
+      "end": 0.04461159184575081,
+      "duration_ms": 8.009783923625946,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 3,
+      "mb": 0,
+      "start": 0.0459620114415884,
+      "end": 0.04603799246251583,
+      "duration_ms": 0.0759810209274292,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.046131402254104614,
+      "end": 0.04613425396382809,
+      "duration_ms": 0.002851709723472595,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.047622572630643845,
+      "end": 0.0573927816003561,
+      "duration_ms": 9.770208969712257,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.047622572630643845,
+      "end": 0.047823794186115265,
+      "duration_ms": 0.2012215554714203,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.047823794186115265,
+      "end": 0.05610974133014679,
+      "duration_ms": 8.285947144031525,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 4,
+      "mb": 0,
+      "start": 0.05741189047694206,
+      "end": 0.05748835206031799,
+      "duration_ms": 0.07646158337593079,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.05758127383887768,
+      "end": 0.05758420191705227,
+      "duration_ms": 0.0029280781745910645,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.059059834107756615,
+      "end": 0.06756828911602497,
+      "duration_ms": 8.508455008268356,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.059059834107756615,
+      "end": 0.05925963446497917,
+      "duration_ms": 0.19980035722255707,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.05925963446497917,
+      "end": 0.06628426909446716,
+      "duration_ms": 7.024634629487991,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 5,
+      "mb": 0,
+      "start": 0.06758708879351616,
+      "end": 0.06766377203166485,
+      "duration_ms": 0.07668323814868927,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.06775427423417568,
+      "end": 0.06775718182325363,
+      "duration_ms": 0.002907589077949524,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.0692202728241682,
+      "end": 0.07878024876117706,
+      "duration_ms": 9.559975937008858,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.0692202728241682,
+      "end": 0.06941764429211617,
+      "duration_ms": 0.1973714679479599,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.06941764429211617,
+      "end": 0.07739642634987831,
+      "duration_ms": 7.978782057762146,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 6,
+      "mb": 0,
+      "start": 0.0787994097918272,
+      "end": 0.07887480966746807,
+      "duration_ms": 0.07539987564086914,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.07896418124437332,
+      "end": 0.07896706089377403,
+      "duration_ms": 0.0028796494007110596,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.0804679412394762,
+      "end": 0.0886346846818924,
+      "duration_ms": 8.166743442416191,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.0804679412394762,
+      "end": 0.08066526427865028,
+      "duration_ms": 0.1973230391740799,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.08066526427865028,
+      "end": 0.08738165721297264,
+      "duration_ms": 6.716392934322357,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 7,
+      "mb": 0,
+      "start": 0.08865412510931492,
+      "end": 0.08873172663152218,
+      "duration_ms": 0.07760152220726013,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.08882430754601955,
+      "end": 0.08882701769471169,
+      "duration_ms": 0.0027101486921310425,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.09032535925507545,
+      "end": 0.09933152981102467,
+      "duration_ms": 9.006170555949211,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.09032535925507545,
+      "end": 0.09052645042538643,
+      "duration_ms": 0.20109117031097412,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.09052645042538643,
+      "end": 0.0980459414422512,
+      "duration_ms": 7.519491016864777,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 8,
+      "mb": 0,
+      "start": 0.09935010969638824,
+      "end": 0.09942622110247612,
+      "duration_ms": 0.07611140608787537,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.09951836243271828,
+      "end": 0.09952100180089474,
+      "duration_ms": 0.002639368176460266,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.10101287439465523,
+      "end": 0.1098959632217884,
+      "duration_ms": 8.883088827133179,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.10101287439465523,
+      "end": 0.10121339559555054,
+      "duration_ms": 0.20052120089530945,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.10121339559555054,
+      "end": 0.10863389447331429,
+      "duration_ms": 7.420498877763748,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 9,
+      "mb": 0,
+      "start": 0.10991427302360535,
+      "end": 0.1099906861782074,
+      "duration_ms": 0.07641315460205078,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.11008765362203121,
+      "end": 0.11009026505053043,
+      "duration_ms": 0.0026114284992218018,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.11160059832036495,
+      "end": 0.12008297443389893,
+      "duration_ms": 8.482376113533974,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.11160059832036495,
+      "end": 0.11180119775235653,
+      "duration_ms": 0.20059943199157715,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.11180119775235653,
+      "end": 0.11882218532264233,
+      "duration_ms": 7.020987570285797,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 10,
+      "mb": 0,
+      "start": 0.12010229378938675,
+      "end": 0.12017661333084106,
+      "duration_ms": 0.07431954145431519,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.1202786061912775,
+      "end": 0.1202812846750021,
+      "duration_ms": 0.002678483724594116,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.12174602597951889,
+      "end": 0.13080688752233982,
+      "duration_ms": 9.06086154282093,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.12174602597951889,
+      "end": 0.12194556556642056,
+      "duration_ms": 0.19953958690166473,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.12194556556642056,
+      "end": 0.12955423444509506,
+      "duration_ms": 7.608668878674507,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 11,
+      "mb": 0,
+      "start": 0.13082538731396198,
+      "end": 0.13089977018535137,
+      "duration_ms": 0.07438287138938904,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.13099258951842785,
+      "end": 0.13099510967731476,
+      "duration_ms": 0.002520158886909485,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.13248454965651035,
+      "end": 0.14190020598471165,
+      "duration_ms": 9.415656328201294,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.13248454965651035,
+      "end": 0.1326863020658493,
+      "duration_ms": 0.2017524093389511,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.1326863020658493,
+      "end": 0.14063616655766964,
+      "duration_ms": 7.949864491820335,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 12,
+      "mb": 0,
+      "start": 0.14191867597401142,
+      "end": 0.1419955361634493,
+      "duration_ms": 0.07686018943786621,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.1420884784311056,
+      "end": 0.1420910656452179,
+      "duration_ms": 0.0025872141122817993,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.1435926966369152,
+      "end": 0.15245377831161022,
+      "duration_ms": 8.861081674695015,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.1435926966369152,
+      "end": 0.14378881640732288,
+      "duration_ms": 0.1961197704076767,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.14378881640732288,
+      "end": 0.15117978304624557,
+      "duration_ms": 7.390966638922691,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 13,
+      "mb": 0,
+      "start": 0.1524724680930376,
+      "end": 0.15254469774663448,
+      "duration_ms": 0.07222965359687805,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.15263487957417965,
+      "end": 0.15263739973306656,
+      "duration_ms": 0.002520158886909485,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.154135350137949,
+      "end": 0.1627368088811636,
+      "duration_ms": 8.601458743214607,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.154135350137949,
+      "end": 0.15433705039322376,
+      "duration_ms": 0.20170025527477264,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.15433705039322376,
+      "end": 0.1614878959953785,
+      "duration_ms": 7.150845602154732,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 14,
+      "mb": 0,
+      "start": 0.16275527700781822,
+      "end": 0.16283126920461655,
+      "duration_ms": 0.07599219679832458,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.16293584927916527,
+      "end": 0.16293890215456486,
+      "duration_ms": 0.0030528753995895386,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.16435782238841057,
+      "end": 0.17330140247941017,
+      "duration_ms": 8.943580090999603,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.16435782238841057,
+      "end": 0.16455864533782005,
+      "duration_ms": 0.20082294940948486,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.16455864533782005,
+      "end": 0.17203983291983604,
+      "duration_ms": 7.481187582015991,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 15,
+      "mb": 0,
+      "start": 0.17332232184708118,
+      "end": 0.17339658178389072,
+      "duration_ms": 0.0742599368095398,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.17349985428154469,
+      "end": 0.17350266315042973,
+      "duration_ms": 0.002808868885040283,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.17493321374058723,
+      "end": 0.1828870978206396,
+      "duration_ms": 7.953884080052376,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.17493321374058723,
+      "end": 0.17513467371463776,
+      "duration_ms": 0.20145997405052185,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.17513467371463776,
+      "end": 0.18161026574671268,
+      "duration_ms": 6.475592032074928,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 16,
+      "mb": 0,
+      "start": 0.18290537782013416,
+      "end": 0.18298043683171272,
+      "duration_ms": 0.07505901157855988,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.18309143744409084,
+      "end": 0.1830939780920744,
+      "duration_ms": 0.0025406479835510254,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.184487858787179,
+      "end": 0.19280654564499855,
+      "duration_ms": 8.318686857819557,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.184487858787179,
+      "end": 0.18468626961112022,
+      "duration_ms": 0.19841082394123077,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.18468626961112022,
+      "end": 0.19153541512787342,
+      "duration_ms": 6.849145516753197,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 17,
+      "mb": 0,
+      "start": 0.19282512553036213,
+      "end": 0.19290126487612724,
+      "duration_ms": 0.07613934576511383,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.1929926462471485,
+      "end": 0.19299556501209736,
+      "duration_ms": 0.0029187649488449097,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.19440982677042484,
+      "end": 0.2030090056359768,
+      "duration_ms": 8.599178865551949,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.19440982677042484,
+      "end": 0.19460688903927803,
+      "duration_ms": 0.19706226885318756,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.19460688903927803,
+      "end": 0.20174283534288406,
+      "duration_ms": 7.135946303606033,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 18,
+      "mb": 0,
+      "start": 0.2030299548059702,
+      "end": 0.20310405641794205,
+      "duration_ms": 0.07410161197185516,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.20319582521915436,
+      "end": 0.20319854468107224,
+      "duration_ms": 0.0027194619178771973,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.20460454747080803,
+      "end": 0.21351827681064606,
+      "duration_ms": 8.913729339838028,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.20460454747080803,
+      "end": 0.2048062402755022,
+      "duration_ms": 0.20169280469417572,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.2048062402755022,
+      "end": 0.21227796003222466,
+      "duration_ms": 7.47171975672245,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 19,
+      "mb": 0,
+      "start": 0.2135361172258854,
+      "end": 0.21361183747649193,
+      "duration_ms": 0.07572025060653687,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.21371589973568916,
+      "end": 0.21371893025934696,
+      "duration_ms": 0.003030523657798767,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.21513506956398487,
+      "end": 0.22407108917832375,
+      "duration_ms": 8.936019614338875,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.21513506956398487,
+      "end": 0.2153365109115839,
+      "duration_ms": 0.20144134759902954,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.2153365109115839,
+      "end": 0.2228018268942833,
+      "duration_ms": 7.465315982699394,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 20,
+      "mb": 0,
+      "start": 0.2240896299481392,
+      "end": 0.22416260093450546,
+      "duration_ms": 0.07297098636627197,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.22425255179405212,
+      "end": 0.22425523214042187,
+      "duration_ms": 0.002680346369743347,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.22566435299813747,
+      "end": 0.2341676503419876,
+      "duration_ms": 8.503297343850136,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.22566435299813747,
+      "end": 0.22586720623075962,
+      "duration_ms": 0.2028532326221466,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.22586720623075962,
+      "end": 0.23288283497095108,
+      "duration_ms": 7.01562874019146,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 21,
+      "mb": 0,
+      "start": 0.23418772220611572,
+      "end": 0.2342628687620163,
+      "duration_ms": 0.07514655590057373,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.23435516096651554,
+      "end": 0.23435790091753006,
+      "duration_ms": 0.002739951014518738,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.23578157275915146,
+      "end": 0.24447866156697273,
+      "duration_ms": 8.697088807821274,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.23578157275915146,
+      "end": 0.2359825260937214,
+      "duration_ms": 0.20095333456993103,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.2359825260937214,
+      "end": 0.2432029228657484,
+      "duration_ms": 7.220396772027016,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 22,
+      "mb": 0,
+      "start": 0.2444973811507225,
+      "end": 0.244570791721344,
+      "duration_ms": 0.07341057062149048,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.24467763304710388,
+      "end": 0.24468075297772884,
+      "duration_ms": 0.003119930624961853,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.2460552230477333,
+      "end": 0.2557151596993208,
+      "duration_ms": 9.659936651587486,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.2460552230477333,
+      "end": 0.24626359343528748,
+      "duration_ms": 0.2083703875541687,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.24626359343528748,
+      "end": 0.2544608060270548,
+      "duration_ms": 8.197212591767311,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 23,
+      "mb": 0,
+      "start": 0.25573371909558773,
+      "end": 0.25580991990864277,
+      "duration_ms": 0.07620081305503845,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.2559152618050575,
+      "end": 0.255918201059103,
+      "duration_ms": 0.00293925404548645,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.2573013324290514,
+      "end": 0.26581867784261703,
+      "duration_ms": 8.517345413565636,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.2573013324290514,
+      "end": 0.25749856419861317,
+      "duration_ms": 0.19723176956176758,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.25749856419861317,
+      "end": 0.26456104032695293,
+      "duration_ms": 7.0624761283397675,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 24,
+      "mb": 0,
+      "start": 0.26583737693727016,
+      "end": 0.2659127488732338,
+      "duration_ms": 0.07537193596363068,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.266006400808692,
+      "end": 0.2660092022269964,
+      "duration_ms": 0.0028014183044433594,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.2674395814538002,
+      "end": 0.2763090208172798,
+      "duration_ms": 8.869439363479614,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.2674395814538002,
+      "end": 0.2676387932151556,
+      "duration_ms": 0.19921176135540009,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.2676387932151556,
+      "end": 0.2750211711972952,
+      "duration_ms": 7.382377982139587,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 25,
+      "mb": 0,
+      "start": 0.27633386105298996,
+      "end": 0.2764079309999943,
+      "duration_ms": 0.07406994700431824,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.2765137944370508,
+      "end": 0.27651823312044144,
+      "duration_ms": 0.004438683390617371,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.2779021132737398,
+      "end": 0.2864428609609604,
+      "duration_ms": 8.540747687220573,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.2779021132737398,
+      "end": 0.27810436487197876,
+      "duration_ms": 0.202251598238945,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.27810436487197876,
+      "end": 0.2851330488920212,
+      "duration_ms": 7.028684020042419,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 26,
+      "mb": 0,
+      "start": 0.286461740732193,
+      "end": 0.2865382023155689,
+      "duration_ms": 0.07646158337593079,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.28663126192986965,
+      "end": 0.28663415275514126,
+      "duration_ms": 0.0028908252716064453,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.2880493737757206,
+      "end": 0.29741718620061874,
+      "duration_ms": 9.367812424898148,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.2880493737757206,
+      "end": 0.2882524933665991,
+      "duration_ms": 0.20311959087848663,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.2882524933665991,
+      "end": 0.2961425445973873,
+      "duration_ms": 7.890051230788231,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 27,
+      "mb": 0,
+      "start": 0.29743508622050285,
+      "end": 0.2975099179893732,
+      "duration_ms": 0.0748317688703537,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.29760103672742844,
+      "end": 0.2976037971675396,
+      "duration_ms": 0.0027604401111602783,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.2990060690790415,
+      "end": 0.3071443736553192,
+      "duration_ms": 8.138304576277733,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.2990060690790415,
+      "end": 0.29920193925499916,
+      "duration_ms": 0.19587017595767975,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.29920193925499916,
+      "end": 0.30588425137102604,
+      "duration_ms": 6.682312116026878,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 28,
+      "mb": 0,
+      "start": 0.3071629535406828,
+      "end": 0.307236984372139,
+      "duration_ms": 0.07403083145618439,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.30734094604849815,
+      "end": 0.30734367296099663,
+      "duration_ms": 0.002726912498474121,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.3087581656873226,
+      "end": 0.31719682179391384,
+      "duration_ms": 8.438656106591225,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.3087581656873226,
+      "end": 0.30895909667015076,
+      "duration_ms": 0.20093098282814026,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.30895909667015076,
+      "end": 0.3159655723720789,
+      "duration_ms": 7.006475701928139,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 29,
+      "mb": 0,
+      "start": 0.3172216732054949,
+      "end": 0.31729458272457123,
+      "duration_ms": 0.07290951907634735,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.31738482415676117,
+      "end": 0.31738736294209957,
+      "duration_ms": 0.0025387853384017944,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.3188139330595732,
+      "end": 0.3277131337672472,
+      "duration_ms": 8.899200707674026,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.3188139330595732,
+      "end": 0.3190133348107338,
+      "duration_ms": 0.19940175116062164,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.3190133348107338,
+      "end": 0.32647731341421604,
+      "duration_ms": 7.463978603482246,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 30,
+      "mb": 0,
+      "start": 0.3277310859411955,
+      "end": 0.32780472561717033,
+      "duration_ms": 0.07363967597484589,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.32789551839232445,
+      "end": 0.32789839804172516,
+      "duration_ms": 0.0028796494007110596,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.3293111566454172,
+      "end": 0.33746561221778393,
+      "duration_ms": 8.154455572366714,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.3293111566454172,
+      "end": 0.32951035909354687,
+      "duration_ms": 0.19920244812965393,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.32951035909354687,
+      "end": 0.33620540238916874,
+      "duration_ms": 6.695043295621872,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 31,
+      "mb": 0,
+      "start": 0.3374844416975975,
+      "end": 0.33755773305892944,
+      "duration_ms": 0.0732913613319397,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.3376621939241886,
+      "end": 0.3376651629805565,
+      "duration_ms": 0.0029690563678741455,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.33908691443502903,
+      "end": 0.3476801421493292,
+      "duration_ms": 8.593227714300156,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.33908691443502903,
+      "end": 0.33928727358579636,
+      "duration_ms": 0.20035915076732635,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.33928727358579636,
+      "end": 0.34639760851860046,
+      "duration_ms": 7.110334932804108,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 32,
+      "mb": 0,
+      "start": 0.3476984314620495,
+      "end": 0.3477746210992336,
+      "duration_ms": 0.07618963718414307,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.3478677738457918,
+      "end": 0.3478703536093235,
+      "duration_ms": 0.0025797635316848755,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.3492734730243683,
+      "end": 0.35776560194790363,
+      "duration_ms": 8.492128923535347,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.3492734730243683,
+      "end": 0.34947253204882145,
+      "duration_ms": 0.19905902445316315,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.34947253204882145,
+      "end": 0.3565013259649277,
+      "duration_ms": 7.028793916106224,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 33,
+      "mb": 0,
+      "start": 0.3577840607613325,
+      "end": 0.3578604906797409,
+      "duration_ms": 0.07642991840839386,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.35795280151069164,
+      "end": 0.35795531421899796,
+      "duration_ms": 0.002512708306312561,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.359387444332242,
+      "end": 0.3681088536977768,
+      "duration_ms": 8.721409365534782,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.359387444332242,
+      "end": 0.3595857061445713,
+      "duration_ms": 0.1982618123292923,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.3595857061445713,
+      "end": 0.36684541404247284,
+      "duration_ms": 7.259707897901535,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 34,
+      "mb": 0,
+      "start": 0.3681347332894802,
+      "end": 0.3682078141719103,
+      "duration_ms": 0.0730808824300766,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.3682968430221081,
+      "end": 0.36829968355596066,
+      "duration_ms": 0.0028405338525772095,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.3697006534785032,
+      "end": 0.37872364558279514,
+      "duration_ms": 9.022992104291916,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.3697006534785032,
+      "end": 0.36990154534578323,
+      "duration_ms": 0.2008918672800064,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.36990154534578323,
+      "end": 0.37747410498559475,
+      "duration_ms": 7.572559639811516,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 35,
+      "mb": 0,
+      "start": 0.378742465749383,
+      "end": 0.378818117082119,
+      "duration_ms": 0.07565133273601532,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.3789131175726652,
+      "end": 0.3789157271385193,
+      "duration_ms": 0.002609565854072571,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.3803624901920557,
+      "end": 0.3886747732758522,
+      "duration_ms": 8.312283083796501,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.3803624901920557,
+      "end": 0.38056172244250774,
+      "duration_ms": 0.19923225045204163,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.38056172244250774,
+      "end": 0.387411005795002,
+      "duration_ms": 6.84928335249424,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 36,
+      "mb": 0,
+      "start": 0.38869345374405384,
+      "end": 0.3887685853987932,
+      "duration_ms": 0.07513165473937988,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.3888620063662529,
+      "end": 0.3888647351413965,
+      "duration_ms": 0.002728775143623352,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.390262546017766,
+      "end": 0.398737333714962,
+      "duration_ms": 8.474787697196007,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.390262546017766,
+      "end": 0.39046382904052734,
+      "duration_ms": 0.2012830227613449,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.39046382904052734,
+      "end": 0.3974638916552067,
+      "duration_ms": 7.0000626146793365,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 37,
+      "mb": 0,
+      "start": 0.398755744099617,
+      "end": 0.39883019402623177,
+      "duration_ms": 0.07444992661476135,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.3989210855215788,
+      "end": 0.3989238739013672,
+      "duration_ms": 0.0027883797883987427,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.40032919496297836,
+      "end": 0.4085565824061632,
+      "duration_ms": 8.227387443184853,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.40032919496297836,
+      "end": 0.40053065679967403,
+      "duration_ms": 0.20146183669567108,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.40053065679967403,
+      "end": 0.40728470124304295,
+      "duration_ms": 6.754044443368912,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 38,
+      "mb": 0,
+      "start": 0.4085744693875313,
+      "end": 0.40865056961774826,
+      "duration_ms": 0.07610023021697998,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.4087532814592123,
+      "end": 0.40875615179538727,
+      "duration_ms": 0.002870336174964905,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.4101455733180046,
+      "end": 0.41931332647800446,
+      "duration_ms": 9.167753159999847,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.4101455733180046,
+      "end": 0.4103528931736946,
+      "duration_ms": 0.20731985569000244,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.4103528931736946,
+      "end": 0.41802421398460865,
+      "duration_ms": 7.67132081091404,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 39,
+      "mb": 0,
+      "start": 0.41933239437639713,
+      "end": 0.4194074161350727,
+      "duration_ms": 0.07502175867557526,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.4195107650011778,
+      "end": 0.41951391845941544,
+      "duration_ms": 0.0031534582376480103,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.42091293819248676,
+      "end": 0.4289760496467352,
+      "duration_ms": 8.063111454248428,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.42091293819248676,
+      "end": 0.4211133699864149,
+      "duration_ms": 0.20043179392814636,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.4211133699864149,
+      "end": 0.42771169170737267,
+      "duration_ms": 6.598321720957756,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 40,
+      "mb": 0,
+      "start": 0.42899414896965027,
+      "end": 0.4290690813213587,
+      "duration_ms": 0.07493235170841217,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.4291604422032833,
+      "end": 0.42916305363178253,
+      "duration_ms": 0.0026114284992218018,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.43059483356773853,
+      "end": 0.43929706141352654,
+      "duration_ms": 8.702227845788002,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.43059483356773853,
+      "end": 0.43079383485019207,
+      "duration_ms": 0.199001282453537,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.43079383485019207,
+      "end": 0.4380479212850332,
+      "duration_ms": 7.254086434841156,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 41,
+      "mb": 0,
+      "start": 0.43931544199585915,
+      "end": 0.4393902141600847,
+      "duration_ms": 0.07477216422557831,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.43949173390865326,
+      "end": 0.4394944440573454,
+      "duration_ms": 0.0027101486921310425,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.4408931862562895,
+      "end": 0.44925737008452415,
+      "duration_ms": 8.364183828234673,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.4408931862562895,
+      "end": 0.44109151884913445,
+      "duration_ms": 0.19833259284496307,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.44109151884913445,
+      "end": 0.44764054007828236,
+      "duration_ms": 6.549021229147911,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 42,
+      "mb": 0,
+      "start": 0.44927528128027916,
+      "end": 0.44934978894889355,
+      "duration_ms": 0.07450766861438751,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.4494415018707514,
+      "end": 0.4494443517178297,
+      "duration_ms": 0.0028498470783233643,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.4509083218872547,
+      "end": 0.4607647620141506,
+      "duration_ms": 9.856440126895905,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.4509083218872547,
+      "end": 0.4511088728904724,
+      "duration_ms": 0.20055100321769714,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.4511088728904724,
+      "end": 0.4595178682357073,
+      "duration_ms": 8.408995345234871,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 43,
+      "mb": 0,
+      "start": 0.46078336238861084,
+      "end": 0.4608571417629719,
+      "duration_ms": 0.07377937436103821,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.46094926074147224,
+      "end": 0.4609518423676491,
+      "duration_ms": 0.0025816261768341064,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.46239656396210194,
+      "end": 0.4708512704819441,
+      "duration_ms": 8.454706519842148,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.46239656396210194,
+      "end": 0.4625973030924797,
+      "duration_ms": 0.20073913037776947,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.4625973030924797,
+      "end": 0.46959312818944454,
+      "duration_ms": 6.995825096964836,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 44,
+      "mb": 0,
+      "start": 0.47086953930556774,
+      "end": 0.4709511809051037,
+      "duration_ms": 0.08164159953594208,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.471043411642313,
+      "end": 0.47104600071907043,
+      "duration_ms": 0.0025890767574310303,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.4724358543753624,
+      "end": 0.48038602620363235,
+      "duration_ms": 7.9501718282699585,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.4724358543753624,
+      "end": 0.4726349376142025,
+      "duration_ms": 0.19908323884010315,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.4726349376142025,
+      "end": 0.47913701087236404,
+      "duration_ms": 6.502073258161545,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 45,
+      "mb": 0,
+      "start": 0.48040443286299706,
+      "end": 0.48047822527587414,
+      "duration_ms": 0.07379241287708282,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.48056961596012115,
+      "end": 0.4805721864104271,
+      "duration_ms": 0.0025704503059387207,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.4819914475083351,
+      "end": 0.49123680032789707,
+      "duration_ms": 9.245352819561958,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.4819914475083351,
+      "end": 0.4821955393999815,
+      "duration_ms": 0.2040918916463852,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.4821955393999815,
+      "end": 0.4899825397878885,
+      "duration_ms": 7.787000387907028,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 46,
+      "mb": 0,
+      "start": 0.49126156978309155,
+      "end": 0.49133378081023693,
+      "duration_ms": 0.07221102714538574,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    },
+    {
+      "type": "recv_wait",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.4914260506629944,
+      "end": 0.491429191082716,
+      "duration_ms": 0.0031404197216033936,
+      "node": "ffn"
+    },
+    {
+      "type": "ffn_compute",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.4928197544068098,
+      "end": 0.5009307246655226,
+      "duration_ms": 8.110970258712769,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_router",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.4928197544068098,
+      "end": 0.49302286468446255,
+      "duration_ms": 0.20311027765274048,
+      "node": "ffn"
+    },
+    {
+      "type": "moe_experts",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.49302286468446255,
+      "end": 0.49967233650386333,
+      "duration_ms": 6.649471819400787,
+      "node": "ffn"
+    },
+    {
+      "type": "send_transfer",
+      "layer": 47,
+      "mb": 0,
+      "start": 0.5009497981518507,
+      "end": 0.5010244455188513,
+      "duration_ms": 0.07464736700057983,
+      "node": "ffn",
+      "tensor_bytes": 16384,
+      "tensor_mib": 0.015625,
+      "completion_source": "enqueue"
+    }
+  ],
+  "prefill_seq_len": 4,
+  "actual_prompt_len": 4
+}
