@@ -36,7 +36,7 @@ class DBOStats:
     recv_wait_time: float = 0.0  # Actual waiting for incoming data
     num_layers: int = 0
     num_micro_batches: int = 0
-    
+
     @property
     def compute_ratio(self) -> float:
         """
@@ -450,6 +450,14 @@ class AsyncPipelineScheduler:
         
         self._pending_sends.clear()
 
+        # Generate logits
+        results = []
+        for mb in micro_batches:
+            logits = self.model.attention_worker.forward_lm_head(mb.hidden_states)
+            results.append(logits)
+
+        return self.mb_manager.merge_results(results)
+
     def _run_ffn_ep_expert_node(
         self,
         micro_batches: List[MicroBatch],
@@ -480,14 +488,6 @@ class AsyncPipelineScheduler:
                     tracker.record_event(EventType.FFN_COMPUTE, layer_idx, mb_idx, compute_start, time.perf_counter())
                 if isinstance(ffn_result, tuple):
                     del ffn_result
-        
-        # Generate logits
-        results = []
-        for mb in micro_batches:
-            logits = self.model.attention_worker.forward_lm_head(mb.hidden_states)
-            results.append(logits)
-        
-        return self.mb_manager.merge_results(results)
     
     def _run_ffn_node_simple(
         self,
