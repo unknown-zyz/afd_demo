@@ -22,20 +22,23 @@ def label(row: dict[str, str]) -> str:
     return f"{row['probe']}\n{row['shape_label']} {row['batch']}x{row['seq']}"
 
 
-def ok_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    return [row for row in rows if row.get("status") == "ok" and row.get("graph_median_ms")]
+def plotted_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [row for row in rows if row.get("eager_median_ms")]
 
 
 def plot_latency(rows: list[dict[str, str]], out_path: Path) -> None:
-    rows = ok_rows(rows)
+    rows = plotted_rows(rows)
     labels = [label(row) for row in rows]
     eager = [float(row["eager_median_ms"]) for row in rows]
-    graph = [float(row["graph_median_ms"]) for row in rows]
+    graph = [float(row["graph_median_ms"]) if row.get("graph_median_ms") else 0.0 for row in rows]
     x = range(len(rows))
 
     fig, ax = plt.subplots(figsize=(max(10, len(rows) * 1.1), 5))
     ax.bar([pos - 0.18 for pos in x], eager, width=0.36, label="eager")
     ax.bar([pos + 0.18 for pos in x], graph, width=0.36, label="graph replay")
+    for pos, row, value in zip(x, rows, eager):
+        if row.get("status") != "ok":
+            ax.text(pos + 0.18, value * 0.5, "capture\nfailed", ha="center", va="center", fontsize=8)
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels, rotation=35, ha="right")
     ax.set_ylabel("Median latency (ms)")
@@ -48,13 +51,16 @@ def plot_latency(rows: list[dict[str, str]], out_path: Path) -> None:
 
 
 def plot_speedup(rows: list[dict[str, str]], out_path: Path) -> None:
-    rows = ok_rows(rows)
+    rows = plotted_rows(rows)
     labels = [label(row) for row in rows]
-    speedup = [float(row["speedup"]) for row in rows]
+    speedup = [float(row["speedup"]) if row.get("speedup") else 0.0 for row in rows]
     fig, ax = plt.subplots(figsize=(max(10, len(rows) * 1.1), 4.5))
     x = range(len(rows))
     ax.bar(x, speedup)
     ax.axhline(1.0, color="black", linewidth=1, linestyle="--")
+    for pos, row in zip(x, rows):
+        if row.get("status") != "ok":
+            ax.text(pos, 0.08, "capture failed", ha="center", va="bottom", rotation=90, fontsize=8)
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels, rotation=35, ha="right")
     ax.set_ylabel("Eager / graph")

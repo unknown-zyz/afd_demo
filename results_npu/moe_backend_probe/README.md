@@ -102,8 +102,52 @@ api_smoke/
 
 ## 下一步
 
-基于这些真实 shape，继续验证：
+## 当前已完成 3：decode NPUGraph / aclgraph 探测
 
-1. 优先尝试 decode 固定 shape 的 NPUGraph/aclgraph，降低 HF experts eager 调度开销。
-2. 如果 graph 仍不足，再单独开 `exp/npu-ep-prototype` 做真实 expert-parallel 拓扑，而不是继续 list grouped matmul 路线。
+脚本：
+
+- `scripts/probe_npu_graph_ffn.py`
+- `scripts/plot_npu_graph_ffn.py`
+
+输出目录：
+
+```text
+graph_probe/
+```
+
+测试对象：
+
+- `experts_only`：固定 `hidden_2d + selected_experts + routing_weights`，只捕获 HF experts。
+- `full_ffn`：捕获 `post_attention_layernorm + gate + experts + residual add`。
+- decode fixed shapes：`32x1`、`64x1`、`128x1`。
+- `capture_error_mode=relaxed`。
+
+结果：
+
+| Shape | Probe | Eager median (ms) | Graph replay | 结论 |
+|---|---|---:|---|---|
+| decode `32x1` | experts_only | 4.433 | capture failed | 不可用 |
+| decode `32x1` | full_ffn | 4.708 | capture failed | 不可用 |
+| decode `64x1` | experts_only | 4.983 | capture failed | 不可用 |
+| decode `64x1` | full_ffn | 5.239 | capture failed | 不可用 |
+| decode `128x1` | experts_only | 5.117 | capture failed | 不可用 |
+| decode `128x1` | full_ffn | 5.639 | capture failed | 不可用 |
+
+失败原因：
+
+- HF Qwen3 MoE experts 内部在 graph capture stream 上触发 host/device 同步拷贝。
+- 即使使用 `capture_error_mode=relaxed`，仍报 `ACL stream synchronize failed, error code:107027` / captured-stream synchronize 不允许。
+- 因此当前 HF experts 路线不能直接通过 NPUGraph/aclgraph 获得 replay 加速。
+
+位于 `graph_probe/`：
+
+- `decode_graph_probe.json`
+- `decode_graph_probe.csv`
+- `graph_latency_comparison.png`
+- `graph_speedup.png`
+
+## 下一步
+
+1. 单独开 `exp/npu-ep-prototype` 做真实 expert-parallel 拓扑，而不是继续 list grouped matmul 或 HF graph capture 路线。
+2. 最小原型建议先做 `1 attention rank + 2 ffn ranks`，FFN 按 expert 分片而不是按 layer 分片。
 3. 若后续发现更合适的 single-tensor grouped matmul 或 fused MoE 调用方式，再重新进入 fused backend 原型。
