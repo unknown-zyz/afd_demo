@@ -54,6 +54,8 @@ class EPStageTiming:
     """Fine-grained EP timing in seconds."""
 
     router_s: float = 0.0
+    experts_s: float = 0.0
+    shared_or_dense_s: float = 0.0
     ep_dispatch_s: float = 0.0
     ep_local_experts_s: float = 0.0
     ep_reduce_s: float = 0.0
@@ -226,6 +228,7 @@ class EPFFNLayer(nn.Module):
         )
         sync_if_needed(self.layer_device)
         timing.ep_local_experts_s = time.perf_counter() - local_start
+        timing.experts_s = timing.ep_local_experts_s
         timing.ep_active_experts = active
         timing.ep_local_assignments = assignments
 
