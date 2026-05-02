@@ -131,6 +131,81 @@ class DecodeDBOScheduler:
         remainder = batch_size % num_mb
         return [base + (1 if i < remainder else 0) for i in range(num_mb)]
 
+    def _record_ffn_stage_timing(
+        self,
+        tracker: TimingTracker,
+        layer_idx: int,
+        mb_idx: int,
+        compute_start: float,
+        stage_timing: Any,
+    ) -> None:
+        """Record fine-grained MoE/EP stages within the FFN compute span."""
+        cursor = compute_start
+        router_s = getattr(stage_timing, "router_s", 0.0)
+        if router_s > 0:
+            tracker.record_event(
+                EventType.MOE_ROUTER,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + router_s,
+            )
+            cursor += router_s
+
+        ep_dispatch_s = getattr(stage_timing, "ep_dispatch_s", 0.0)
+        if ep_dispatch_s > 0:
+            tracker.record_event(
+                EventType.EP_DISPATCH,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + ep_dispatch_s,
+            )
+            cursor += ep_dispatch_s
+
+        ep_local_experts_s = getattr(stage_timing, "ep_local_experts_s", 0.0)
+        if ep_local_experts_s > 0:
+            tracker.record_event(
+                EventType.EP_LOCAL_EXPERTS,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + ep_local_experts_s,
+            )
+            cursor += ep_local_experts_s
+        else:
+            experts_s = getattr(stage_timing, "experts_s", 0.0)
+            if experts_s > 0:
+                tracker.record_event(
+                    EventType.MOE_EXPERTS,
+                    layer_idx,
+                    mb_idx,
+                    cursor,
+                    cursor + experts_s,
+                )
+                cursor += experts_s
+
+        ep_reduce_s = getattr(stage_timing, "ep_reduce_s", 0.0)
+        if ep_reduce_s > 0:
+            tracker.record_event(
+                EventType.EP_REDUCE,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + ep_reduce_s,
+            )
+            cursor += ep_reduce_s
+
+        shared_or_dense_s = getattr(stage_timing, "shared_or_dense_s", 0.0)
+        if shared_or_dense_s > 0:
+            tracker.record_event(
+                EventType.MOE_SHARED_OR_DENSE,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + shared_or_dense_s,
+            )
+
     @torch.no_grad()
     def forward_decode_dbo(
         self,
@@ -514,15 +589,26 @@ class DecodeDBOScheduler:
                 if tracker:
                     tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
-                output = self.model.ffn_worker.forward_ffn_layer(
+                ffn_result = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
                     hidden_states=a2f_recv_tensors[mb_idx],
+                    return_timing=bool(tracker and self.model.supports_moe_timing),
                 )
-                if isinstance(output, tuple):
-                    output = output[0]
+                if isinstance(ffn_result, tuple):
+                    output, stage_timing = ffn_result
+                else:
+                    output, stage_timing = ffn_result, None
                 output = output.contiguous()
                 if tracker:
                     tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    if stage_timing is not None:
+                        self._record_ffn_stage_timing(
+                            tracker,
+                            layer_idx,
+                            mb_idx,
+                            compute_start,
+                            stage_timing,
+                        )
                 compute_end = time.perf_counter()
                 compute_time = compute_end - compute_start
                 self.stats.compute_time += compute_time
@@ -593,14 +679,25 @@ class DecodeDBOScheduler:
                 if tracker:
                     tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
-                output = self.model.ffn_worker.forward_ffn_layer(
+                ffn_result = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
                     hidden_states=hidden_states,
+                    return_timing=bool(tracker and self.model.supports_moe_timing),
                 )
-                if isinstance(output, tuple):
-                    del output
+                if isinstance(ffn_result, tuple):
+                    _, stage_timing = ffn_result
+                else:
+                    stage_timing = None
                 if tracker:
                     tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    if stage_timing is not None:
+                        self._record_ffn_stage_timing(
+                            tracker,
+                            layer_idx,
+                            mb_idx,
+                            compute_start,
+                            stage_timing,
+                        )
                 compute_time = time.perf_counter() - compute_start
                 self.stats.compute_time += compute_time
                 self.stats.ffn_compute_time += compute_time

@@ -34,6 +34,9 @@ class EventType(Enum):
     MOE_ROUTER = "moe_router"
     MOE_EXPERTS = "moe_experts"
     MOE_SHARED_OR_DENSE = "moe_shared_or_dense"
+    EP_DISPATCH = "ep_dispatch"
+    EP_LOCAL_EXPERTS = "ep_local_experts"
+    EP_REDUCE = "ep_reduce"
     SEND_START = "send_start"
     # Send timing span. Meaning depends on PipelineTiming.comm_timing_mode:
     # "enqueue" records isend() return overhead; "completion" records effective
@@ -114,6 +117,9 @@ class PipelineTiming:
     total_moe_router_ms: float = 0.0
     total_moe_experts_ms: float = 0.0
     total_moe_shared_or_dense_ms: float = 0.0
+    total_ep_dispatch_ms: float = 0.0
+    total_ep_local_experts_ms: float = 0.0
+    total_ep_reduce_ms: float = 0.0
     
     def add_event(self, event: TimingEvent):
         self.events.append(event)
@@ -127,6 +133,12 @@ class PipelineTiming:
             self.total_moe_experts_ms += event.duration_ms
         elif event.event_type == EventType.MOE_SHARED_OR_DENSE.value:
             self.total_moe_shared_or_dense_ms += event.duration_ms
+        elif event.event_type == EventType.EP_DISPATCH.value:
+            self.total_ep_dispatch_ms += event.duration_ms
+        elif event.event_type == EventType.EP_LOCAL_EXPERTS.value:
+            self.total_ep_local_experts_ms += event.duration_ms
+        elif event.event_type == EventType.EP_REDUCE.value:
+            self.total_ep_reduce_ms += event.duration_ms
         elif event.event_type == EventType.RECV_WAIT.value:
             self.total_recv_wait_ms += event.duration_ms
         elif event.event_type == EventType.SEND_TRANSFER.value:
@@ -151,6 +163,9 @@ class PipelineTiming:
             "total_moe_router_ms": self.total_moe_router_ms,
             "total_moe_experts_ms": self.total_moe_experts_ms,
             "total_moe_shared_or_dense_ms": self.total_moe_shared_or_dense_ms,
+            "total_ep_dispatch_ms": self.total_ep_dispatch_ms,
+            "total_ep_local_experts_ms": self.total_ep_local_experts_ms,
+            "total_ep_reduce_ms": self.total_ep_reduce_ms,
             "compute_ratio": self.compute_ratio,
             "events": [e.to_dict() for e in self.events],
         }
@@ -194,6 +209,12 @@ class PipelineTiming:
                 f"MoE: router={self.total_moe_router_ms:.2f}ms, "
                 f"experts={self.total_moe_experts_ms:.2f}ms, "
                 f"shared/dense={self.total_moe_shared_or_dense_ms:.2f}ms"
+            )
+        if self.total_ep_dispatch_ms > 0 or self.total_ep_local_experts_ms > 0:
+            lines.append(
+                f"EP: dispatch={self.total_ep_dispatch_ms:.2f}ms, "
+                f"local_experts={self.total_ep_local_experts_ms:.2f}ms, "
+                f"reduce={self.total_ep_reduce_ms:.2f}ms"
             )
         return "\n".join(lines)
 
