@@ -187,6 +187,13 @@ def get_effective_prefill_seq_len(prefill_seq_len: int | None, max_seq_len: int)
     return prefill_seq_len if prefill_seq_len is not None else max_seq_len
 
 
+def timing_role_name(ctx) -> str:
+    """Return a role label that stays unique when EP has many FFN expert ranks."""
+    if getattr(ctx, "is_ffn_expert_only", False):
+        return f"{ctx.role}_r{ctx.rank}"
+    return ctx.role
+
+
 def tokenize_batch_prompts(tokenizer, prompts, prefill_seq_len: int | None, max_seq_len: int):
     """Tokenize prompts using a fixed length when an experiment seq is provided."""
     target_seq_len = get_effective_prefill_seq_len(prefill_seq_len, max_seq_len)
@@ -375,13 +382,14 @@ def run_inference_demo(args):
             os.makedirs("results/prefill_dbo", exist_ok=True)
             timing_data.prefill_seq_len = prefill_seq_len
             timing_data.actual_prompt_len = input_ids.shape[1]
+            role_name = timing_role_name(ctx)
             # Build timing file name with configuration info
             if args.timing_suffix:
-                timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+                timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
             else:
                 # Auto-generate suffix from config
                 suffix = f"b{args.batch_size}_t{args.max_new_tokens}"
-                timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+                timing_file = f"results/prefill_dbo/timing_{role_name}_{suffix}.json"
             timing_data.save(timing_file)
             logger.info(f"Timing saved: {timing_file}")
             logger.info(timing_data.summary())
@@ -398,11 +406,12 @@ def run_inference_demo(args):
             "actual_prompt_len": input_ids.shape[1],
             "max_new_tokens": args.max_new_tokens,
         }
+        role_name = timing_role_name(ctx)
         if args.timing_suffix:
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
         else:
             suffix = f"b{args.batch_size}_t{args.max_new_tokens}"
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_serial_{suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_serial_{suffix}.json"
         with open(timing_file, 'w') as f:
             json.dump(serial_data, f, indent=2)
         logger.info(f"Timing saved: {timing_file}")
@@ -546,11 +555,12 @@ def run_generation_demo(args):
         )
     if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
         os.makedirs("results/prefill_dbo", exist_ok=True)
+        role_name = timing_role_name(ctx)
         if args.timing_suffix:
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
         else:
             suffix = f"decode_b{args.batch_size}_t{args.max_new_tokens}"
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{suffix}.json"
         model._last_decode_timing.prefill_ms = generation_metrics.get("prefill_ms")
         model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
         model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
@@ -577,11 +587,12 @@ def run_generation_demo(args):
             "max_new_tokens": args.max_new_tokens,
             "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,
         }
+        role_name = timing_role_name(ctx)
         if args.timing_suffix:
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
         else:
             suffix = f"decode_serial_b{args.batch_size}_t{args.max_new_tokens}"
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{suffix}.json"
         with open(timing_file, 'w') as f:
             json_mod.dump(serial_data, f, indent=2)
         logger.info(f"Decode timing saved (serial): {timing_file}")
