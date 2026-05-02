@@ -32,6 +32,8 @@ class FFNStageTiming:
     ep_dispatch_s: float = 0.0
     ep_local_experts_s: float = 0.0
     ep_reduce_s: float = 0.0
+    ep_dispatch_enqueue_s: float = 0.0
+    ep_reduce_enqueue_s: float = 0.0
     ep_dispatch_wait_s: float = 0.0
     ep_reduce_wait_s: float = 0.0
     ep_overlap_hidden_s: float = 0.0

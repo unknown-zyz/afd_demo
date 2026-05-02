@@ -37,6 +37,9 @@ class EventType(Enum):
     EP_DISPATCH = "ep_dispatch"
     EP_LOCAL_EXPERTS = "ep_local_experts"
     EP_REDUCE = "ep_reduce"
+    EP_DISPATCH_WAIT = "ep_dispatch_wait"
+    EP_REDUCE_WAIT = "ep_reduce_wait"
+    EP_OVERLAP_HIDDEN = "ep_overlap_hidden"
     SEND_START = "send_start"
     # Send timing span. Meaning depends on PipelineTiming.comm_timing_mode:
     # "enqueue" records isend() return overhead; "completion" records effective
@@ -120,6 +123,9 @@ class PipelineTiming:
     total_ep_dispatch_ms: float = 0.0
     total_ep_local_experts_ms: float = 0.0
     total_ep_reduce_ms: float = 0.0
+    total_ep_dispatch_wait_ms: float = 0.0
+    total_ep_reduce_wait_ms: float = 0.0
+    total_ep_overlap_hidden_ms: float = 0.0
     
     def add_event(self, event: TimingEvent):
         self.events.append(event)
@@ -139,6 +145,12 @@ class PipelineTiming:
             self.total_ep_local_experts_ms += event.duration_ms
         elif event.event_type == EventType.EP_REDUCE.value:
             self.total_ep_reduce_ms += event.duration_ms
+        elif event.event_type == EventType.EP_DISPATCH_WAIT.value:
+            self.total_ep_dispatch_wait_ms += event.duration_ms
+        elif event.event_type == EventType.EP_REDUCE_WAIT.value:
+            self.total_ep_reduce_wait_ms += event.duration_ms
+        elif event.event_type == EventType.EP_OVERLAP_HIDDEN.value:
+            self.total_ep_overlap_hidden_ms += event.duration_ms
         elif event.event_type == EventType.RECV_WAIT.value:
             self.total_recv_wait_ms += event.duration_ms
         elif event.event_type == EventType.SEND_TRANSFER.value:
@@ -166,6 +178,9 @@ class PipelineTiming:
             "total_ep_dispatch_ms": self.total_ep_dispatch_ms,
             "total_ep_local_experts_ms": self.total_ep_local_experts_ms,
             "total_ep_reduce_ms": self.total_ep_reduce_ms,
+            "total_ep_dispatch_wait_ms": self.total_ep_dispatch_wait_ms,
+            "total_ep_reduce_wait_ms": self.total_ep_reduce_wait_ms,
+            "total_ep_overlap_hidden_ms": self.total_ep_overlap_hidden_ms,
             "compute_ratio": self.compute_ratio,
             "events": [e.to_dict() for e in self.events],
         }
@@ -214,7 +229,9 @@ class PipelineTiming:
             lines.append(
                 f"EP: dispatch={self.total_ep_dispatch_ms:.2f}ms, "
                 f"local_experts={self.total_ep_local_experts_ms:.2f}ms, "
-                f"reduce={self.total_ep_reduce_ms:.2f}ms"
+                f"reduce={self.total_ep_reduce_ms:.2f}ms, "
+                f"reduce_wait={self.total_ep_reduce_wait_ms:.2f}ms, "
+                f"hidden={self.total_ep_overlap_hidden_ms:.2f}ms"
             )
         return "\n".join(lines)
 

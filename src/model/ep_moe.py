@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 import torch
@@ -59,11 +59,36 @@ class EPStageTiming:
     ep_dispatch_s: float = 0.0
     ep_local_experts_s: float = 0.0
     ep_reduce_s: float = 0.0
+    ep_dispatch_enqueue_s: float = 0.0
+    ep_reduce_enqueue_s: float = 0.0
     ep_dispatch_wait_s: float = 0.0
     ep_reduce_wait_s: float = 0.0
     ep_overlap_hidden_s: float = 0.0
     ep_active_experts: int = 0
     ep_local_assignments: int = 0
+
+
+@dataclass
+class EPWorkItem:
+    """State for one EP micro-batch while overlap collectives are in flight."""
+
+    hidden_states: torch.Tensor
+    output_device: torch.device
+    batch_size: int
+    seq_len: int
+    hidden_dim: int
+    hidden_2d: torch.Tensor
+    selected_experts: torch.Tensor
+    routing_weights: torch.Tensor
+    timing: EPStageTiming = field(default_factory=EPStageTiming)
+    residual_out: Optional[torch.Tensor] = None
+    partial: Optional[torch.Tensor] = None
+    dispatch_handles: list[dist.Work] = field(default_factory=list)
+    reduce_handle: Optional[dist.Work] = None
+    dispatch_start_s: float = 0.0
+    dispatch_enqueue_done_s: float = 0.0
+    reduce_start_s: float = 0.0
+    reduce_enqueue_done_s: float = 0.0
 
 
 class ShardedExperts(nn.Module):
@@ -174,6 +199,134 @@ class EPFFNLayer(nn.Module):
         dist.broadcast(hidden_2d, src=src, group=group)
         dist.broadcast(selected_experts, src=src, group=group)
         dist.broadcast(routing_weights, src=src, group=group)
+
+    def create_work_item(
+        self,
+        hidden_states: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+        output_device: Optional[torch.device] = None,
+    ) -> EPWorkItem:
+        """Prepare router inputs for one EP micro-batch without running collectives."""
+        if output_device is None:
+            output_device = self.layer_device
+        if hidden_states.device != self.layer_device:
+            hidden_states = hidden_states.to(self.layer_device, non_blocking=True)
+
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        tokens = batch_size * seq_len
+        timing = EPStageTiming()
+
+        if self.is_coordinator:
+            if self.post_attention_layernorm is None or self.gate is None:
+                raise RuntimeError("FFN EP coordinator requires layernorm and router gate")
+            if residual is not None:
+                if residual.device != self.layer_device:
+                    residual = residual.to(self.layer_device, non_blocking=True)
+                hidden_states = residual + hidden_states
+            residual_out = hidden_states
+            normed = self.post_attention_layernorm(hidden_states)
+            hidden_2d = normed.reshape(tokens, hidden_dim).contiguous()
+            sync_if_needed(self.layer_device)
+            router_start = time.perf_counter()
+            _, routing_weights, selected_experts = self.gate(hidden_2d)
+            sync_if_needed(self.layer_device)
+            timing.router_s = time.perf_counter() - router_start
+            selected_experts = selected_experts.to(torch.int64).contiguous()
+            routing_weights = routing_weights.contiguous()
+        else:
+            residual_out = None
+            hidden_2d = torch.empty(tokens, hidden_dim, device=self.layer_device, dtype=hidden_states.dtype)
+            selected_experts = torch.empty(tokens, self.top_k, device=self.layer_device, dtype=torch.int64)
+            routing_weights = torch.empty(tokens, self.top_k, device=self.layer_device, dtype=hidden_states.dtype)
+
+        return EPWorkItem(
+            hidden_states=hidden_states,
+            output_device=output_device,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            hidden_dim=hidden_dim,
+            hidden_2d=hidden_2d,
+            selected_experts=selected_experts,
+            routing_weights=routing_weights,
+            residual_out=residual_out,
+            timing=timing,
+        )
+
+    def dispatch_async(self, item: EPWorkItem) -> None:
+        """Enqueue coordinator-to-expert EP broadcasts for one micro-batch."""
+        group = self.ctx.ffn_ep_dispatch_group
+        src = self.ctx.ffn_coordinator_rank
+        item.dispatch_start_s = time.perf_counter()
+        item.dispatch_handles = [
+            dist.broadcast(item.hidden_2d, src=src, group=group, async_op=True),
+            dist.broadcast(item.selected_experts, src=src, group=group, async_op=True),
+            dist.broadcast(item.routing_weights, src=src, group=group, async_op=True),
+        ]
+        item.dispatch_enqueue_done_s = time.perf_counter()
+        item.timing.ep_dispatch_enqueue_s = item.dispatch_enqueue_done_s - item.dispatch_start_s
+
+    def finish_dispatch(self, item: EPWorkItem) -> None:
+        """Wait until dispatch inputs are ready for local expert compute."""
+        wait_start = time.perf_counter()
+        for handle in item.dispatch_handles:
+            handle.wait()
+        wait_end = time.perf_counter()
+        item.timing.ep_dispatch_wait_s = wait_end - wait_start
+        item.timing.ep_dispatch_s = wait_end - item.dispatch_start_s
+
+    def compute_local(self, item: EPWorkItem) -> None:
+        """Run this rank's local expert shard for a dispatched micro-batch."""
+        local_start = time.perf_counter()
+        partial, active, assignments = self.sharded_experts.forward_local(
+            item.hidden_2d,
+            item.selected_experts,
+            item.routing_weights,
+        )
+        sync_if_needed(self.layer_device)
+        item.timing.ep_local_experts_s = time.perf_counter() - local_start
+        item.timing.experts_s = item.timing.ep_local_experts_s
+        item.timing.ep_active_experts = active
+        item.timing.ep_local_assignments = assignments
+        item.partial = partial
+
+    def reduce_async(self, item: EPWorkItem) -> None:
+        """Enqueue partial-output reduce for one micro-batch."""
+        if item.partial is None:
+            raise RuntimeError("EP reduce_async called before compute_local")
+        item.reduce_start_s = time.perf_counter()
+        item.reduce_handle = dist.reduce(
+            item.partial,
+            dst=self.ctx.ffn_coordinator_rank,
+            op=dist.ReduceOp.SUM,
+            group=self.ctx.ffn_ep_reduce_group,
+            async_op=True,
+        )
+        item.reduce_enqueue_done_s = time.perf_counter()
+        item.timing.ep_reduce_enqueue_s = item.reduce_enqueue_done_s - item.reduce_start_s
+
+    def finish_reduce(self, item: EPWorkItem) -> None:
+        """Wait for partial-output reduce, tracking how much delay was hidden."""
+        if item.reduce_handle is None:
+            raise RuntimeError("EP finish_reduce called before reduce_async")
+        wait_start = time.perf_counter()
+        item.timing.ep_overlap_hidden_s = max(0.0, wait_start - item.reduce_enqueue_done_s)
+        item.reduce_handle.wait()
+        sync_if_needed(self.layer_device)
+        wait_end = time.perf_counter()
+        item.timing.ep_reduce_wait_s = wait_end - wait_start
+        item.timing.ep_reduce_s = wait_end - item.reduce_start_s
+
+    def finish_output(self, item: EPWorkItem):
+        """Return the coordinator output after reduce; expert ranks keep a dummy tensor."""
+        if not self.is_coordinator:
+            return item.hidden_states
+        if item.partial is None or item.residual_out is None:
+            raise RuntimeError("EP coordinator output requires reduced partial and residual")
+        output = item.partial.reshape(item.batch_size, item.seq_len, item.hidden_dim)
+        output = item.residual_out + output
+        if output.device != item.output_device:
+            output = output.to(item.output_device, non_blocking=True)
+        return output
 
     def forward(
         self,
