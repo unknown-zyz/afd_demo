@@ -245,7 +245,7 @@ def grouped_experts_forward(
         experts.gate_up_proj[expert_idx].transpose(0, 1).contiguous()
         for expert_idx in active
     ]
-    gate_up_outs = torch_npu.npu_grouped_matmul(xs, gate_up_weights)
+    gate_up_outs = torch_npu.npu_grouped_matmul(xs, gate_up_weights, group_type=-1)
     interms: list[torch.Tensor] = []
     for gate_up in gate_up_outs:
         gate, up = gate_up.chunk(2, dim=-1)
@@ -254,7 +254,7 @@ def grouped_experts_forward(
         experts.down_proj[expert_idx].transpose(0, 1).contiguous()
         for expert_idx in active
     ]
-    down_outs = torch_npu.npu_grouped_matmul(interms, down_weights)
+    down_outs = torch_npu.npu_grouped_matmul(interms, down_weights, group_type=-1)
     final = torch.zeros_like(hidden_2d)
     for token_idx, weight, current in zip(token_indices, token_weights, down_outs):
         final.index_add_(0, token_idx, current * weight.to(current.dtype))
@@ -337,10 +337,15 @@ def run_shape(
         hf_weights = hf_weights / hf_weights.sum(dim=-1, keepdim=True)
     hf_weights = hf_weights.to(logits.dtype)
     sync_device(device)
-    hf_output, hf_experts_s = timed(
-        device,
-        lambda: layer.mlp.experts(hidden_2d, hf_indices, hf_weights),
-    )
+    timed(device, lambda: layer.mlp.experts(hidden_2d, hf_indices, hf_weights))
+    hf_output = None
+    hf_expert_times: list[float] = []
+    for _ in range(repeat):
+        hf_output, elapsed = timed(
+            device,
+            lambda: layer.mlp.experts(hidden_2d, hf_indices, hf_weights),
+        )
+        hf_expert_times.append(elapsed)
 
     records: list[dict[str, Any]] = [
         {
@@ -353,7 +358,7 @@ def run_shape(
             "tokens": batch * seq,
             "dtype": str(dtype).replace("torch.", ""),
             "device": str(device),
-            "latency_median_ms": hf_experts_s * 1000.0,
+            "latency_median_ms": median_ms(hf_expert_times),
             "max_abs_error": 0.0,
             "mean_abs_error": 0.0,
             "max_rel_error": 0.0,
