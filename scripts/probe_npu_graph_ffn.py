@@ -89,10 +89,11 @@ def tensor_error(actual: torch.Tensor, expected: torch.Tensor) -> dict[str, floa
 def graph_capture(
     device: torch.device,
     fn: Callable[[], torch.Tensor],
+    capture_error_mode: str,
 ) -> tuple[Any, torch.Tensor]:
     graph = torch.npu.NPUGraph()
     sync_device(device)
-    with torch.npu.graph(graph):
+    with torch.npu.graph(graph, capture_error_mode=capture_error_mode):
         static_out = fn()
     sync_device(device)
     return graph, static_out
@@ -105,6 +106,7 @@ def run_graph_probe(
     *,
     warmup: int,
     repeat: int,
+    capture_error_mode: str,
 ) -> dict[str, Any]:
     for _ in range(warmup):
         fn()
@@ -122,7 +124,7 @@ def run_graph_probe(
     }
 
     try:
-        graph, static_out = graph_capture(device, fn)
+        graph, static_out = graph_capture(device, fn, capture_error_mode)
         graph.replay()
         sync_device(device)
         graph_times: list[float] = []
@@ -141,6 +143,7 @@ def run_graph_probe(
                 "status": "error",
                 "graph_median_ms": None,
                 "speedup": None,
+                "capture_error_mode": capture_error_mode,
                 "error": f"{type(exc).__name__}: {exc}",
             }
         )
@@ -167,6 +170,7 @@ def probe_shape(
     dtype: torch.dtype,
     warmup: int,
     repeat: int,
+    capture_error_mode: str,
 ) -> list[dict[str, Any]]:
     hidden_size = layer.mlp.gate.hidden_dim
     hidden_states, hidden_2d, selected_experts, routing_weights = prepare_inputs(
@@ -187,7 +191,14 @@ def probe_shape(
     rows: list[dict[str, Any]] = []
     for probe_name, fn in (("experts_only", experts_only), ("full_ffn", full_ffn)):
         with torch.inference_mode():
-            record = run_graph_probe(device, probe_name, fn, warmup=warmup, repeat=repeat)
+            record = run_graph_probe(
+                device,
+                probe_name,
+                fn,
+                warmup=warmup,
+                repeat=repeat,
+                capture_error_mode=capture_error_mode,
+            )
         record.update(
             {
                 "layer": layer_idx,
@@ -226,6 +237,7 @@ def main() -> int:
     parser.add_argument("--dtype", default="bf16")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=5)
+    parser.add_argument("--capture-error-mode", default="relaxed", choices=["global", "thread_local", "relaxed"])
     parser.add_argument("--output-dir", default="results_npu/moe_backend_probe/graph_probe")
     args = parser.parse_args()
 
@@ -260,6 +272,7 @@ def main() -> int:
             dtype=dtype,
             warmup=args.warmup,
             repeat=args.repeat,
+            capture_error_mode=args.capture_error_mode,
         )
         for record in shape_records:
             print(
