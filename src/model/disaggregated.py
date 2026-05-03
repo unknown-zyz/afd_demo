@@ -282,9 +282,13 @@ class DisaggregatedQwenModel(nn.Module):
                 position_embeddings=position_embeddings if self.ctx.is_attention_node else None,
             )
         
-        # Final logits (attention node only)
+        # Final logits (attention node only).
+        # Prefill only needs the last position's logits to sample the next token,
+        # so slice before lm_head to avoid the (B, S, vocab) allocation that
+        # OOMs at large (batch, seq) on NPU.
         if self.ctx.is_attention_node:
-            logits = self.attention_worker.forward_lm_head(hidden_states)
+            last_hidden = hidden_states[:, -1:, :]
+            logits = self.attention_worker.forward_lm_head(last_hidden)
             return logits
         else:
             return hidden_states  # Return last hidden state for FFN node
@@ -442,9 +446,10 @@ class DisaggregatedQwenModel(nn.Module):
                 use_cache=True,
             )
         
-        # Return logits
+        # Return logits (prefill: last-token only, see forward_prefill comment).
         if self.ctx.is_attention_node:
-            logits = self.attention_worker.forward_lm_head(hidden_states)
+            last_hidden = hidden_states[:, -1:, :]
+            logits = self.attention_worker.forward_lm_head(last_hidden)
             return logits
         else:
             return hidden_states

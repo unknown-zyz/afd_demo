@@ -110,20 +110,32 @@ class ShardedExperts(nn.Module):
         self.local_expert_ids = plan.local_expert_ids
         self.local_expert_id_set = set(self.local_expert_ids)
         self.act_fn = experts.act_fn
+        self.num_total_experts = plan.num_experts
 
-        gate_up = {}
-        down = {}
-        for expert_id in self.local_expert_ids:
-            gate_up[str(expert_id)] = nn.Parameter(
-                experts.gate_up_proj[expert_id].detach().to(device=device, dtype=dtype).contiguous(),
-                requires_grad=False,
+        if not self.local_expert_ids:
+            self.gate_up_stack = None
+            self.down_stack = None
+        else:
+            gate_up_list = [
+                experts.gate_up_proj[eid].detach().to(device=device, dtype=dtype).contiguous()
+                for eid in self.local_expert_ids
+            ]
+            down_list = [
+                experts.down_proj[eid].detach().to(device=device, dtype=dtype).contiguous()
+                for eid in self.local_expert_ids
+            ]
+            self.gate_up_stack = nn.Parameter(
+                torch.stack(gate_up_list, dim=0).contiguous(), requires_grad=False
             )
-            down[str(expert_id)] = nn.Parameter(
-                experts.down_proj[expert_id].detach().to(device=device, dtype=dtype).contiguous(),
-                requires_grad=False,
+            self.down_stack = nn.Parameter(
+                torch.stack(down_list, dim=0).contiguous(), requires_grad=False
             )
-        self.gate_up_proj = nn.ParameterDict(gate_up)
-        self.down_proj = nn.ParameterDict(down)
+
+        local_mask = torch.zeros(self.num_total_experts, dtype=torch.bool, device=device)
+        for eid in self.local_expert_ids:
+            local_mask[eid] = True
+        self.register_buffer("_local_mask_lut", local_mask, persistent=False)
+        self._local_idx_of_py = {int(eid): i for i, eid in enumerate(self.local_expert_ids)}
 
     def forward_local(
         self,
@@ -131,28 +143,61 @@ class ShardedExperts(nn.Module):
         selected_experts: torch.Tensor,
         routing_weights: torch.Tensor,
     ) -> tuple[torch.Tensor, int, int]:
-        """Return this shard's dense partial output plus activity counters."""
+        """Return this shard's dense partial output plus activity counters.
+
+        Active-only grouped path: build a flat (assignment, hidden) tensor for
+        all tokens routed to this shard, sort by expert id, and run one GEMM
+        pair per active local expert using stacked weights. Avoids per-step
+        host syncs from `.cpu().tolist()` and replaces N small `F.linear` calls
+        per expert with a single contiguous slice per active expert.
+        """
 
         partial = torch.zeros_like(hidden_2d)
-        active = 0
-        assignments = 0
-        active_expert_ids = [
-            int(expert_id)
-            for expert_id in torch.unique(selected_experts).detach().cpu().tolist()
-            if int(expert_id) in self.local_expert_id_set
-        ]
-        for expert_id in active_expert_ids:
-            token_idx, topk_idx = torch.where(selected_experts == expert_id)
-            active += 1
-            assignments += int(token_idx.numel())
-            x = hidden_2d[token_idx].contiguous()
-            gate_up = F.linear(x, self.gate_up_proj[str(expert_id)])
-            gate, up = gate_up.chunk(2, dim=-1)
+        if not self.local_expert_ids or self.gate_up_stack is None:
+            return partial, 0, 0
+
+        top_k = selected_experts.shape[-1]
+        flat_experts = selected_experts.reshape(-1)
+        flat_weights = routing_weights.reshape(-1)
+
+        # On-device mask for "is this assignment routed to a local expert?"
+        local_hits = self._local_mask_lut[flat_experts]
+        active_pos = local_hits.nonzero(as_tuple=False).squeeze(-1)
+        if active_pos.numel() == 0:
+            return partial, 0, 0
+
+        expert_per_assign = flat_experts[active_pos]
+        token_per_assign = active_pos // top_k
+        weight_per_assign = flat_weights[active_pos]
+
+        # Sort assignments by expert id so each expert owns a contiguous slice.
+        sort_idx = expert_per_assign.argsort()
+        ex_sorted = expert_per_assign[sort_idx]
+        tok_sorted = token_per_assign[sort_idx]
+        w_sorted = weight_per_assign[sort_idx]
+
+        x = hidden_2d.index_select(0, tok_sorted)
+
+        uniq, counts = torch.unique_consecutive(ex_sorted, return_counts=True)
+        # Single host sync per layer-MB for driving the small loop (<= num local experts).
+        uniq_list = uniq.tolist()
+        counts_list = counts.tolist()
+
+        out = torch.empty_like(x)
+        offset = 0
+        for eid, cnt in zip(uniq_list, counts_list):
+            local_idx = self._local_idx_of_py[int(eid)]
+            seg = x.narrow(0, offset, cnt)
+            gu = F.linear(seg, self.gate_up_stack[local_idx])
+            gate, up = gu.chunk(2, dim=-1)
             hidden = self.act_fn(gate) * up
-            out = F.linear(hidden, self.down_proj[str(expert_id)])
-            weights = routing_weights[token_idx, topk_idx, None].to(out.dtype)
-            partial.index_add_(0, token_idx, out * weights)
-        return partial, active, assignments
+            out_seg = F.linear(hidden, self.down_stack[local_idx])
+            out.narrow(0, offset, cnt).copy_(out_seg)
+            offset += cnt
+
+        weighted = out * w_sorted.unsqueeze(-1).to(out.dtype)
+        partial.index_add_(0, tok_sorted, weighted)
+        return partial, len(uniq_list), int(active_pos.numel())
 
 
 def sync_if_needed(device: torch.device) -> None:
