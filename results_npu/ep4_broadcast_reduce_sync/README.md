@@ -88,6 +88,21 @@ smoke：
 - `fig_ep4_tpot_comparison.png`：Serial、旧 2-rank Decode DBO、EP4 sync 的 TPOT 对比。
 - `fig_ep4_ffn_breakdown.png`：EP4 sync FFN coordinator 的 dispatch/local experts/reduce 每层细分。
 - `fig_ep4_balance_wait.png`：Attention compute、FFN wall compute、Attention recv-wait 的平衡关系。
+- `pipeline_ep4_sync_b4_s128_t20.png`：b4/s128/t20 的 Attention/FFN coordinator pipeline 图。
+- `pipeline_ep4_sync_b8_s512_t20.png`：b8/s512/t20 的 Attention/FFN coordinator pipeline 图。
+- `pipeline_ep4_sync_ep_ranks_b4_s128_t20.png`：b4/s128/t20 的 FFN coordinator 与 expert ranks EP stage 对比图。
+- `pipeline_ep4_sync_ep_ranks_b8_s512_t20.png`：b8/s512/t20 的 FFN coordinator 与 expert ranks EP stage 对比图。
+
+新增 pipeline 图的检查结论：
+
+| 配置 | 检查范围 | MB0 reduce 与 MB1 local experts overlap |
+|---|---|---:|
+| b4/s128/t20 | L0-L2 | 0.000 ms |
+| b8/s512/t20 | L0-L2 | 0.000 ms |
+
+因此这些图能体现 EP4 sync 的核心问题：`dispatch -> local_experts -> reduce`
+在每个 micro-batch 内串行执行，上一 micro-batch 的 reduce 没有被下一 micro-batch
+的 local experts 计算覆盖；Attention 侧对应出现明显 F2A `recv_wait`。
 
 ## 7. 下一步建议
 
