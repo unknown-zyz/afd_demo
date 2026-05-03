@@ -146,11 +146,23 @@ EP4：
 EP7（8 卡：1 Attention + 7 FFN EP）：
 
 ```bash
-./scripts/run_npu.sh --preset npu-4card \
-  --attn-size 1 --ffn-size 7 --ffn-tp-size 1 --ffn-ep-size 7 \
+./scripts/run_npu.sh --preset npu-ep7 \
   --ffn-ep-backend broadcast_reduce_overlap \
   --batch 16 --seq 512 --tokens 20 \
   --model-name /models/Qwen3-30B-A3B
+```
+
+EP7 矩阵入口：
+
+```bash
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --output-root results_npu/ep7_matrix \
+  --modes decode-dbo \
+  --batches 8,16,32,64,128,256 \
+  --seqs 128,256,512,1024 \
+  --tokens 20
 ```
 
 ## 7. 下一步

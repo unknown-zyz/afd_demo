@@ -310,8 +310,7 @@ EP overlap 使用 `broadcast_reduce_overlap`。当前 8 卡环境中的代表性
 `1 Attention + 7 FFN EP ranks`：
 
 ```bash
-./scripts/run_npu.sh --preset npu-4card \
-  --attn-size 1 --ffn-size 7 --ffn-tp-size 1 --ffn-ep-size 7 \
+./scripts/run_npu.sh --preset npu-ep7 \
   --ffn-ep-backend broadcast_reduce_overlap \
   --batch 16 --seq 512 --tokens 20 \
   --model-name /models/Qwen3-30B-A3B
@@ -319,6 +318,22 @@ EP overlap 使用 `broadcast_reduce_overlap`。当前 8 卡环境中的代表性
 
 当前 `broadcast_reduce_overlap` 仍是 full hidden broadcast + dense reduce；它不是
 token-aware dispatch/combine。EP 架构细节见 [01-architecture.md](01-architecture.md)。
+
+EP7 矩阵示例：
+
+```bash
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --output-root results_npu/ep7_matrix \
+  --modes decode-dbo \
+  --batches 8,16,32,64,128,256 \
+  --seqs 128,256,512,1024 \
+  --tokens 20
+```
+
+该矩阵会在每个 seq 遇到 OOM 后停止更大 batch，并复用
+`results_npu/serial/cache/` 中的 serial baseline 计算 TPOT speedup。
 
 ## 8. 后处理
 

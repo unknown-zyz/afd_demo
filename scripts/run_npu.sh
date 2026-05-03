@@ -11,6 +11,7 @@
 #   npu-16card : 4 ATT (DP) + 12 FFN (TP=12)
 # EP presets:
 #   npu-ep4    : 1 ATT + 4 FFN EP ranks
+#   npu-ep7    : 1 ATT + 7 FFN EP ranks
 #   npu-ep8    : 1 ATT + 8 FFN EP ranks
 #   npu-ep15   : 1 ATT + 15 FFN EP ranks (all 16 cards)
 #
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
                 npu-4card)  ATTN_SIZE=2; FFN_SIZE=2;  FFN_TP_SIZE=2;  FFN_EP_SIZE=1 ;;
                 npu-16card) ATTN_SIZE=4; FFN_SIZE=12; FFN_TP_SIZE=12; FFN_EP_SIZE=1 ;;
                 npu-ep4)    ATTN_SIZE=1; FFN_SIZE=4;  FFN_TP_SIZE=1;  FFN_EP_SIZE=4 ;;
+                npu-ep7)    ATTN_SIZE=1; FFN_SIZE=7;  FFN_TP_SIZE=1;  FFN_EP_SIZE=7 ;;
                 npu-ep8)    ATTN_SIZE=1; FFN_SIZE=8;  FFN_TP_SIZE=1;  FFN_EP_SIZE=8 ;;
                 npu-ep15)   ATTN_SIZE=1; FFN_SIZE=15; FFN_TP_SIZE=1;  FFN_EP_SIZE=15 ;;
                 *) echo "Unknown preset: $PRESET" >&2; exit 1 ;;

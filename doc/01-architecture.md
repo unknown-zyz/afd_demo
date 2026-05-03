@@ -113,6 +113,7 @@ Qwen3-30B-A3B 有 128 个 routed experts：
 | EP7 | 1 Attention + 7 FFN EP ranks | 18 或 19 |
 
 EP7 当前是 8 张 910C NPU 环境下的主候选：1 张做 Attention，7 张做 FFN EP。
+脚本中对应 `--preset npu-ep7`。
 
 ## 5. 单层操作位置
 
