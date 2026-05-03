@@ -6,18 +6,20 @@ token-aware dispatch/combine。
 
 ## 1. 结论
 
-本轮修复后，已经找到一个 Decode DBO 正收益配置：
+本轮修复后，单点验证和后续矩阵复测都确认 EP7 在部分中等 batch/seq 下可以取得 Decode DBO 正收益，但收益区域较窄：
 
 ```text
 1 Attention rank + 7 FFN EP ranks
 batch=16, seq=512, tokens=20
 ```
 
-该配置在 8 张 910C NPU 上运行，结果：
+该配置在 8 张 910C NPU 上运行，矩阵复测结果：
 
 | 配置 | Serial TPOT | 旧 2-rank Decode DBO TPOT | 修复后 EP overlap TPOT | vs Serial | vs 旧 DBO |
 |---|---:|---:|---:|---:|---:|
-| EP7 b16/s512/t20 | 502.899 ms | 546.922 ms | 463.440 ms | 1.085x | 1.180x |
+| EP7 b16/s512/t20 | 502.899 ms | 546.922 ms | 476.404 ms | 1.056x | 1.148x |
+
+完整矩阵见 `results_npu/ep7_matrix/`：21 个成功配置中只有 3 个 TPOT speedup > 1.0，最佳为 `b16/s256/t20` 的 1.088x；`b256/s512/t20` 和 `b128/s1024/t20` 在 Attention rank 的 prefill `lm_head` 处 OOM。
 
 因此，DBO 负优化不是不可逆，核心修复点是：
 
@@ -117,13 +119,13 @@ AFD_EP_SYNC_TIMING=1
 | 4 | b4/s128/t20 | 252.722 | 273.469 | 753.925 | 0.335x | 0.363x | 5.10x |
 | 4 | b8/s512/t20 | 351.484 | 332.727 | 464.009 | 0.757x | 0.717x | 2.24x |
 | 7 | b8/s512/t20 | 351.484 | 332.727 | 380.658 | 0.923x | 0.874x | 1.39x |
-| 7 | b16/s512/t20 | 502.899 | 546.922 | 463.440 | 1.085x | 1.180x | 2.07x |
+| 7 | b16/s512/t20 | 502.899 | 546.922 | 476.404 | 1.056x | 1.148x | 1.88x |
 
 观察：
 
 - EP4 经过修复后仍不足以稳定正收益，但已从 931ms 降到 464ms。
 - EP7 在 b8/s512/t20 上接近 serial，但仍未超过。
-- EP7 在 b16/s512/t20 上超过 serial 和旧 DBO，说明更大 batch 能摊薄 EP fan-out，并让 FFN compute 更有效覆盖通信。
+- EP7 在 b16/s512/t20 上超过 serial 和旧 DBO，但矩阵复测显示该收益不稳定，只在少数中等配置上出现。
 - reduce wait 已经很低，b16/s512/t20 的 FFN coordinator reduce wait 约 `0.010 ms/layer/MB`，主要瓶颈转移到 local experts 与 Attention 等待。
 
 ## 5. 图表
@@ -167,12 +169,12 @@ EP7 矩阵入口：
 
 ## 7. 下一步
 
-当前已经证明 EP overlap 可以让 DBO 出现正收益，但收益只在较大 batch 上出现。下一步优先级：
+当前已经证明 EP overlap 可以让 DBO 出现正收益，但收益区域窄，且 `results_npu/ep7_matrix/` 的大 batch/长 seq 扫描显示 Attention 侧 prefill `lm_head` 会先触发 OOM。下一步优先级：
 
-1. 在 EP7 上扩展 batch/seq 扫描，找稳定正收益区域。
-2. 做 token-aware dispatch/combine，减少 broadcast full hidden 与 dense reduce 的浪费。
-3. 优化 local experts 的 Python loop，尝试按 active experts 聚合小 GEMM。
-4. 若容器能暴露 16 张 NPU，再测 EP15；否则当前 8 卡环境下 EP7 是主候选。
+1. 做 token-aware dispatch/combine，减少 broadcast full hidden 与 dense reduce 的浪费。
+2. 对 decode 路径避免 prefill 全 prompt position 的 `lm_head`，只保留最后 token logits，降低 OOM 风险。
+3. 用 `comm_timing_mode=completion` 对代表配置补跑通信完成跨度，区分 enqueue 开销与有效完成等待。
+4. 优化 local experts 的 Python loop，尝试按 active experts 聚合小 GEMM。
 
 注意：当前 `broadcast_reduce_overlap` 仍然是 full hidden broadcast + dense reduce，
 不是 token-aware 稀疏通信。token-aware dispatch/combine 是下一阶段计划。
