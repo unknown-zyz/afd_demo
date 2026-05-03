@@ -1,5 +1,9 @@
 # NPU EP overlap 修复实验报告
 
+本报告对应 `broadcast_reduce_overlap` 修复路径。同步版 EP4 负结果保留在
+`results_npu/ep4_broadcast_reduce_sync/`，用于解释为什么需要 overlap 和后续
+token-aware dispatch/combine。
+
 ## 1. 结论
 
 本轮修复后，已经找到一个 Decode DBO 正收益配置：
@@ -43,6 +47,8 @@ router -> broadcast -> local experts -> reduce -> F2A
 |---|---:|---:|---:|---:|
 | b4/s128/t20 | 252.722 ms | 273.469 ms | 783.681 ms | 0.322x |
 | b8/s512/t20 | 351.484 ms | 332.727 ms | 931.040 ms | 0.378x |
+
+原始 EP4 sync 详细数据见 `results_npu/ep4_broadcast_reduce_sync/`。
 
 ## 3. 本轮代码修复
 
@@ -155,3 +161,6 @@ EP7（8 卡：1 Attention + 7 FFN EP）：
 2. 做 token-aware dispatch/combine，减少 broadcast full hidden 与 dense reduce 的浪费。
 3. 优化 local experts 的 Python loop，尝试按 active experts 聚合小 GEMM。
 4. 若容器能暴露 16 张 NPU，再测 EP15；否则当前 8 卡环境下 EP7 是主候选。
+
+注意：当前 `broadcast_reduce_overlap` 仍然是 full hidden broadcast + dense reduce，
+不是 token-aware 稀疏通信。token-aware dispatch/combine 是下一阶段计划。

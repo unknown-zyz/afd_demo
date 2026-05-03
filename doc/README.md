@@ -7,7 +7,7 @@
 
 | 顺序 | 文档 | 内容 |
 |---:|---|---|
-| 1 | [01-architecture.md](01-architecture.md) | AFD/DBO 架构、scheduler、KV cache、CUDA/NPU backend。 |
+| 1 | [01-architecture.md](01-architecture.md) | AFD/DBO 架构、A/F/EP 拆分、NPU EP overlap、token-aware 设计、KV cache、CUDA/NPU backend。 |
 | 2 | [02-usage.md](02-usage.md) | Serial、prefill DBO、decode DBO、crosslayer 和矩阵实验命令。 |
 | 3 | [03-api-reference.md](03-api-reference.md) | 当前公开代码接口和脚本接口。 |
 | 4 | [04-deployment.md](04-deployment.md) | GPU local、GPU multinode、Ascend 910C 容器部署。 |
@@ -33,6 +33,7 @@
 | 使用 910C 容器 | [04-deployment.md](04-deployment.md) |
 | 判断 speedup 是否可信 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) |
 | 查看最新实验结论 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) |
+| 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |
 
 ## 当前实验结论摘要
 
@@ -42,6 +43,7 @@
 - Decode DBO 的 pipeline 明细来自 0-based decode step 1，只用于观察 overlap，不用于最终加速比。
 - 旧的 “NPU decode DBO 约 5x 加速” 是口径误用导致的历史结论，不能继续引用。
 - 当前 fresh rerun 中，最稳定的正收益来自 NPU prefill DBO；GPU DBO 和 NPU decode DBO 的中位数都低于 `1.0x`。
+- NPU EP overlap 已找到一个 decode 正收益点：EP7 b16/s512/t20，详见 `results_npu/ep_overlap/README.md`；EP4 sync 负结果保留在 `results_npu/ep4_broadcast_reduce_sync/`。
 
 ## 维护原则
 

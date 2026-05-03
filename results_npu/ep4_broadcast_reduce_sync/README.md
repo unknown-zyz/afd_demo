@@ -1,9 +1,13 @@
-# NPU EP 原型实验结果
+# NPU EP4 broadcast_reduce_sync 同步版实验结果
+
+本目录是 `1 Attention + 4 FFN EP ranks`、`broadcast_reduce_sync` 后端的同步版
+EP4 负结果记录。它不是待删除临时目录，而是后续 `broadcast_reduce_overlap` 和
+EP7 正收益探索的对照基线。
 
 ## 1. 分支与实现状态
 
 - 分支：`exp/npu-ep-prototype`
-- 当前原型：`1 Attention rank + 4 FFN EP ranks`
+- 当前拓扑：`1 Attention rank + 4 FFN EP ranks`
 - EP 后端：`broadcast_reduce_sync`
 - 专家分配：`round_robin`，Qwen3-30B-A3B 的 128 个 routed experts 按 `expert_id % ep_size` 分到 4 个 FFN rank，每个 rank 32 个 experts。
 
@@ -60,7 +64,8 @@ smoke：
 | b4/s128/t20 | 252.722 | 273.469 | 783.681 | 0.322x | 0.349x |
 | b8/s512/t20 | 351.484 | 332.727 | 931.040 | 0.378x | 0.357x |
 
-结论：同步 broadcast/reduce EP4 原型已跑通，但性能明显负优化，不能作为最终方案。
+结论：同步 broadcast/reduce EP4 已跑通，但性能明显负优化，不能作为最终方案。
+该负结果保留用于说明为什么后续进入 EP overlap 与 token-aware dispatch/combine。
 
 ## 5. 每层平均细分
 
