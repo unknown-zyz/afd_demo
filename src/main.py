@@ -140,6 +140,11 @@ def parse_args():
                         help="Top-p (nucleus) sampling")
     parser.add_argument("--greedy", action="store_true",
                         help="Use greedy decoding instead of sampling")
+    parser.add_argument("--correctness-check", type=int, default=0,
+                        metavar="N",
+                        help="Record the first N generated token IDs (row 0) into the "
+                             "timing JSON under 'correctness_tokens' for serial-vs-DBO "
+                             "comparison. Forces --greedy when N>0. N=0 disables.")
 
     # P2P warmup options
     parser.add_argument('--warmup-p2p', action='store_true',
@@ -192,6 +197,23 @@ def timing_role_name(ctx) -> str:
     if getattr(ctx, "is_ffn_expert_only", False):
         return f"{ctx.role}_r{ctx.rank}"
     return ctx.role
+
+
+def inject_correctness_tokens(timing_path: str, tokens: list, mode: str) -> None:
+    """Append correctness_tokens (first N row-0 generated token IDs) to a saved
+    timing JSON. Used by --correctness-check for serial-vs-DBO output equality.
+    """
+    if not tokens:
+        return
+    try:
+        with open(timing_path, 'r') as f:
+            data = json.load(f)
+    except Exception:
+        return
+    data["correctness_tokens"] = list(tokens)
+    data["correctness_mode"] = mode
+    with open(timing_path, 'w') as f:
+        json.dump(data, f, indent=2)
 
 
 def tokenize_batch_prompts(tokenizer, prompts, prefill_seq_len: int | None, max_seq_len: int):
@@ -422,7 +444,19 @@ def run_inference_demo(args):
         for i in range(min(args.batch_size, 2)):
             next_token = tokenizer.decode(predicted_ids[i, -1])
             logger.info(f"Output[{i}]: '{args.prompt}' → '{next_token}'")
-    
+
+        # --- correctness-check (prefill mode): record first N predicted next tokens ---
+        if args.correctness_check and args.timing:
+            n = min(args.correctness_check, predicted_ids.shape[0])
+            # For prefill we only have one next token per sequence; record up to N
+            # rows of the *last-position* prediction (acts as a tiny consistency hash).
+            corr_tokens = predicted_ids[:n, -1].detach().cpu().tolist()
+            try:
+                inject_correctness_tokens(timing_file, corr_tokens, mode="prefill")
+                logger.info(f"correctness_tokens (prefill) written: {corr_tokens}")
+            except NameError:
+                pass
+
     ctx.barrier()
     ctx.cleanup()
 
@@ -596,13 +630,30 @@ def run_generation_demo(args):
         with open(timing_file, 'w') as f:
             json_mod.dump(serial_data, f, indent=2)
         logger.info(f"Decode timing saved (serial): {timing_file}")
-    
+
+    # --- correctness-check (decode mode): record first N generated token IDs ---
+    if (args.correctness_check and args.timing
+            and ctx.is_attention_node and 'output_ids' in dir()):
+        n = min(args.correctness_check, output_ids.shape[1] - input_ids.shape[1])
+        if n > 0:
+            generated_only = output_ids[0, input_ids.shape[1]: input_ids.shape[1] + n]
+            corr_tokens = generated_only.detach().cpu().tolist()
+            try:
+                inject_correctness_tokens(timing_file, corr_tokens, mode="decode")
+                logger.info(f"correctness_tokens (decode) written: {corr_tokens}")
+            except NameError:
+                pass
+
     ctx.barrier()
     ctx.cleanup()
 
 
 def main():
     args = parse_args()
+    # Force greedy decoding when correctness check is requested for deterministic
+    # serial-vs-DBO token comparison.
+    if args.correctness_check and not args.greedy:
+        args.greedy = True
     # Select device backend FIRST — this patches torch.cuda to torch.npu
     # (via torch_npu.contrib.transfer_to_npu) when --backend=npu, so any
     # subsequent torch.cuda.* call inside the codebase transparently runs

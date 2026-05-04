@@ -161,21 +161,73 @@ def load_timing_data(attn_path: str, ffn_path: str, start_layer: int = 1, num_la
             lanes_data['A2F'].append((start_ms, duration_ms, display_layer, mb))
     
     # 提取 FFN 节点事件 (应用时钟偏移对齐到 ATT 时间线)
+    # New: F lane shows the *full FFN work* per (layer, mb) by collecting:
+    #   - ffn_compute (router + dispatch enqueue)
+    #   - ep_local_experts (the GEMM body — usually serialized between MBs)
+    #   - ep_reduce (combine all-to-all)
+    # We then draw an outer bar from ffn_compute.start to send_transfer.start
+    # with internal segments for each phase. This eliminates the visual
+    # "F (FFN) bar ends at 2.8ms but F2A starts at 5.7ms" artifact.
+    ffn_phase_keys = {
+        'ffn_compute',          # router + dispatch enqueue (host)
+        'ep_local_experts',     # body GEMM
+        'ep_reduce',            # combine
+        'ep_overlap_hidden',    # overlapped hidden compute (if any)
+        'ep_dispatch_wait',     # NCCL/HCCL dispatch wait
+        'ep_reduce_wait',       # NCCL/HCCL reduce wait
+        'moe_router',           # router subset of ffn_compute
+        'ep_dispatch',          # dispatch enqueue subset
+    }
+    # phase_events[(layer, mb)][phase] = (start_ms_aligned, duration_ms)
+    phase_events: dict = {}
     for event in ffn_data['events']:
         layer = event['layer']
         if layer < start_layer or layer >= end_layer:
             continue
-        
-        start_ms = event['start'] * 1000 - clock_offset - min_start  # Align to ATT clock
+
+        start_ms = event['start'] * 1000 - clock_offset - min_start
         duration_ms = event['duration_ms']
         mb = event['mb']
         display_layer = layer - start_layer
-        
-        if event['type'] == 'ffn_compute':
-            lanes_data['F'].append((start_ms, duration_ms, display_layer, mb))
-        elif event['type'] == 'send_transfer':
+        etype = event['type']
+
+        if etype == 'send_transfer':
             lanes_data['F2A'].append((start_ms, duration_ms, display_layer, mb))
-    
+        if etype in ffn_phase_keys:
+            phase_events.setdefault((display_layer, mb), {})[etype] = (start_ms, duration_ms)
+
+    # Build composite F lane records keyed by (display_layer, mb)
+    # Each record: (start_ms, duration_ms, display_layer, mb, segments)
+    # where segments = [(seg_start, seg_dur, label)] in chronological order.
+    f_send_starts = {(dl, mb): s for s, _, dl, mb in lanes_data['F2A']}
+    for (dl, mb), phases in phase_events.items():
+        ffn_c = phases.get('ffn_compute')
+        if not ffn_c:
+            continue
+        ffn_start = ffn_c[0]
+        # End of FFN work = start of F2A send (per-MB early send is enqueued
+        # immediately when this MB's reduce completes). Fallback to max of
+        # known phase ends if send not recorded.
+        send_start = f_send_starts.get((dl, mb))
+        candidate_ends = [s + d for s, d in phases.values()]
+        if send_start is not None:
+            f_end = send_start
+        else:
+            f_end = max(candidate_ends) if candidate_ends else ffn_start + ffn_c[1]
+        f_dur = max(0.0, f_end - ffn_start)
+
+        # Build internal segments for the composite bar.
+        # We pick: router/dispatch (= ffn_compute span), local_experts, reduce.
+        segs = []
+        segs.append((ffn_c[0], ffn_c[1], 'router/dispatch'))
+        if 'ep_local_experts' in phases:
+            ls, ld = phases['ep_local_experts']
+            segs.append((ls, ld, 'local_experts'))
+        if 'ep_reduce' in phases:
+            rs, rd = phases['ep_reduce']
+            segs.append((rs, rd, 'reduce'))
+        lanes_data['F'].append((ffn_start, f_dur, dl, mb, segs))
+
     return lanes_data, attn_data, ffn_data, start_layer
 
 
@@ -209,47 +261,105 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     ax.set_ylim(-0.5, 4)
     
     # 绘制每个泳道的事件
+    # Sub-segment styles for F lane composite bar
+    F_SEG_STYLES = {
+        'router/dispatch': {'alpha': 0.40, 'hatch': '//'},
+        'local_experts':   {'alpha': 0.95, 'hatch': None},
+        'reduce':          {'alpha': 0.65, 'hatch': '\\\\'},
+    }
     for lane_name, events in lanes_data.items():
         lane_info = LANES[lane_name]
         y_pos = lane_info['index']
         height = lane_info['height']
-        
-        for start_ms, duration_ms, layer, mb in events:
-            # 选择颜色
+
+        for event_tuple in events:
+            # F lane has composite tuple (start, dur, layer, mb, segments)
+            if lane_name == 'F' and len(event_tuple) == 5:
+                start_ms, duration_ms, layer, mb, segs = event_tuple
+            else:
+                start_ms, duration_ms, layer, mb = event_tuple[:4]
+                segs = None
+
             color = MB_COLORS.get(mb, '#999999')
-            
-            # 绘制矩形
-            rect = Rectangle(
-                (start_ms, y_pos - height/2),
-                duration_ms,
-                height,
-                facecolor=color,
-                edgecolor='black',
-                linewidth=0.5,
-                alpha=0.8
-            )
-            ax.add_patch(rect)
-            
+
+            if segs is not None:
+                # Draw composite outer frame (transparent fill, just outline)
+                outer = Rectangle(
+                    (start_ms, y_pos - height/2),
+                    duration_ms,
+                    height,
+                    facecolor='none',
+                    edgecolor=color,
+                    linewidth=1.4,
+                )
+                ax.add_patch(outer)
+                # Draw each phase segment with distinct alpha/hatch
+                for seg_start, seg_dur, seg_label in segs:
+                    style = F_SEG_STYLES.get(seg_label, {'alpha': 0.6, 'hatch': None})
+                    seg_rect = Rectangle(
+                        (seg_start, y_pos - height/2),
+                        seg_dur,
+                        height,
+                        facecolor=color,
+                        edgecolor=color,
+                        linewidth=0.3,
+                        alpha=style['alpha'],
+                        hatch=style['hatch'],
+                    )
+                    ax.add_patch(seg_rect)
+            else:
+                rect = Rectangle(
+                    (start_ms, y_pos - height/2),
+                    duration_ms,
+                    height,
+                    facecolor=color,
+                    edgecolor='black',
+                    linewidth=0.5,
+                    alpha=0.8
+                )
+                ax.add_patch(rect)
+
             # 添加文本标注 - 显示实际层号
             actual_layer = layer + start_layer
             label = f'L{actual_layer}'
             duration_label = f'{duration_ms:.1f}ms'
-            
-            # 标注位置
             text_x = start_ms + duration_ms / 2
             text_y = y_pos
-            
+
             # Layer 标签
             ax.text(text_x, text_y + 0.15, label,
                    ha='center', va='center',
                    fontsize=8, fontweight='bold',
                    color='white' if mb == 1 else 'black')
-            
+
             # Duration 标签
             ax.text(text_x, text_y - 0.15, duration_label,
                    ha='center', va='center',
                    fontsize=7,
                    color='white' if mb == 1 else 'black')
+
+            # On send lanes (A2F/F2A), add an enqueue marker (triangle) and mb tag
+            if lane_name in ('A2F', 'F2A'):
+                ax.plot([start_ms], [y_pos + height/2 + 0.05], marker='v',
+                        markersize=5, color=color, zorder=5)
+                ax.text(start_ms, y_pos - height/2 - 0.05, f'mb{mb}',
+                        ha='left', va='top', fontsize=6, color=color)
+
+    # Layer boundary vertical lines: between display_layers (use min ffn_compute
+    # start of each layer in F lane composite).
+    layer_boundary_xs = []
+    layer_min_starts = {}  # display_layer -> earliest start across F lane
+    for ev in lanes_data['F']:
+        s = ev[0]
+        dl = ev[2]
+        layer_min_starts[dl] = min(s, layer_min_starts.get(dl, float('inf')))
+    for dl in sorted(layer_min_starts):
+        if dl > 0:
+            ax.axvline(x=layer_min_starts[dl], color='gray',
+                       linestyle=':', alpha=0.5, linewidth=0.8, zorder=1)
+            ax.text(layer_min_starts[dl], 4.0 - 0.05,
+                    f'L{dl + start_layer}', ha='left', va='top',
+                    fontsize=7, color='gray')
     
     # 设置 x 轴
     ax.set_xlabel('Time (ms)', fontsize=11)
@@ -347,12 +457,18 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
     
     # 图例
     legend_elements = [
-        mpatches.Patch(facecolor=MB_COLORS[0], edgecolor='black', 
-                      label=f'Micro-batch 0', alpha=0.8),
-        mpatches.Patch(facecolor=MB_COLORS[1], edgecolor='black', 
-                      label=f'Micro-batch 1', alpha=0.8),
+        mpatches.Patch(facecolor=MB_COLORS[0], edgecolor='black',
+                      label='Micro-batch 0', alpha=0.8),
+        mpatches.Patch(facecolor=MB_COLORS[1], edgecolor='black',
+                      label='Micro-batch 1', alpha=0.8),
+        mpatches.Patch(facecolor='gray', edgecolor='gray', alpha=0.40, hatch='//',
+                      label='F seg: router/dispatch'),
+        mpatches.Patch(facecolor='gray', edgecolor='gray', alpha=0.95,
+                      label='F seg: local_experts (GEMM)'),
+        mpatches.Patch(facecolor='gray', edgecolor='gray', alpha=0.65, hatch='\\\\',
+                      label='F seg: reduce (combine)'),
     ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=10)
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=9, ncol=2)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
