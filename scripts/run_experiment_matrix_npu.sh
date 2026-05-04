@@ -51,6 +51,7 @@ TIMING_ENABLED=true
 NO_CACHE=false
 APPEND=false
 DRY_RUN=false
+CORRECTNESS_TOKENS=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -67,6 +68,7 @@ while [ $# -gt 0 ]; do
         --output-root) ROOT_OUT="$2"; shift 2;;
         --serial-cache-root) SERIAL_CACHE_ROOT="$2"; shift 2;;
         --comm-timing-mode) COMM_TIMING_MODE="$2"; shift 2;;
+        --correctness-tokens) CORRECTNESS_TOKENS="$2"; shift 2;;
         --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
         --append) APPEND=true; shift;;
@@ -131,6 +133,9 @@ run_one() {
         decode-dbo)            extra="";;
         decode-dbo-crosslayer) extra="--crosslayer";;
     esac
+    if [ "$CORRECTNESS_TOKENS" -gt 0 ]; then
+        extra="$extra --correctness-check $CORRECTNESS_TOKENS"
+    fi
 
     echo ""
     echo "════════════════════════════════════════════════════════════"
