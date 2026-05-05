@@ -334,6 +334,9 @@ class EPFFNLayer(nn.Module):
         """
         local_start = time.perf_counter()
         if stream is not None and self.layer_device.type == "npu" and hasattr(torch, "npu"):
+            default_stream = torch.npu.current_stream()
+            # Side stream must wait for producer ops (dispatch / router) on default stream.
+            stream.wait_stream(default_stream)
             # Tag input tensors so caching allocator doesn't recycle them
             # while they're still being read on the side stream.
             for t in (item.hidden_2d, item.selected_experts, item.routing_weights):
@@ -346,6 +349,8 @@ class EPFFNLayer(nn.Module):
                     item.routing_weights,
                 )
             partial.record_stream(stream)
+            # Default stream must wait for compute on side stream before later consumers run.
+            default_stream.wait_stream(stream)
             item._compute_stream = stream
         else:
             partial, active, assignments = self.sharded_experts.forward_local(
