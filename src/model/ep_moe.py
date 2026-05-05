@@ -325,14 +325,35 @@ class EPFFNLayer(nn.Module):
         item.timing.ep_dispatch_wait_s = wait_end - wait_start
         item.timing.ep_dispatch_s = wait_end - item.dispatch_start_s
 
-    def compute_local(self, item: EPWorkItem) -> None:
-        """Run this rank's local expert shard for a dispatched micro-batch."""
+    def compute_local(self, item: EPWorkItem, stream=None) -> None:
+        """Run this rank's local expert shard for a dispatched micro-batch.
+
+        If `stream` is provided (and the layer device is NPU), the GEMM work
+        is enqueued on that stream so mb0/mb1 can run on different compute
+        streams in parallel ("plan 3" dual-stream FFN).
+        """
         local_start = time.perf_counter()
-        partial, active, assignments = self.sharded_experts.forward_local(
-            item.hidden_2d,
-            item.selected_experts,
-            item.routing_weights,
-        )
+        if stream is not None and self.layer_device.type == "npu" and hasattr(torch, "npu"):
+            # Tag input tensors so caching allocator doesn't recycle them
+            # while they're still being read on the side stream.
+            for t in (item.hidden_2d, item.selected_experts, item.routing_weights):
+                if isinstance(t, torch.Tensor):
+                    t.record_stream(stream)
+            with torch.npu.stream(stream):
+                partial, active, assignments = self.sharded_experts.forward_local(
+                    item.hidden_2d,
+                    item.selected_experts,
+                    item.routing_weights,
+                )
+            partial.record_stream(stream)
+            item._compute_stream = stream
+        else:
+            partial, active, assignments = self.sharded_experts.forward_local(
+                item.hidden_2d,
+                item.selected_experts,
+                item.routing_weights,
+            )
+            item._compute_stream = None
         sync_if_needed(self.layer_device)
         item.timing.ep_local_experts_s = time.perf_counter() - local_start
         item.timing.experts_s = item.timing.ep_local_experts_s
@@ -341,17 +362,32 @@ class EPFFNLayer(nn.Module):
         item.partial = partial
 
     def reduce_async(self, item: EPWorkItem) -> None:
-        """Enqueue partial-output reduce for one micro-batch."""
+        """Enqueue partial-output reduce for one micro-batch.
+
+        When `compute_local` ran on a side stream we issue the HCCL reduce
+        from that same stream so the collective ordering is preserved.
+        """
         if item.partial is None:
             raise RuntimeError("EP reduce_async called before compute_local")
         item.reduce_start_s = time.perf_counter()
-        item.reduce_handle = dist.reduce(
-            item.partial,
-            dst=self.ctx.ffn_coordinator_rank,
-            op=dist.ReduceOp.SUM,
-            group=self.ctx.ffn_ep_reduce_group,
-            async_op=True,
-        )
+        compute_stream = getattr(item, "_compute_stream", None)
+        if compute_stream is not None and hasattr(torch, "npu"):
+            with torch.npu.stream(compute_stream):
+                item.reduce_handle = dist.reduce(
+                    item.partial,
+                    dst=self.ctx.ffn_coordinator_rank,
+                    op=dist.ReduceOp.SUM,
+                    group=self.ctx.ffn_ep_reduce_group,
+                    async_op=True,
+                )
+        else:
+            item.reduce_handle = dist.reduce(
+                item.partial,
+                dst=self.ctx.ffn_coordinator_rank,
+                op=dist.ReduceOp.SUM,
+                group=self.ctx.ffn_ep_reduce_group,
+                async_op=True,
+            )
         item.reduce_enqueue_done_s = time.perf_counter()
         item.timing.ep_reduce_enqueue_s = item.reduce_enqueue_done_s - item.reduce_start_s
 

@@ -11,6 +11,7 @@ batch slice of the KV cache, then the updated slices are merged back.
 """
 
 import logging
+import os
 import time
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass
@@ -112,6 +113,25 @@ class DecodeDBOScheduler:
         #   - True: post next-layer irecvs before draining current-layer sends,
         #     enabling cross-layer micro-batch pipeline.
         self.use_crosslayer = use_crosslayer
+        # Plan 3 — dual NPU compute streams for ep_local_experts so mb0/mb1
+        # GEMMs can run on different streams in parallel. Disabled with
+        # AFD_FFN_DUAL_STREAM=0; auto-on for NPU otherwise.
+        self._ffn_dual_stream_enabled = (
+            os.environ.get("AFD_FFN_DUAL_STREAM", "1") == "1"
+            and getattr(self.model, "device", torch.device("cpu")).type == "npu"
+            and hasattr(torch, "npu")
+        )
+        self._ffn_compute_streams: List[Any] = []
+        if self._ffn_dual_stream_enabled:
+            try:
+                self._ffn_compute_streams = [
+                    torch.npu.Stream() for _ in range(2)
+                ]
+                logger.info("DecodeDBOScheduler: ffn dual-stream enabled")
+            except Exception as exc:  # pragma: no cover
+                logger.warning(f"ffn dual-stream init failed: {exc}; falling back")
+                self._ffn_dual_stream_enabled = False
+                self._ffn_compute_streams = []
         # Eagerly init directional groups (collective: both nodes must reach here)
         _ = self.ctx.a2f_group
         logger.debug(
@@ -821,7 +841,12 @@ class DecodeDBOScheduler:
 
             for mb_idx, item in enumerate(items):
                 layer.finish_dispatch(item)
-                layer.compute_local(item)
+                _stream = (
+                    self._ffn_compute_streams[mb_idx % 2]
+                    if self._ffn_dual_stream_enabled and self._ffn_compute_streams
+                    else None
+                )
+                layer.compute_local(item, stream=_stream)
                 layer.reduce_async(item)
                 if previous is not None:
                     prev_mb_idx, prev_item = previous
