@@ -126,6 +126,14 @@ def parse_args():
                         default="enqueue",
                         help="Communication timing for send events: enqueue records isend return "
                              "overhead; completion records effective Work completion latency.")
+    parser.add_argument("--af-comm-mode", type=str, choices=["direct-hccl", "controller-cpu"],
+                        default="direct-hccl",
+                        help="A/F data transport: direct-hccl uses device tensor isend/irecv; "
+                             "controller-cpu routes A/F payload through a blocking CPU controller.")
+    parser.add_argument("--controller-host", type=str, default="127.0.0.1",
+                        help="Host for --af-comm-mode controller-cpu.")
+    parser.add_argument("--controller-port", type=int, default=40100,
+                        help="TCP port for --af-comm-mode controller-cpu.")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -558,6 +566,9 @@ def run_generation_demo(args):
         timing_mode=args.timing_mode,
         comm_timing_mode=args.comm_timing_mode,
         decode_use_crosslayer=args.crosslayer,
+        af_comm_mode=args.af_comm_mode,
+        controller_host=args.controller_host,
+        controller_port=args.controller_port,
     )
     
     devmod.synchronize()

@@ -26,6 +26,9 @@
 #   --output-root path   Output root (default: results_npu)
 #   --serial-cache-root path  Serial cache root (default: results_npu/serial/cache)
 #   --comm-timing-mode enqueue | completion    (default: enqueue)
+#   --af-comm-mode direct-hccl | controller-cpu (default: direct-hccl)
+#   --controller-host host  CPU relay controller host (controller-cpu only)
+#   --controller-port port  CPU relay controller port (controller-cpu only)
 #   --no-timing     Disable detailed timing/report output for overhead checks
 #   --no-cache      Force rerun of serial even if cached
 #   --append        Append to existing summary instead of replacing it
@@ -47,6 +50,9 @@ EP_EXPERT_POLICY="round_robin"
 ROOT_OUT="results_npu"
 SERIAL_CACHE_ROOT="${SERIAL_CACHE_ROOT:-results_npu/serial/cache}"
 COMM_TIMING_MODE="enqueue"
+AF_COMM_MODE="direct-hccl"
+CONTROLLER_HOST="127.0.0.1"
+CONTROLLER_PORT=""
 TIMING_ENABLED=true
 NO_CACHE=false
 APPEND=false
@@ -68,6 +74,9 @@ while [ $# -gt 0 ]; do
         --output-root) ROOT_OUT="$2"; shift 2;;
         --serial-cache-root) SERIAL_CACHE_ROOT="$2"; shift 2;;
         --comm-timing-mode) COMM_TIMING_MODE="$2"; shift 2;;
+        --af-comm-mode) AF_COMM_MODE="$2"; shift 2;;
+        --controller-host) CONTROLLER_HOST="$2"; shift 2;;
+        --controller-port) CONTROLLER_PORT="$2"; shift 2;;
         --correctness-tokens) CORRECTNESS_TOKENS="$2"; shift 2;;
         --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
@@ -143,9 +152,9 @@ run_one() {
     echo "════════════════════════════════════════════════════════════"
     if [ "$DRY_RUN" = true ]; then
         if [ -n "$RUN_PRESET" ]; then
-            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --preset $RUN_PRESET --ffn-ep-backend $FFN_EP_BACKEND --ep-expert-policy $EP_EXPERT_POLICY --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
+            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --preset $RUN_PRESET --ffn-ep-backend $FFN_EP_BACKEND --ep-expert-policy $EP_EXPERT_POLICY --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE --af-comm-mode $AF_COMM_MODE --controller-host $CONTROLLER_HOST ${CONTROLLER_PORT:+--controller-port $CONTROLLER_PORT} $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         else
-            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
+            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE --af-comm-mode $AF_COMM_MODE --controller-host $CONTROLLER_HOST ${CONTROLLER_PORT:+--controller-port $CONTROLLER_PORT} $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         fi
         return 0
     fi
@@ -156,6 +165,10 @@ run_one() {
           "results/prefill_dbo/timing_ffn_coordinator_${raw_suffix}.json" \
           "results/prefill_dbo/timing_ffn_expert_"*"${raw_suffix}.json"
     local timing_flags=(--comm-timing-mode "$COMM_TIMING_MODE")
+    local transport_flags=(--af-comm-mode "$AF_COMM_MODE" --controller-host "$CONTROLLER_HOST")
+    if [ -n "$CONTROLLER_PORT" ]; then
+        transport_flags+=(--controller-port "$CONTROLLER_PORT")
+    fi
     if [ "$TIMING_ENABLED" = false ]; then
         timing_flags+=(--no-timing)
     fi
@@ -170,6 +183,7 @@ run_one() {
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
         --model-name "$MODEL_NAME" \
         "${timing_flags[@]}" \
+        "${transport_flags[@]}" \
         $extra
     local rc=$?
 

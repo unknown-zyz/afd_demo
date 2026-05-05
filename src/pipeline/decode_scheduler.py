@@ -19,6 +19,7 @@ import torch
 import torch.distributed as dist
 
 from ..distributed import get_distributed_context
+from ..distributed.controller_relay import ControllerRelayClient
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,9 @@ class DecodeDBOScheduler:
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         use_crosslayer: bool = False,
+        af_comm_mode: str = "direct-hccl",
+        controller_host: str = "127.0.0.1",
+        controller_port: int = 40100,
     ):
         self.model = model
         self.ctx = get_distributed_context()
@@ -111,13 +115,86 @@ class DecodeDBOScheduler:
         #     before posting next-layer irecvs. Cleaner baseline.
         #   - True: post next-layer irecvs before draining current-layer sends,
         #     enabling cross-layer micro-batch pipeline.
-        self.use_crosslayer = use_crosslayer
-        # Eagerly init directional groups (collective: both nodes must reach here)
-        _ = self.ctx.a2f_group
+        if af_comm_mode not in {"direct-hccl", "controller-cpu"}:
+            raise ValueError(f"Unsupported af_comm_mode: {af_comm_mode}")
+        self.af_comm_mode = af_comm_mode
+        self.use_controller = af_comm_mode == "controller-cpu"
+        self.use_crosslayer = use_crosslayer and not self.use_controller
+        self._controller = None
+        if self.use_controller:
+            if use_crosslayer:
+                logger.warning("controller-cpu transport disables crosslayer pipeline")
+            role = None
+            if self.ctx.is_attention_node:
+                role = "attention"
+            elif self.ctx.is_ffn_coordinator:
+                role = "ffn"
+            if role is not None:
+                self._controller = ControllerRelayClient(role, controller_host, controller_port)
+                logger.info(
+                    "DecodeDBOScheduler using controller-cpu A/F transport: role=%s %s:%s",
+                    role,
+                    controller_host,
+                    controller_port,
+                )
+        else:
+            # Eagerly init directional groups (collective: both nodes must reach here)
+            _ = self.ctx.a2f_group
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}, "
             f"use_crosslayer={use_crosslayer}, comm_timing={comm_timing_mode}"
         )
+
+    def _record_blocking_send(
+        self,
+        tracker: Optional[TimingTracker],
+        direction: str,
+        layer_idx: int,
+        mb_idx: int,
+        tensor: torch.Tensor,
+    ) -> None:
+        if self._controller is None:
+            raise RuntimeError("controller transport not initialized on this rank")
+        send_start = time.perf_counter()
+        self._controller.send_tensor(direction, layer_idx, mb_idx, tensor)
+        send_end = time.perf_counter()
+        if direction == "a2f":
+            self.stats.a2f_comm_time += send_end - send_start
+        else:
+            self.stats.f2a_comm_time += send_end - send_start
+        if tracker:
+            tracker.record_event(
+                EventType.SEND_TRANSFER,
+                layer_idx,
+                mb_idx,
+                send_start,
+                send_end,
+                tensor_bytes=TimingTracker.tensor_nbytes(tensor),
+                completion_source="controller_cpu",
+            )
+
+    def _blocking_recv(
+        self,
+        tracker: Optional[TimingTracker],
+        direction: str,
+        layer_idx: int,
+        mb_idx: int,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if self._controller is None:
+            raise RuntimeError("controller transport not initialized on this rank")
+        recv_start = time.perf_counter()
+        tensor = self._controller.recv_tensor(direction, layer_idx, mb_idx, device=device, dtype=dtype)
+        recv_end = time.perf_counter()
+        if direction == "a2f":
+            self.stats.a2f_comm_time += recv_end - recv_start
+        else:
+            self.stats.f2a_comm_time += recv_end - recv_start
+        if tracker:
+            tracker.record_event(EventType.RECV_WAIT, layer_idx, mb_idx, recv_start, recv_end)
+        return tensor
 
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
         """Unique tag per (layer, micro-batch, direction)."""
@@ -328,6 +405,9 @@ class DecodeDBOScheduler:
                   irecv(F2A[L, mb]). F2A irecv is posted ~(num_mb-1)*mb_time
                   earlier than the old "post all after layer" approach.
         """
+        if self.use_controller:
+            return self._run_attention_decode_controller(input_ids, position_ids, kv_cache, tracker)
+
         assert self.model.attention_worker is not None
 
         batch_size = input_ids.shape[0]
@@ -580,6 +660,105 @@ class DecodeDBOScheduler:
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
         return self.model.attention_worker.forward_lm_head(hidden_states)
 
+    def _run_attention_decode_controller(
+        self,
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+        kv_cache,
+        tracker: Optional[TimingTracker] = None,
+    ) -> torch.Tensor:
+        """Attention decode path using blocking CPU controller relay.
+
+        This intentionally removes direct device-to-device A/F transfer and
+        layer/MB communication overlap. It is a pessimistic centralized
+        baseline, not an optimized transport.
+        """
+        assert self.model.attention_worker is not None
+
+        batch_size = input_ids.shape[0]
+        num_layers = self.model.num_layers
+        mb_sizes = self._compute_mb_sizes(batch_size)
+        mb_offsets = []
+        offset = 0
+        for s in mb_sizes:
+            mb_offsets.append(offset)
+            offset += s
+
+        hidden_states = self.model.attention_worker.embed(input_ids)
+        position_embeddings = self.model.attention_worker.get_position_embeddings(
+            hidden_states, position_ids
+        )
+        cur_pos = kv_cache.get_seq_length()
+        total_len = cur_pos + 1
+        attention_mask = self.model._make_causal_mask(batch_size, 1, total_len)
+
+        for layer_idx in range(num_layers):
+            cache_layer = kv_cache.layers[layer_idx]
+            orig_keys = cache_layer.keys
+            orig_values = cache_layer.values
+            mb_updated_keys = []
+            mb_updated_values = []
+
+            for mb_idx, mb_size in enumerate(mb_sizes):
+                start = mb_offsets[mb_idx]
+                end = start + mb_size
+                if tracker:
+                    tracker.mark_start(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
+                compute_start = time.perf_counter()
+
+                cache_layer.keys = orig_keys[start:end]
+                cache_layer.values = orig_values[start:end]
+
+                mb_hidden = hidden_states[start:end]
+                mb_mask = attention_mask[start:end]
+                mb_pos_ids = position_ids[start:end]
+                mb_pos_emb = None
+                if position_embeddings is not None:
+                    cos, sin = position_embeddings
+                    mb_pos_emb = (cos[start:end], sin[start:end])
+
+                attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=mb_hidden,
+                    attention_mask=mb_mask,
+                    position_ids=mb_pos_ids,
+                    position_embeddings=mb_pos_emb,
+                    use_cache=True,
+                    past_key_value=kv_cache,
+                )
+
+                mb_updated_keys.append(cache_layer.keys)
+                mb_updated_values.append(cache_layer.values)
+                packed = (attn_output + residual).contiguous()
+
+                if tracker:
+                    tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
+                compute_end = time.perf_counter()
+                self.stats.compute_time += compute_end - compute_start
+                self.stats.attn_compute_time += compute_end - compute_start
+
+                self._record_blocking_send(tracker, "a2f", layer_idx, mb_idx, packed)
+
+            next_hidden = []
+            for mb_idx, _mb_size in enumerate(mb_sizes):
+                next_hidden.append(
+                    self._blocking_recv(
+                        tracker,
+                        "f2a",
+                        layer_idx,
+                        mb_idx,
+                        device=self.model.device,
+                        dtype=self.model.dtype,
+                    )
+                )
+
+            cache_layer.keys = torch.cat(mb_updated_keys, dim=0)
+            cache_layer.values = torch.cat(mb_updated_values, dim=0)
+            hidden_states = torch.cat(next_hidden, dim=0)
+
+        self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
+        return self.model.attention_worker.forward_lm_head(hidden_states)
+
     def _run_ffn_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
         """
         FFN node: cross-layer micro-batch pipeline with directional groups.
@@ -594,6 +773,12 @@ class DecodeDBOScheduler:
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
+        if self.use_controller:
+            if self._use_ep_overlap(num_mb):
+                self._run_ffn_ep_controller_decode(batch_size, tracker)
+            else:
+                self._run_ffn_controller_decode(batch_size, tracker)
+            return
         if self._use_ep_overlap(num_mb):
             self._run_ffn_ep_overlap_decode(batch_size, tracker, is_coordinator=True)
             return
@@ -701,6 +886,94 @@ class DecodeDBOScheduler:
             if layer_idx + 1 < num_layers:
                 a2f_recv_handles = next_a2f_handles
                 a2f_recv_tensors = next_a2f_tensors
+
+        self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
+
+    def _run_ffn_controller_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
+        """Non-EP FFN decode path using blocking CPU controller relay."""
+        assert self.model.ffn_worker is not None
+
+        num_layers = self.model.num_layers
+        mb_sizes = self._compute_mb_sizes(batch_size)
+        for layer_idx in range(num_layers):
+            for mb_idx, _mb_size in enumerate(mb_sizes):
+                hidden_states = self._blocking_recv(
+                    tracker,
+                    "a2f",
+                    layer_idx,
+                    mb_idx,
+                    device=self.model.device,
+                    dtype=self.model.dtype,
+                )
+
+                if tracker:
+                    tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                compute_start = time.perf_counter()
+                ffn_result = self.model.ffn_worker.forward_ffn_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=hidden_states,
+                    return_timing=bool(tracker and self.model.supports_moe_timing),
+                )
+                output, stage_timing = ffn_result if isinstance(ffn_result, tuple) else (ffn_result, None)
+                output = output.contiguous()
+                if tracker:
+                    tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    if stage_timing is not None:
+                        self._record_ffn_stage_timing(
+                            tracker,
+                            layer_idx,
+                            mb_idx,
+                            compute_start,
+                            stage_timing,
+                        )
+                compute_end = time.perf_counter()
+                self.stats.compute_time += compute_end - compute_start
+                self.stats.ffn_compute_time += compute_end - compute_start
+                self._record_blocking_send(tracker, "f2a", layer_idx, mb_idx, output)
+
+        self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
+
+    def _run_ffn_ep_controller_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
+        """EP coordinator decode path using blocking CPU controller relay.
+
+        FFN expert-only ranks still run _run_ffn_ep_overlap_decode(False) and
+        participate only in EP broadcasts/reduces. The coordinator receives A/F
+        traffic through the CPU controller and then drives the same EP collectives.
+        """
+        assert self.model.ffn_worker is not None
+
+        num_layers = self.model.num_layers
+        mb_sizes = self._compute_mb_sizes(batch_size)
+
+        for layer_idx in range(num_layers):
+            layer = self.model.ffn_worker.ffn_layers[layer_idx]
+            items = []
+
+            for mb_idx, _mb_size in enumerate(mb_sizes):
+                hidden_states = self._blocking_recv(
+                    tracker,
+                    "a2f",
+                    layer_idx,
+                    mb_idx,
+                    device=self.model.device,
+                    dtype=self.model.dtype,
+                )
+                item = layer.create_work_item(
+                    hidden_states=hidden_states,
+                    output_device=self.model.device,
+                )
+                setattr(item, "ffn_event_start_s", time.perf_counter())
+                layer.dispatch_async(item)
+                items.append(item)
+
+            for mb_idx, item in enumerate(items):
+                layer.finish_dispatch(item)
+                layer.compute_local(item)
+                layer.reduce_async(item)
+                layer.finish_reduce(item)
+                output = layer.finish_output(item).contiguous()
+                self._record_ep_item_timing(tracker, layer_idx, mb_idx, item)
+                self._record_blocking_send(tracker, "f2a", layer_idx, mb_idx, output)
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
 

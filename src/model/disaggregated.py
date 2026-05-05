@@ -563,6 +563,9 @@ class DisaggregatedQwenModel(nn.Module):
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
+        af_comm_mode: str = "direct-hccl",
+        controller_host: str = "127.0.0.1",
+        controller_port: int = 40100,
     ) -> torch.Tensor:
         """
         Generate text autoregressively with optional Decode DBO.
@@ -583,6 +586,10 @@ class DisaggregatedQwenModel(nn.Module):
             comm_timing_mode: "enqueue" for isend return overhead or
                 "completion" for effective Work completion latency
             decode_use_crosslayer: Enable cross-layer micro-batch pipelining in decode DBO
+            af_comm_mode: "direct-hccl" for current device-direct A/F communication,
+                or "controller-cpu" for centralized CPU relay baseline.
+            controller_host: CPU controller host for controller-cpu mode.
+            controller_port: CPU controller port for controller-cpu mode.
         
         Returns:
             Generated token IDs [batch_size, seq_len + num_generated]
@@ -594,6 +601,9 @@ class DisaggregatedQwenModel(nn.Module):
                 num_decode_micro_batches, enable_timing, timing_mode,
                 comm_timing_mode,
                 decode_use_crosslayer,
+                af_comm_mode,
+                controller_host,
+                controller_port,
             )
         
         # Initialize KV cache if needed
@@ -643,6 +653,9 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                af_comm_mode=af_comm_mode,
+                controller_host=controller_host,
+                controller_port=controller_port,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
 
@@ -722,6 +735,9 @@ class DisaggregatedQwenModel(nn.Module):
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
+        af_comm_mode: str = "direct-hccl",
+        controller_host: str = "127.0.0.1",
+        controller_port: int = 40100,
     ) -> torch.Tensor:
         """
         FFN node participation in generation.
@@ -751,6 +767,9 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                af_comm_mode=af_comm_mode,
+                controller_host=controller_host,
+                controller_port=controller_port,
             )
         
         # Decode loop: max_new_tokens - 1 iterations

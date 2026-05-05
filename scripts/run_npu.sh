@@ -18,6 +18,7 @@
 # Usage:
 #   ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 [--tokens N] [other run_single flags]
 #   Add --no-timing for profiling-overhead runs.
+#   Add --af-comm-mode controller-cpu for the centralized CPU relay baseline.
 #
 # This script spawns one torchrun-style process per role on the local node
 # using HCCL as the distributed backend. For multi-node, set MASTER_ADDR and
@@ -39,6 +40,10 @@ BATCH=8
 SEQ=128
 EXTRA_ARGS=()
 TIMING_ARGS=(--timing)
+AF_COMM_MODE="direct-hccl"
+CONTROLLER_HOST="127.0.0.1"
+CONTROLLER_PORT=""
+CONTROLLER_PID=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,9 +69,19 @@ while [[ $# -gt 0 ]]; do
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
         --no-timing)    TIMING_ARGS=(); shift ;;
+        --af-comm-mode) AF_COMM_MODE="$2"; EXTRA_ARGS+=("$1" "$2"); shift 2 ;;
+        --controller-host) CONTROLLER_HOST="$2"; EXTRA_ARGS+=("$1" "$2"); shift 2 ;;
+        --controller-port) CONTROLLER_PORT="$2"; EXTRA_ARGS+=("$1" "$2"); shift 2 ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
+
+if [ -z "$CONTROLLER_PORT" ]; then
+    CONTROLLER_PORT=$((40100 + (RANDOM % 2000)))
+    if [ "$AF_COMM_MODE" = "controller-cpu" ]; then
+        EXTRA_ARGS+=(--controller-port "$CONTROLLER_PORT")
+    fi
+fi
 
 WORLD_SIZE=$((ATTN_SIZE + FFN_SIZE))
 if (( FFN_SIZE % FFN_TP_SIZE != 0 )); then
@@ -81,6 +96,7 @@ fi
 echo "=== NPU-910C launch ==="
 echo "preset=$PRESET  attn_size=$ATTN_SIZE  ffn_size=$FFN_SIZE  ffn_tp_size=$FFN_TP_SIZE  ffn_ep_size=$FFN_EP_SIZE"
 echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS"
+echo "af_comm_mode=$AF_COMM_MODE controller=${CONTROLLER_HOST}:${CONTROLLER_PORT}"
 
 # ── NPU / HCCL environment ───────────────────────────────────────
 # Per-rank device visibility: ATTN_DEVICES (for attention ranks), FFN_DEVICES (for ffn ranks).
@@ -146,6 +162,20 @@ fi
 # Source python venv if present
 if [ -f venv/bin/activate ]; then source venv/bin/activate; fi
 
+if [ "$AF_COMM_MODE" = "controller-cpu" ]; then
+    mkdir -p results/logs results/controller_baseline
+    CONTROLLER_LOG="results/logs/controller_${SUFFIX}.log"
+    CONTROLLER_CSV="results/controller_baseline/relay_${SUFFIX}.csv"
+    python -u scripts/run_controller.py \
+        --host "$CONTROLLER_HOST" \
+        --port "$CONTROLLER_PORT" \
+        --output "$CONTROLLER_CSV" \
+        > "$CONTROLLER_LOG" 2>&1 &
+    CONTROLLER_PID=$!
+    echo "controller_pid=$CONTROLLER_PID log=$CONTROLLER_LOG csv=$CONTROLLER_CSV"
+    sleep 1
+fi
+
 # ── Spawn ranks ──────────────────────────────────────────────────
 # Attention ranks: 0..ATTN_SIZE-1
 # FFN ranks: ATTN_SIZE..WORLD_SIZE-1
@@ -205,6 +235,13 @@ rc=0
 for pid in "${PIDS[@]}"; do
     if ! wait "$pid"; then rc=1; fi
 done
+
+if [ -n "$CONTROLLER_PID" ]; then
+    if kill -0 "$CONTROLLER_PID" 2>/dev/null; then
+        kill "$CONTROLLER_PID" 2>/dev/null || true
+    fi
+    wait "$CONTROLLER_PID" 2>/dev/null || true
+fi
 
 echo "Exit=$rc; logs in results/logs/npu_${SUFFIX}_r*.log"
 exit $rc
