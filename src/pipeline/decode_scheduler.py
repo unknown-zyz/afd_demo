@@ -114,10 +114,12 @@ class DecodeDBOScheduler:
         #     enabling cross-layer micro-batch pipeline.
         self.use_crosslayer = use_crosslayer
         # Plan 3 — dual NPU compute streams for ep_local_experts so mb0/mb1
-        # GEMMs can run on different streams in parallel. Disabled with
-        # AFD_FFN_DUAL_STREAM=0; auto-on for NPU otherwise.
+        # GEMMs can run on different streams in parallel. Default off because
+        # MoE GEMMs are HBM-bandwidth bound on 910C and dual streaming did not
+        # yield measurable speedup in benchmarks (see results_npu/dual_stream_v1).
+        # Set AFD_FFN_DUAL_STREAM=1 to opt in.
         self._ffn_dual_stream_enabled = (
-            os.environ.get("AFD_FFN_DUAL_STREAM", "1") == "1"
+            os.environ.get("AFD_FFN_DUAL_STREAM", "0") == "1"
             and getattr(self.model, "device", torch.device("cpu")).type == "npu"
             and hasattr(torch, "npu")
         )
