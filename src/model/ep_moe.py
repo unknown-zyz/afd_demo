@@ -349,8 +349,10 @@ class EPFFNLayer(nn.Module):
                     item.routing_weights,
                 )
             partial.record_stream(stream)
-            # Default stream must wait for compute on side stream before later consumers run.
-            default_stream.wait_stream(stream)
+            # NOTE: do NOT inject default.wait_stream(stream) here — that would
+            # transitively serialize the second micro-batch's side stream behind
+            # the first micro-batch's compute. Downstream consumers sync at
+            # finish_reduce instead (see EPMoEModule.finish_reduce).
             item._compute_stream = stream
         else:
             partial, active, assignments = self.sharded_experts.forward_local(
@@ -403,6 +405,14 @@ class EPFFNLayer(nn.Module):
         wait_start = time.perf_counter()
         item.timing.ep_overlap_hidden_s = max(0.0, wait_start - item.reduce_enqueue_done_s)
         item.reduce_handle.wait()
+        # If compute ran on a side stream, the partial-output flow lives on that
+        # stream and the HCCL collective stream. Make the default stream wait
+        # for the side stream so subsequent consumers (residual add, attn sends)
+        # see the reduced data. We do this here (post-wait) instead of inside
+        # compute_local to avoid serializing mb1's side stream behind mb0.
+        compute_stream = getattr(item, "_compute_stream", None)
+        if compute_stream is not None and hasattr(torch, "npu"):
+            torch.npu.current_stream().wait_stream(compute_stream)
         sync_if_needed(self.layer_device)
         wait_end = time.perf_counter()
         item.timing.ep_reduce_wait_s = wait_end - wait_start
