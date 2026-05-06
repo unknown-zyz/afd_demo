@@ -816,13 +816,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
             mpatches.Patch(facecolor='gray', edgecolor='gray', alpha=0.22, hatch='xx',
                            label='combine: hidden in-flight (under next MB compute)'),
         ])
-    else:  # fourlane
-        legend_elements.append(
-            mpatches.Patch(facecolor='gray', edgecolor='black', alpha=0.8,
-                           label='Bar = transmission start → receiver wait_end '
-                                 '(A2F: ATT.send→FFN.experts.start;  '
-                                 'F2A: FFN.combine.start→ATT.recv_wait.end)'),
-        )
+    # fourlane: keep legend MB0/MB1 only (bar semantics documented in QA.md / README).
     ax.legend(handles=legend_elements, loc='upper right', fontsize=9, ncol=2)
     
     plt.tight_layout()
