@@ -93,10 +93,154 @@ STAGED_LANES = {
     'F2A': {'index': 0, 'label': 'F→A Send', 'height': 0.65},
 }
 
+FOURLANE_LANES = {
+    'A':   {'index': 3, 'label': 'Attention',           'height': 0.75},
+    'A2F': {'index': 2, 'label': 'A2F (send+recv+router+dispatch)', 'height': 0.75},
+    'F':   {'index': 1, 'label': 'FFN (local experts)', 'height': 0.75},
+    'F2A': {'index': 0, 'label': 'F2A (combine+send+recv)', 'height': 0.75},
+}
+
 LANE_SETS = {
     'legacy': LEGACY_LANES,
     'staged': STAGED_LANES,
+    'fourlane': FOURLANE_LANES,
 }
+
+
+def _build_fourlane(
+    attn_data, ffn_data, start_layer, end_layer, min_start,
+    clock_offset, ffn_recv_ends_aligned, attn_recv_ends_aligned,
+):
+    """Build 4-lane bars (Attention / A2F / FFN / F2A).
+
+    Semantics (per user spec — bar = transmission start → receiver completion):
+
+    - **A** (`attn_compute`): ATT GPU compute.
+    - **A2F**: start = ATT.send_transfer.start (sender enqueue);
+      end = FFN.ep_local_experts.start (receiver finished recv + router +
+      dispatch + dispatch_wait, ready to start GEMM).
+      Fallback: FFN.recv_wait.end → ATT.send_transfer enqueue duration.
+    - **FFN**: start = FFN.ep_local_experts.start (or moe_experts /
+      moe_shared_or_dense / ffn_compute); end = same event's end.
+    - **F2A**: start = FFN.ep_reduce.start (combine begin); end =
+      ATT.recv_wait.end (receiver actually consumed the data — includes
+      ATT-side serial recv queueing for that MB).
+      Fallback: FFN.send_transfer.start as start, recv_wait.end as end.
+    """
+    lanes = {n: [] for n in FOURLANE_LANES}
+
+    # ATT-side per-(layer, mb) lookups in aligned ms
+    attn_compute = {}
+    attn_send_starts_aligned = {}
+    for ev in attn_data['events']:
+        layer = ev['layer']
+        if layer < start_layer or layer >= end_layer:
+            continue
+        mb = ev['mb']
+        s = ev['start'] * 1000 - min_start
+        d = ev['duration_ms']
+        if ev['type'] == 'attn_compute':
+            attn_compute[(layer, mb)] = (s, d)
+        elif ev['type'] == 'send_transfer':
+            attn_send_starts_aligned[(layer, mb)] = s
+
+    # FFN-side per-(layer, mb) lookups (already in aligned ATT ms via offset)
+    def _aligned(t_ms): return t_ms - clock_offset - min_start
+    ffn_phase = {}  # (layer, mb) -> {phase: (start_aligned, dur)}
+    for ev in ffn_data['events']:
+        layer = ev['layer']
+        if layer < start_layer or layer >= end_layer:
+            continue
+        mb = ev['mb']
+        s = ev['start'] * 1000
+        d = ev['duration_ms']
+        ffn_phase.setdefault((layer, mb), {})[ev['type']] = (_aligned(s), d)
+
+    fallback_used_a2f = 0
+    fallback_used_f2a = 0
+    fallback_used_ffn = 0
+
+    for (layer, mb), (a_start, a_dur) in attn_compute.items():
+        dl = layer - start_layer
+        lanes['A'].append((a_start, a_dur, dl, mb))
+
+        send_s = attn_send_starts_aligned.get((layer, mb))
+        phases = ffn_phase.get((layer, mb), {})
+
+        # ── FFN body bar ────────────────────────────────────────────────
+        ffn_seg = (
+            phases.get('ep_local_experts')
+            or phases.get('moe_experts')
+            or phases.get('moe_shared_or_dense')
+            or phases.get('ffn_compute')
+        )
+        if ffn_seg is not None:
+            f_start, f_dur = ffn_seg
+            if not phases.get('ep_local_experts'):
+                fallback_used_ffn += 1
+            lanes['F'].append((f_start, f_dur, dl, mb))
+
+        # ── A2F bar: sender enqueue → FFN ready for GEMM ────────────────
+        if send_s is not None:
+            # Endpoint preference: ep_local_experts.start (FFN truly ready
+            # for compute) → recv_wait.end → just the send-enqueue duration.
+            le_seg = phases.get('ep_local_experts')
+            if le_seg is not None:
+                a2f_end = le_seg[0]
+            else:
+                rw_end = ffn_recv_ends_aligned.get((layer, mb))
+                if rw_end is not None and rw_end > send_s:
+                    a2f_end = rw_end
+                    fallback_used_a2f += 1
+                else:
+                    # Pure ATT enqueue duration (no FFN observation).
+                    st_seg = next(
+                        (ev for ev in attn_data['events']
+                         if ev['layer'] == layer and ev['mb'] == mb
+                         and ev['type'] == 'send_transfer'),
+                        None,
+                    )
+                    if st_seg is None:
+                        continue
+                    a2f_end = send_s + st_seg['duration_ms']
+                    fallback_used_a2f += 1
+            a2f_dur = max(0.0, a2f_end - send_s)
+            lanes['A2F'].append((send_s, a2f_dur, dl, mb))
+
+        # ── F2A bar: combine begin → ATT recv_wait end ──────────────────
+        f2a_start = None
+        red_seg = phases.get('ep_reduce')
+        if red_seg is not None:
+            f2a_start = red_seg[0]
+        else:
+            ffn_send_seg = phases.get('send_transfer')
+            if ffn_send_seg is not None:
+                f2a_start = ffn_send_seg[0]
+                fallback_used_f2a += 1
+        if f2a_start is None:
+            continue
+        f2a_end = attn_recv_ends_aligned.get((layer, mb))
+        if f2a_end is None or f2a_end <= f2a_start:
+            # Fallback: end at FFN send_transfer.end + small propagation
+            ffn_send_seg = phases.get('send_transfer')
+            if ffn_send_seg is not None:
+                f2a_end = ffn_send_seg[0] + ffn_send_seg[1]
+                fallback_used_f2a += 1
+            else:
+                continue
+        f2a_dur = max(0.0, f2a_end - f2a_start)
+        lanes['F2A'].append((f2a_start, f2a_dur, dl, mb))
+
+    if fallback_used_a2f:
+        print(f"  fourlane: {fallback_used_a2f} A2F bar(s) used fallback endpoint "
+              f"(no ep_local_experts in JSON).")
+    if fallback_used_f2a:
+        print(f"  fourlane: {fallback_used_f2a} F2A bar(s) used fallback endpoint "
+              f"(no ep_reduce or no ATT recv_wait).")
+    if fallback_used_ffn:
+        print(f"  fourlane: {fallback_used_ffn} FFN bar(s) used legacy ffn_compute/moe_experts.")
+
+    return lanes, attn_data, ffn_data, start_layer
 
 
 def load_timing_data(
@@ -215,6 +359,17 @@ def load_timing_data(
     ffn_recv_ends_aligned = {k: _ffn_ms(v) for k, v in ffn_recv_ends_raw.items()}
     # ATT recv_wait end (for F2A bar end = data arrived at ATT)
     attn_recv_ends_aligned = {k: _att_ms(v) for k, v in attn_recv_ends.items()}
+
+    # ========================================================================
+    # 4-lane view: collapse all FFN sub-stages into 4 lanes that mirror
+    # "compute vs comm" resource utilisation. A2F/F2A endpoints use the
+    # receiver's wait-end time (data has been consumed by app).
+    # ========================================================================
+    if ffn_view == 'fourlane':
+        return _build_fourlane(
+            attn_data, ffn_data, start_layer, end_layer, min_start,
+            clock_offset, ffn_recv_ends_aligned, attn_recv_ends_aligned,
+        )
 
     # 提取 Attention 节点事件 (使用 ATT 时钟，无需调整)
     for event in attn_data['events']:
@@ -396,7 +551,12 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         mode: "prefill" 或 "decode" (仅用于标题显示)
     """
     lane_defs = LANE_SETS[ffn_view]
-    fig_height = 7.2 if ffn_view == 'staged' else 6
+    if ffn_view == 'staged':
+        fig_height = 7.2
+    elif ffn_view == 'fourlane':
+        fig_height = 5.0
+    else:
+        fig_height = 6
     fig, ax = plt.subplots(figsize=(14, fig_height))
     
     # 设置 y 轴
@@ -620,7 +780,9 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
         layer_note = ""
     mode_tag = f" [{mode}]" if mode else ""
     comm_label = "send completion" if comm_mode == "completion" else "send enqueue"
-    view_label = 'staged FFN' if ffn_view == 'staged' else 'legacy FFN'
+    view_label = {'staged': 'staged FFN',
+                  'legacy': 'legacy FFN',
+                  'fourlane': '4-lane (compute/comm)'}[ffn_view]
     variant_label = f", {pipeline_variant}" if pipeline_variant else ""
     line1 = (
         f'DBO Pipeline{mode_tag} — L{start_layer}–{end_layer}{layer_note}, '
@@ -645,7 +807,7 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
             mpatches.Patch(facecolor='gray', edgecolor='gray', alpha=0.65, hatch='\\\\',
                            label='F seg: reduce (combine)'),
         ])
-    else:
+    elif ffn_view == 'staged':
         legend_elements.extend([
             mpatches.Patch(facecolor='gray', edgecolor='black', alpha=0.8,
                            label='F/local_experts = actual FFN GEMM body'),
@@ -654,6 +816,13 @@ def plot_pipeline(lanes_data: dict, attn_data: dict, ffn_data: dict,
             mpatches.Patch(facecolor='gray', edgecolor='gray', alpha=0.22, hatch='xx',
                            label='combine: hidden in-flight (under next MB compute)'),
         ])
+    else:  # fourlane
+        legend_elements.append(
+            mpatches.Patch(facecolor='gray', edgecolor='black', alpha=0.8,
+                           label='Bar = transmission start → receiver wait_end '
+                                 '(A2F: ATT.send→FFN.experts.start;  '
+                                 'F2A: FFN.combine.start→ATT.recv_wait.end)'),
+        )
     ax.legend(handles=legend_elements, loc='upper right', fontsize=9, ncol=2)
     
     plt.tight_layout()
@@ -727,10 +896,12 @@ def main():
     )
     parser.add_argument(
         '--ffn-view',
-        choices=['staged', 'legacy'],
-        default='staged',
-        help='FFN visualization. staged splits router/dispatch/local_experts/combine; '
-             'legacy draws the old composite F lane.'
+        choices=['staged', 'legacy', 'fourlane'],
+        default='fourlane',
+        help='FFN visualization. fourlane (default): collapse to '
+             'Attention/A2F/FFN/F2A — show compute vs comm overlap. '
+             'staged: split router/dispatch/local_experts/combine. '
+             'legacy: old composite F lane.'
     )
     
     args = parser.parse_args()

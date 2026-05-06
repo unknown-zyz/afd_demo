@@ -13,23 +13,38 @@
 | 前缀 | 含义 |
 |---|---|
 | `old_legacy_*` | 旧 composite F lane 画法：一个 F 大框包住 router/dispatch、local_experts、reduce。 |
-| `new_staged_*` | 新 staged 画法：F 被拆成 `F/router`、`F/dispatch`、`F/local_experts`、`F/combine`。 |
+| `new_staged_*` | round-3 staged 画法：F 被拆成 `F/router`、`F/dispatch`、`F/local_experts`、`F/combine`。 |
+| `new4lane_*` | **round-4 默认画法**：4 泳道 `Attention / A2F / FFN / F2A`，目标是直观展示 GPU compute 与通信通道的重叠。 |
 
-新图默认使用：
-
-```bash
-python3 scripts/visualize_dbo_pipeline.py ... --ffn-view staged
-```
-
-旧图对照使用：
+新图默认使用 4-lane（`--ffn-view fourlane`）：
 
 ```bash
-python3 scripts/visualize_dbo_pipeline.py ... --ffn-view legacy
+python3 scripts/visualize_dbo_pipeline.py ...    # 默认 fourlane
+python3 scripts/visualize_dbo_pipeline.py ... --ffn-view staged   # 想看 EP 子阶段拆解
+python3 scripts/visualize_dbo_pipeline.py ... --ffn-view legacy   # 旧 composite F
 ```
 
-## 如何解读 staged 图
+## 如何解读 4-lane 图（round-4，默认）
 
-新图保留 `A / A2F / F2A` 三类链路，同时把 FFN 拆成四条子泳道：
+核心目标：让"compute 行 vs comm 行"的占满程度直接说明 NPU 资源利用率，让"通信泳道的 bar"直接对应"端到端通信代价"。
+
+| 泳道 | bar 起点 | bar 终点 | 包含 stage | 用途 |
+|---|---|---|---|---|
+| **Attention** | `attn_compute.start` | `attn_compute.end` | ATT compute | ATT 占用计算单元的时段 |
+| **A2F** | `ATT.send_transfer.start` | `FFN.ep_local_experts.start` | send + recv_wait + moe_router + ep_dispatch + ep_dispatch_wait | "传输 + FFN 端 GEMM 之前的所有准备"全部计入通信侧；bar 末端 = FFN 真正进入 GEMM 时刻 |
+| **FFN** | `ep_local_experts.start` | `ep_local_experts.end`（fallback `moe_experts` / `ffn_compute`） | FFN expert GEMM 主体 | FFN 占用计算单元的时段 |
+| **F2A** | `ep_reduce.start`（fallback `FFN.send_transfer.start`） | `ATT.recv_wait.end` | combine + reduce_wait + send + ATT recv_wait | 含 ATT 端串行 recv 排队；bar 长度 = 端到端"通信 + 接收侧 ready"时长 |
+
+**重要**：A2F / F2A 终点都用接收方 wait_end，**不替换为网络到达时刻**。这样：
+
+- bar 真实反映"通信 + 接收侧排队"总占用，是 pipeline 优化的指示器；
+- 例：`new4lane_ep7_decode_dbo_b16_s512_t20.png` L2 的 MB1 F2A bar 长达 ~3.9 ms，原因不是网络慢，而是 ATT 串行 recv 阻塞（先 wait MB0 → 才 post MB1 irecv）。完整解释见 `doc/QA.md` §3.4.4。
+
+`hidden in-flight`（round-3 staged 图里的 xx 斜线）在 4-lane 图里**不再单画**，因为 combine 整段并入 F2A 通信泳道，hidden 自然包含在 F2A bar 里；`ep_overlap_hidden` event 仍保留在 timing JSON 中供分析（见 §3.4.5）。
+
+## 如何解读 staged 图（round-3 备选）
+
+staged 图保留 `A / A2F / F2A` 三类链路，同时把 FFN 拆成四条子泳道：
 
 | 泳道 | 含义 | 主要用途 |
 |---|---|---|
