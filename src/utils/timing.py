@@ -8,11 +8,11 @@ Records per-micro-batch timing for each stage:
 - Recv wait
 
 Supports two timing modes:
-- "cuda_events" (default): Uses current_stream().synchronize() + perf_counter.
+    - "cuda_events" (default): Uses current accelerator stream synchronize + perf_counter.
   Stream-level sync only blocks the default compute stream (not NCCL streams),
   preserving DBO overlap while giving consistent CPU timestamps for all events.
   This ensures compute and communication events share a single timeline.
-- "sync": Legacy mode using torch.cuda.synchronize() (device-level) + perf_counter.
+    - "sync": Legacy mode using device-level synchronize + perf_counter.
   Syncs ALL streams including NCCL — breaks DBO overlap. For debugging only.
 
 Outputs JSON timeline data for visualization.
@@ -26,6 +26,8 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 
 import torch
+
+from . import device as devmod
 
 
 class EventType(Enum):
@@ -243,10 +245,10 @@ class TimingTracker:
     Supports two modes:
     - "cuda_events" (default): Stream-level sync + CPU timestamps.
       current_stream().synchronize() only blocks the default compute stream,
-      not NCCL streams, so DBO overlap is preserved. All events use CPU
+      not NCCL/HCCL streams, so DBO overlap is preserved. All events use CPU
       perf_counter for a single consistent timeline.
-    - "sync": Device-level sync (torch.cuda.synchronize()) + CPU timestamps.
-      Syncs ALL streams including NCCL — breaks DBO overlap. For debugging.
+    - "sync": Device-level sync + CPU timestamps.
+      Syncs ALL streams including NCCL/HCCL — breaks DBO overlap. For debugging.
     
     Usage:
         tracker = TimingTracker("attention", num_layers=48, num_mb=2)
@@ -289,37 +291,33 @@ class TimingTracker:
         self._pending_send_events: Dict[int, Dict[str, Any]] = {}
         self._send_futures: List[Any] = []
         
-        if mode == "cuda_events" and torch.cuda.is_available():
-            # Verify CUDA is available for stream sync
-            pass
-        elif mode == "cuda_events":
-            # Fallback to sync if CUDA not available
-            self.mode = "sync"
+        if mode not in {"cuda_events", "sync"}:
+            raise ValueError(f"Unsupported timing mode: {mode}")
     
     def mark_start(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Record start of a GPU compute event.
         
         - cuda_events mode: current_stream().synchronize() + perf_counter.
-          Only syncs the default compute stream (not NCCL), preserving DBO overlap.
-        - sync mode: torch.cuda.synchronize() + perf_counter (syncs ALL streams).
+          Only syncs the default compute stream (not NCCL/HCCL), preserving DBO overlap.
+        - sync mode: device synchronize + perf_counter (syncs ALL streams).
         """
         if self.mode == "cuda_events":
-            torch.cuda.current_stream().synchronize()
+            devmod.current_stream_synchronize()
         else:
-            torch.cuda.synchronize()
+            devmod.synchronize()
         self._sync_start_time = time.perf_counter()
     
     def mark_end(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Record end of a GPU compute event.
         
         - cuda_events mode: current_stream().synchronize() + perf_counter.
-        - sync mode: torch.cuda.synchronize() + perf_counter.
+        - sync mode: device synchronize + perf_counter.
         Both record the event immediately via record_event().
         """
         if self.mode == "cuda_events":
-            torch.cuda.current_stream().synchronize()
+            devmod.current_stream_synchronize()
         else:
-            torch.cuda.synchronize()
+            devmod.synchronize()
         end_time = time.perf_counter()
         self.record_event(event_type, layer_idx, mb_idx,
                          self._sync_start_time, end_time)

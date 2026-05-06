@@ -67,6 +67,20 @@ class EPStageTiming:
     ep_overlap_hidden_s: float = 0.0
     ep_active_experts: int = 0
     ep_local_assignments: int = 0
+    router_start_s: float = 0.0
+    router_end_s: float = 0.0
+    ep_dispatch_start_s: float = 0.0
+    ep_dispatch_enqueue_done_s: float = 0.0
+    ep_dispatch_wait_start_s: float = 0.0
+    ep_dispatch_wait_end_s: float = 0.0
+    ep_local_experts_start_s: float = 0.0
+    ep_local_experts_end_s: float = 0.0
+    ep_reduce_start_s: float = 0.0
+    ep_reduce_enqueue_done_s: float = 0.0
+    ep_reduce_wait_start_s: float = 0.0
+    ep_reduce_wait_end_s: float = 0.0
+    ep_finish_output_start_s: float = 0.0
+    ep_finish_output_end_s: float = 0.0
 
 
 @dataclass
@@ -281,7 +295,10 @@ class EPFFNLayer(nn.Module):
             router_start = time.perf_counter()
             _, routing_weights, selected_experts = self.gate(hidden_2d)
             sync_if_needed(self.layer_device)
-            timing.router_s = time.perf_counter() - router_start
+            router_end = time.perf_counter()
+            timing.router_s = router_end - router_start
+            timing.router_start_s = router_start
+            timing.router_end_s = router_end
             selected_experts = selected_experts.to(torch.int64).contiguous()
             routing_weights = routing_weights.contiguous()
         else:
@@ -315,6 +332,8 @@ class EPFFNLayer(nn.Module):
         ]
         item.dispatch_enqueue_done_s = time.perf_counter()
         item.timing.ep_dispatch_enqueue_s = item.dispatch_enqueue_done_s - item.dispatch_start_s
+        item.timing.ep_dispatch_start_s = item.dispatch_start_s
+        item.timing.ep_dispatch_enqueue_done_s = item.dispatch_enqueue_done_s
 
     def finish_dispatch(self, item: EPWorkItem) -> None:
         """Wait until dispatch inputs are ready for local expert compute."""
@@ -324,6 +343,8 @@ class EPFFNLayer(nn.Module):
         wait_end = time.perf_counter()
         item.timing.ep_dispatch_wait_s = wait_end - wait_start
         item.timing.ep_dispatch_s = wait_end - item.dispatch_start_s
+        item.timing.ep_dispatch_wait_start_s = wait_start
+        item.timing.ep_dispatch_wait_end_s = wait_end
 
     def compute_local(self, item: EPWorkItem) -> None:
         """Run this rank's local expert shard for a dispatched micro-batch."""
@@ -334,10 +355,13 @@ class EPFFNLayer(nn.Module):
             item.routing_weights,
         )
         sync_if_needed(self.layer_device)
-        item.timing.ep_local_experts_s = time.perf_counter() - local_start
+        local_end = time.perf_counter()
+        item.timing.ep_local_experts_s = local_end - local_start
         item.timing.experts_s = item.timing.ep_local_experts_s
         item.timing.ep_active_experts = active
         item.timing.ep_local_assignments = assignments
+        item.timing.ep_local_experts_start_s = local_start
+        item.timing.ep_local_experts_end_s = local_end
         item.partial = partial
 
     def reduce_async(self, item: EPWorkItem) -> None:
@@ -354,6 +378,8 @@ class EPFFNLayer(nn.Module):
         )
         item.reduce_enqueue_done_s = time.perf_counter()
         item.timing.ep_reduce_enqueue_s = item.reduce_enqueue_done_s - item.reduce_start_s
+        item.timing.ep_reduce_start_s = item.reduce_start_s
+        item.timing.ep_reduce_enqueue_done_s = item.reduce_enqueue_done_s
 
     def finish_reduce(self, item: EPWorkItem) -> None:
         """Wait for partial-output reduce, tracking how much delay was hidden."""
@@ -366,10 +392,16 @@ class EPFFNLayer(nn.Module):
         wait_end = time.perf_counter()
         item.timing.ep_reduce_wait_s = wait_end - wait_start
         item.timing.ep_reduce_s = wait_end - item.reduce_start_s
+        item.timing.ep_reduce_wait_start_s = wait_start
+        item.timing.ep_reduce_wait_end_s = wait_end
 
     def finish_output(self, item: EPWorkItem):
         """Return the coordinator output after reduce; expert ranks keep a dummy tensor."""
+        output_start = time.perf_counter()
         if not self.is_coordinator:
+            output_end = time.perf_counter()
+            item.timing.ep_finish_output_start_s = output_start
+            item.timing.ep_finish_output_end_s = output_end
             return item.hidden_states
         if item.partial is None or item.residual_out is None:
             raise RuntimeError("EP coordinator output requires reduced partial and residual")
@@ -377,6 +409,10 @@ class EPFFNLayer(nn.Module):
         output = item.residual_out + output
         if output.device != item.output_device:
             output = output.to(item.output_device, non_blocking=True)
+        sync_if_needed(self.layer_device)
+        output_end = time.perf_counter()
+        item.timing.ep_finish_output_start_s = output_start
+        item.timing.ep_finish_output_end_s = output_end
         return output
 
     def forward(
@@ -409,7 +445,10 @@ class EPFFNLayer(nn.Module):
             router_start = time.perf_counter()
             _, routing_weights, selected_experts = self.gate(hidden_2d)
             sync_if_needed(self.layer_device)
-            timing.router_s = time.perf_counter() - router_start
+            router_end = time.perf_counter()
+            timing.router_s = router_end - router_start
+            timing.router_start_s = router_start
+            timing.router_end_s = router_end
             selected_experts = selected_experts.to(torch.int64).contiguous()
             routing_weights = routing_weights.contiguous()
         else:
@@ -422,7 +461,12 @@ class EPFFNLayer(nn.Module):
         dispatch_start = time.perf_counter()
         self._broadcast_inputs(hidden_2d, selected_experts, routing_weights)
         sync_if_needed(self.layer_device)
-        timing.ep_dispatch_s = time.perf_counter() - dispatch_start
+        dispatch_end = time.perf_counter()
+        timing.ep_dispatch_s = dispatch_end - dispatch_start
+        timing.ep_dispatch_start_s = dispatch_start
+        timing.ep_dispatch_enqueue_done_s = dispatch_end
+        timing.ep_dispatch_wait_start_s = dispatch_start
+        timing.ep_dispatch_wait_end_s = dispatch_end
 
         local_start = time.perf_counter()
         partial, active, assignments = self.sharded_experts.forward_local(
@@ -431,10 +475,13 @@ class EPFFNLayer(nn.Module):
             routing_weights,
         )
         sync_if_needed(self.layer_device)
-        timing.ep_local_experts_s = time.perf_counter() - local_start
+        local_end = time.perf_counter()
+        timing.ep_local_experts_s = local_end - local_start
         timing.experts_s = timing.ep_local_experts_s
         timing.ep_active_experts = active
         timing.ep_local_assignments = assignments
+        timing.ep_local_experts_start_s = local_start
+        timing.ep_local_experts_end_s = local_end
 
         reduce_start = time.perf_counter()
         dist.reduce(
@@ -444,17 +491,27 @@ class EPFFNLayer(nn.Module):
             group=self.ctx.ffn_ep_reduce_group,
         )
         sync_if_needed(self.layer_device)
-        timing.ep_reduce_s = time.perf_counter() - reduce_start
+        reduce_end = time.perf_counter()
+        timing.ep_reduce_s = reduce_end - reduce_start
+        timing.ep_reduce_start_s = reduce_start
+        timing.ep_reduce_enqueue_done_s = reduce_end
+        timing.ep_reduce_wait_start_s = reduce_start
+        timing.ep_reduce_wait_end_s = reduce_end
 
         if not self.is_coordinator:
             if return_timing:
                 return hidden_states, timing
             return hidden_states
 
+        output_start = time.perf_counter()
         output = partial.reshape(batch_size, seq_len, hidden_dim)
         output = residual_out + output
         if output.device != output_device:
             output = output.to(output_device, non_blocking=True)
+        sync_if_needed(self.layer_device)
+        output_end = time.perf_counter()
+        timing.ep_finish_output_start_s = output_start
+        timing.ep_finish_output_end_s = output_end
         if return_timing:
             return output, timing
         return output

@@ -39,6 +39,12 @@ class FFNStageTiming:
     ep_overlap_hidden_s: float = 0.0
     ep_active_experts: int = 0
     ep_local_assignments: int = 0
+    router_start_s: float = 0.0
+    router_end_s: float = 0.0
+    experts_start_s: float = 0.0
+    experts_end_s: float = 0.0
+    shared_or_dense_start_s: float = 0.0
+    shared_or_dense_end_s: float = 0.0
 
 
 class FFNLayer(nn.Module):
@@ -112,17 +118,23 @@ class FFNLayer(nn.Module):
             _, routing_weights, selected_experts = self.mlp.gate(hidden_states_2d)
             router_end = time.perf_counter()
             stage_timing.router_s = router_end - router_start
+            stage_timing.router_start_s = router_start
+            stage_timing.router_end_s = router_end
 
             experts_start = time.perf_counter()
             hidden_states = self.mlp.experts(hidden_states_2d, selected_experts, routing_weights)
             hidden_states = hidden_states.reshape(batch_size, seq_len, hidden_dim)
             experts_end = time.perf_counter()
             stage_timing.experts_s = experts_end - experts_start
+            stage_timing.experts_start_s = experts_start
+            stage_timing.experts_end_s = experts_end
         else:
             dense_start = time.perf_counter()
             hidden_states = self.mlp(hidden_states)
             dense_end = time.perf_counter()
             stage_timing.shared_or_dense_s = dense_end - dense_start
+            stage_timing.shared_or_dense_start_s = dense_start
+            stage_timing.shared_or_dense_end_s = dense_end
         
         # Second residual connection (FFN)
         hidden_states = residual + hidden_states

@@ -148,6 +148,74 @@ class DecodeDBOScheduler:
         stage_timing: Any,
     ) -> None:
         """Record fine-grained MoE/EP stages within the FFN compute span."""
+        def _record_if_absolute(
+            event_type: EventType,
+            start_attr: str,
+            end_attr: str,
+        ) -> bool:
+            start = getattr(stage_timing, start_attr, 0.0)
+            end = getattr(stage_timing, end_attr, 0.0)
+            if start > 0 and end > start:
+                tracker.record_event(event_type, layer_idx, mb_idx, start, end)
+                return True
+            return False
+
+        has_absolute_stages = any(
+            getattr(stage_timing, attr, 0.0) > 0
+            for attr in (
+                "router_start_s",
+                "experts_start_s",
+                "shared_or_dense_start_s",
+                "ep_dispatch_start_s",
+                "ep_local_experts_start_s",
+                "ep_reduce_start_s",
+            )
+        )
+        if has_absolute_stages:
+            _record_if_absolute(EventType.MOE_ROUTER, "router_start_s", "router_end_s")
+            _record_if_absolute(EventType.MOE_EXPERTS, "experts_start_s", "experts_end_s")
+            _record_if_absolute(
+                EventType.MOE_SHARED_OR_DENSE,
+                "shared_or_dense_start_s",
+                "shared_or_dense_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_DISPATCH,
+                "ep_dispatch_start_s",
+                "ep_dispatch_wait_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_DISPATCH_WAIT,
+                "ep_dispatch_wait_start_s",
+                "ep_dispatch_wait_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_LOCAL_EXPERTS,
+                "ep_local_experts_start_s",
+                "ep_local_experts_end_s",
+            )
+            reduce_enqueue_done = getattr(stage_timing, "ep_reduce_enqueue_done_s", 0.0)
+            reduce_wait_start = getattr(stage_timing, "ep_reduce_wait_start_s", 0.0)
+            if reduce_enqueue_done > 0 and reduce_wait_start > reduce_enqueue_done:
+                tracker.record_event(
+                    EventType.EP_OVERLAP_HIDDEN,
+                    layer_idx,
+                    mb_idx,
+                    reduce_enqueue_done,
+                    reduce_wait_start,
+                )
+            _record_if_absolute(
+                EventType.EP_REDUCE,
+                "ep_reduce_start_s",
+                "ep_reduce_wait_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_REDUCE_WAIT,
+                "ep_reduce_wait_start_s",
+                "ep_reduce_wait_end_s",
+            )
+            return
+
         cursor = compute_start
         router_s = getattr(stage_timing, "router_s", 0.0)
         if router_s > 0:
@@ -796,11 +864,12 @@ class DecodeDBOScheduler:
                         dtype=self.model.dtype, device=self.model.device,
                     )
 
+                item_start = time.perf_counter()
                 item = layer.create_work_item(
                     hidden_states=hidden_states,
                     output_device=self.model.device,
                 )
-                setattr(item, "ffn_event_start_s", time.perf_counter())
+                setattr(item, "ffn_event_start_s", item_start)
                 layer.dispatch_async(item)
                 items.append(item)
 
