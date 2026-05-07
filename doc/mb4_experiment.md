@@ -92,3 +92,80 @@ ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
 # 拉回结果后
 python3 scripts/aggregate_mb4_vs_mb2.py
 ```
+
+---
+
+## 7. Round-9: Fused dispatch 优化（v2）
+
+### 7.1 瓶颈定位
+
+per-layer per-MB）拆解 decode b=16/s=512  ms/layer）：
+
+| metric | MB2 | MB4 | 倍数 |
+|---|---:|---:|---:|
+| compute (attn) | 4.17 | 6.10 | 1.46× |
+| router | 0.26 | 0.50 | 1.92× |
+| **ep_dispatch** | **3.78** | **16.09** | **4.26×** ⚠️ |
+| ep_local_experts | 3.90 | 5.60 | 1.43× |
+| ep_reduce | 2.40 | 5.32 | 2.22× |
+| dispatch_wait | ≈0 | ≈0 | — |
+
+`ep_dispatch` 4.26× 超线性放大是 MB4 退化主因。`dispatch_wait≈0` 说明 stream 不是被传输等待阻塞，而 enqueue/HCCL 串行化阻塞——4 个 MB × 3 broadcasts/MB = 12 broadcasts/layer 排队抢同一个 `ffn_ep_dispatch_group`。
+
+### 7.2 优化：3 broadcast → 1 fused broadcast
+
+`src/model/ep_moe.py` 改造（commit `79b42ab`）：
+
+- 把 `hidden_2d` (bf16) / `selected_experts` (int64) / `routing_weights` (bf16) 三张 tensor pack 进单个 `uint8` buffer
+- coordinator 端 1 次 `dist.broadcast`，experts 端用 view 切片回原 dtype（zero-copy）
+同时 -         `dispatch_async`（async/decode 路径）和 `_broadcast_inputs`（sync/prefill 路径）
+
+### 7.3 v2 实测（4-way 对比，seq=512，t=20）
+
+| batch | serial | MB2-orig | **MB2-fused** | MB4-fused | MB2-orig× | **MB2-fused×** | MB4-fused× | fuse 收益 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8   | 351.5  | 325.7  | **300.4**  | 450.8 | 1.08× | **1.17×** | 0.78× | +7.8% |
+| 16  | 502.9  | 382.4  | **360.0**  | 495.4 | 1.32× | **1.40×** | 1.02× | +5.9% |
+| 32  | 567.0  | 456.3  | **433.3**  | 602.3 | 1.24× | **1.31×** | 0.94× | +5.0% |
+| 64  | 787.9  | 656.7  | 642.8      | 848.3 | 1.20× | 1.23×     | 0.93× | +2.1% |
+| 128 | 993.8  | 900.3  | 894.7      | 1164.9| 1.10× | 1.11×     | 0.85× | +0.6% |
+| 256 | 1498.0 | 1452.5 | 1420.0     | 1682.5| 1.03× | 1.05×     | 0.89× | +2.2% |
+| 512 | 2452.4 | 2394.4 | 2374.9     | 2594.8| 1.02× | 1.03×     | 0.95× | +0.8% |
+
+Prefill (s=512) total time (ms)：
+
+| batch | serial | MB2-orig | MB2-fused | MB4-fused |
+|---:|---:|---:|---:|---:|
+| 8  | 1925.6 | 378.0 | 402.7 | 684.0 |
+| 16 | 1827.0 | 449.7 | 460.5 | 792.6 |
+| 32 | 1811.8 | 654.7 | 662.3 | 902.4 |
+
+### 7.4 结论
+
+- ✅ **MB2-fused 在小/中 batch（8–32）上稳定带来 +5–8% TPOT 收益**，最高加速比从 1.32× → 1.40×（b=16）。这是可发布的优化。
+- ❌ **MB4 即使融合后仍跑不过 MB2**：原因是 HCCL stream 串行化是真正瓶颈，3→1 broadcast 只把每 MB 的启动数减少 2/3，并不改变跨 MB 的队列竞争。证据：experts 端 mb0 dispatch ≈ 600µs（快），mb1+ ≈ 5500µs（慢）。
+- ⚠️ **Prefill 上 fusion 略微负向**（+1.3% ~ +6.5% 总时间）：prefill 单 broadcast payload 已经较大，3→1 packing 的额外 device copy 成本反而占主导。后续可以考虑只在 decode 路径走 fused，prefill 保留 3-broadcast——目前未做这个分叉。
+
+.git .github .gitignore .pytest_cache README.md config doc requirements.txt results results_npu results_npu_ep7 results_npu_ep7_mb4 results_npu_ep7_mb4_v2 scripts src tests venv 
+
+- **跨 MB coalescing**：把同 layer 所有 MB 的 hidden 打成一个大 broadcast。代价：丢失 MB 间流水重叠机会。
+- **多 HCCL group**：把 N 个 MB round-robin 拆到 2 个独立 dispatch_group，让 broadcast 并行下发。910C 上 HCCL 是否真的会在多 group 上并行需实测。
+ 2D-grid alltoall，启动次数可降到 O(1)/layer，但调度逻辑要重写。
+
+### 7.6 复现命令
+
+```bash
+git checkout exp/mb4-experiment   # commit 79b42ab+
+
+bash scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 --ffn-ep-backend broadcast_reduce_overlap \
+  --modes decode-dbo --num-micro-batches 2 \
+  --batches 8,16,32,64,128,256,512 --seqs 512 --tokens 20 \
+  --output-root results_npu_ep7_mb4_v2 \
+  --serial-cache-root results_npu_ep7_mb4_v2/serial/cache --no-cache
+
+# 同上跑 --num-micro-batches 4 + prefill-dbo
+python3 scripts/aggregate_mb4_v2.py
+```
+
+ls`results_npu_ep7_mb4_v2/mb2_vs_mb4_v2_{summary.csv, decode_tpot.png, decode_throughput.png, decode_speedup.png}`
