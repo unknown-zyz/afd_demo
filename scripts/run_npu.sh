@@ -37,6 +37,7 @@ EP_EXPERT_POLICY="round_robin"
 TOKENS=5
 BATCH=8
 SEQ=128
+NUM_MICRO_BATCHES=2
 EXTRA_ARGS=()
 TIMING_ARGS=(--timing)
 
@@ -63,6 +64,7 @@ while [[ $# -gt 0 ]]; do
         --tokens)       TOKENS="$2"; shift 2 ;;
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
+        --num-micro-batches) NUM_MICRO_BATCHES="$2"; shift 2 ;;
         --no-timing)    TIMING_ARGS=(); shift ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
@@ -80,7 +82,7 @@ fi
 
 echo "=== NPU-910C launch ==="
 echo "preset=$PRESET  attn_size=$ATTN_SIZE  ffn_size=$FFN_SIZE  ffn_tp_size=$FFN_TP_SIZE  ffn_ep_size=$FFN_EP_SIZE"
-echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS"
+echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS  num_micro_batches=$NUM_MICRO_BATCHES"
 
 # ── NPU / HCCL environment ───────────────────────────────────────
 # Per-rank device visibility: ATTN_DEVICES (for attention ranks), FFN_DEVICES (for ffn ranks).
@@ -137,10 +139,15 @@ elif [ "$HAS_CROSSLAYER" = true ]; then
 else
     MODE_TAG="decode-dbo"
 fi
-if (( FFN_EP_SIZE > 1 )); then
-    SUFFIX="${MODE_TAG}_npu_ep${FFN_EP_SIZE}_${FFN_EP_BACKEND}_b${BATCH}_s${SEQ}_t${TOKENS}"
+if (( NUM_MICRO_BATCHES != 2 )); then
+    MB_TAG="_mb${NUM_MICRO_BATCHES}"
 else
-    SUFFIX="${MODE_TAG}_npu_b${BATCH}_s${SEQ}_t${TOKENS}"
+    MB_TAG=""
+fi
+if (( FFN_EP_SIZE > 1 )); then
+    SUFFIX="${MODE_TAG}_npu_ep${FFN_EP_SIZE}_${FFN_EP_BACKEND}${MB_TAG}_b${BATCH}_s${SEQ}_t${TOKENS}"
+else
+    SUFFIX="${MODE_TAG}_npu${MB_TAG}_b${BATCH}_s${SEQ}_t${TOKENS}"
 fi
 
 # Source python venv if present
@@ -190,6 +197,7 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             --batch-size "$BATCH" \
             --prefill-seq-len "$SEQ" \
             --max-new-tokens "$TOKENS" \
+            --num-micro-batches "$NUM_MICRO_BATCHES" \
             "${TIMING_ARGS[@]}" \
             --timing-suffix "$SUFFIX" \
             --master-addr "$MASTER_ADDR" \

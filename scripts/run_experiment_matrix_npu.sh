@@ -52,6 +52,7 @@ NO_CACHE=false
 APPEND=false
 DRY_RUN=false
 CORRECTNESS_TOKENS=0
+NUM_MICRO_BATCHES=2
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -69,6 +70,7 @@ while [ $# -gt 0 ]; do
         --serial-cache-root) SERIAL_CACHE_ROOT="$2"; shift 2;;
         --comm-timing-mode) COMM_TIMING_MODE="$2"; shift 2;;
         --correctness-tokens) CORRECTNESS_TOKENS="$2"; shift 2;;
+        --num-micro-batches) NUM_MICRO_BATCHES="$2"; shift 2;;
         --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
         --append) APPEND=true; shift;;
@@ -121,9 +123,13 @@ run_one() {
     if [ "$TIMING_ENABLED" = false ]; then
         suffix_extra="${suffix_extra}_notiming"
     fi
-    local raw_suffix="${mode}_npu_b${batch}_s${seq}_t${tokens}"
+    local mb_tag=""
+    if [ "$NUM_MICRO_BATCHES" -ne 2 ]; then
+        mb_tag="_mb${NUM_MICRO_BATCHES}"
+    fi
+    local raw_suffix="${mode}_npu${mb_tag}_b${batch}_s${seq}_t${tokens}"
     if [ "$EP_SIZE" -gt 1 ]; then
-        raw_suffix="${mode}_npu_ep${EP_SIZE}_${FFN_EP_BACKEND}_b${batch}_s${seq}_t${tokens}"
+        raw_suffix="${mode}_npu_ep${EP_SIZE}_${FFN_EP_BACKEND}${mb_tag}_b${batch}_s${seq}_t${tokens}"
     fi
     local run_suffix="${raw_suffix}${suffix_extra}"
     local extra=""
@@ -168,6 +174,7 @@ run_one() {
     ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
         "${run_args[@]}" \
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
+        --num-micro-batches "$NUM_MICRO_BATCHES" \
         --model-name "$MODEL_NAME" \
         "${timing_flags[@]}" \
         $extra
@@ -286,10 +293,14 @@ for MODE in "${MODE_ARR[@]}"; do
                 if [ "$TIMING_ENABLED" = false ]; then
                     SUFFIX_EXTRA="${SUFFIX_EXTRA}_notiming"
                 fi
+                MB_TAG_S=""
+                if [ "$NUM_MICRO_BATCHES" -ne 2 ]; then
+                    MB_TAG_S="_mb${NUM_MICRO_BATCHES}"
+                fi
                 if [ "$EP_SIZE" -gt 1 ]; then
-                    REPORT="$OUTDIR/report_${MODE}_npu_ep${EP_SIZE}_${FFN_EP_BACKEND}_b${BATCH}_s${SEQ}_t${TOKENS}${SUFFIX_EXTRA}.md"
+                    REPORT="$OUTDIR/report_${MODE}_npu_ep${EP_SIZE}_${FFN_EP_BACKEND}${MB_TAG_S}_b${BATCH}_s${SEQ}_t${TOKENS}${SUFFIX_EXTRA}.md"
                 else
-                    REPORT="$OUTDIR/report_${MODE}_b${BATCH}_s${SEQ}_t${TOKENS}${SUFFIX_EXTRA}.md"
+                    REPORT="$OUTDIR/report_${MODE}_npu${MB_TAG_S}_b${BATCH}_s${SEQ}_t${TOKENS}${SUFFIX_EXTRA}.md"
                 fi
                 if [ "$TIMING_ENABLED" = false ]; then
                     REPORT=""
