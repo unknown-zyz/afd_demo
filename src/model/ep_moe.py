@@ -104,6 +104,8 @@ class EPWorkItem:
     dispatch_enqueue_done_s: float = 0.0
     reduce_start_s: float = 0.0
     reduce_enqueue_done_s: float = 0.0
+    fused_buf: Optional[torch.Tensor] = None
+    fused_layout: Optional[tuple] = None
 
 
 class ShardedExperts(nn.Module):
@@ -261,9 +263,19 @@ class EPFFNLayer(nn.Module):
     ) -> None:
         group = self.ctx.ffn_ep_dispatch_group
         src = self.ctx.ffn_coordinator_rank
-        dist.broadcast(hidden_2d, src=src, group=group)
-        dist.broadcast(selected_experts, src=src, group=group)
-        dist.broadcast(routing_weights, src=src, group=group)
+        h_bytes = hidden_2d.numel() * hidden_2d.element_size()
+        s_bytes = selected_experts.numel() * selected_experts.element_size()
+        r_bytes = routing_weights.numel() * routing_weights.element_size()
+        fused_buf = torch.empty(h_bytes + s_bytes + r_bytes, dtype=torch.uint8, device=self.layer_device)
+        if self.is_coordinator:
+            fused_buf[:h_bytes].copy_(hidden_2d.contiguous().view(torch.uint8).reshape(-1))
+            fused_buf[h_bytes:h_bytes + s_bytes].copy_(selected_experts.contiguous().view(torch.uint8).reshape(-1))
+            fused_buf[h_bytes + s_bytes:].copy_(routing_weights.contiguous().view(torch.uint8).reshape(-1))
+        dist.broadcast(fused_buf, src=src, group=group)
+        if not self.is_coordinator:
+            hidden_2d.view(torch.uint8).reshape(-1).copy_(fused_buf[:h_bytes])
+            selected_experts.view(torch.uint8).reshape(-1).copy_(fused_buf[h_bytes:h_bytes + s_bytes])
+            routing_weights.view(torch.uint8).reshape(-1).copy_(fused_buf[h_bytes + s_bytes:])
 
     def create_work_item(
         self,
@@ -321,14 +333,32 @@ class EPFFNLayer(nn.Module):
         )
 
     def dispatch_async(self, item: EPWorkItem) -> None:
-        """Enqueue coordinator-to-expert EP broadcasts for one micro-batch."""
+        """Enqueue coordinator-to-expert EP broadcast for one micro-batch (fused)."""
         group = self.ctx.ffn_ep_dispatch_group
         src = self.ctx.ffn_coordinator_rank
+
+        h = item.hidden_2d
+        s = item.selected_experts
+        r = item.routing_weights
+        h_bytes = h.numel() * h.element_size()
+        s_bytes = s.numel() * s.element_size()
+        r_bytes = r.numel() * r.element_size()
+        total_bytes = h_bytes + s_bytes + r_bytes
+
         item.dispatch_start_s = time.perf_counter()
+        fused_buf = torch.empty(total_bytes, dtype=torch.uint8, device=self.layer_device)
+        if self.is_coordinator:
+            fused_buf[:h_bytes].copy_(h.contiguous().view(torch.uint8).reshape(-1))
+            fused_buf[h_bytes:h_bytes + s_bytes].copy_(s.contiguous().view(torch.uint8).reshape(-1))
+            fused_buf[h_bytes + s_bytes:].copy_(r.contiguous().view(torch.uint8).reshape(-1))
+        else:
+            item.hidden_2d = fused_buf[:h_bytes].view(h.dtype).reshape(h.shape)
+            item.selected_experts = fused_buf[h_bytes:h_bytes + s_bytes].view(s.dtype).reshape(s.shape)
+            item.routing_weights = fused_buf[h_bytes + s_bytes:].view(r.dtype).reshape(r.shape)
+        item.fused_buf = fused_buf
+        item.fused_layout = (h_bytes, s_bytes, r_bytes)
         item.dispatch_handles = [
-            dist.broadcast(item.hidden_2d, src=src, group=group, async_op=True),
-            dist.broadcast(item.selected_experts, src=src, group=group, async_op=True),
-            dist.broadcast(item.routing_weights, src=src, group=group, async_op=True),
+            dist.broadcast(fused_buf, src=src, group=group, async_op=True),
         ]
         item.dispatch_enqueue_done_s = time.perf_counter()
         item.timing.ep_dispatch_enqueue_s = item.dispatch_enqueue_done_s - item.dispatch_start_s
