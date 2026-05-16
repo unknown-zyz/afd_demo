@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Round-8 Track A:
   1) decode-dbo throughput heatmap (token/s = batch * 1000 / TPOT_ms)
-  2) seq=512: throughput vs batch + TPOT vs batch (two separate figures)
+  2) seq=512: decode-dbo and serial throughput vs batch + TPOT vs batch
   3) seq=512: attn / ffn compute time vs batch markdown table
 
 Inputs:
-  - results_npu_ep7/experiment_matrix_summary.csv (decode-dbo rows)
+  - results_npu_ep7/experiment_matrix_summary.csv (decode-dbo + serial rows)
   - results_npu_ep7/decode-dbo/timing_attention_*_b{B}_s512_t20.json
   - results_npu_ep7/decode-dbo/timing_ffn_coordinator_*_b{B}_s512_t20.json
 """
@@ -24,11 +24,11 @@ DOC_OUT = Path(__file__).resolve().parent.parent / "doc" / "compute_time_vs_batc
 CONFIG_RE = re.compile(r"_b(?P<b>\d+)_s(?P<s>\d+)_t(?P<t>\d+)\.json$")
 
 
-def load_decode_dbo_rows():
+def load_metric_rows(mode: str):
     rows = []
     with CSV_PATH.open() as f:
         for r in csv.DictReader(f):
-            if r["mode"] != "decode-dbo":
+            if r["mode"] != mode:
                 continue
             try:
                 b = int(r["batch"]); s = int(r["seq"]); t = int(r["tokens"])
@@ -38,6 +38,10 @@ def load_decode_dbo_rows():
             rows.append({"batch": b, "seq": s, "tokens": t, "tpot_ms": tpot,
                          "throughput": b * 1000.0 / tpot})
     return rows
+
+
+def load_decode_dbo_rows():
+    return load_metric_rows("decode-dbo")
 
 
 def make_throughput_heatmap(rows):
@@ -78,48 +82,48 @@ def make_throughput_heatmap(rows):
     print(f"Wrote {out}")
 
 
-def make_s512_lineplots(rows):
+def make_s512_lineplots(rows, label: str, out_prefix: str, color_prefix: str = "tab"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     s512 = sorted([r for r in rows if r["seq"] == 512], key=lambda r: r["batch"])
     if not s512:
-        print("no s=512 rows; skipping line plots")
+        print(f"no {label} s=512 rows; skipping line plots")
         return
     bs = [r["batch"] for r in s512]
     thr = [r["throughput"] for r in s512]
     tpot = [r["tpot_ms"] for r in s512]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(bs, thr, marker="o", color="tab:blue", linewidth=2)
+    ax.plot(bs, thr, marker="o", color=f"{color_prefix}:blue", linewidth=2)
     ax.set_xscale("log", base=2)
     ax.set_xticks(bs); ax.set_xticklabels(bs)
     ax.set_xlabel("Batch (log2)")
     ax.set_ylabel("Throughput (token/s)")
-    ax.set_title("Decode-DBO Throughput vs Batch (seq=512, npu-ep7, t=20)")
+    ax.set_title(f"{label} Throughput vs Batch (seq=512, npu-ep7, t=20)")
     ax.grid(True, alpha=0.3)
     for x, y in zip(bs, thr):
         ax.annotate(f"{y:.0f}", (x, y), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=8)
     plt.tight_layout()
-    out = ROOT / "decode_dbo_throughput_vs_batch_s512.png"
+    out = ROOT / f"{out_prefix}_throughput_vs_batch_s512.png"
     plt.savefig(out, dpi=120); plt.close()
     print(f"Wrote {out}")
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(bs, tpot, marker="s", color="tab:red", linewidth=2)
+    ax.plot(bs, tpot, marker="s", color=f"{color_prefix}:red", linewidth=2)
     ax.set_xscale("log", base=2)
     ax.set_xticks(bs); ax.set_xticklabels(bs)
     ax.set_xlabel("Batch (log2)")
     ax.set_ylabel("TPOT (ms)")
-    ax.set_title("Decode-DBO TPOT vs Batch (seq=512, npu-ep7, t=20)")
+    ax.set_title(f"{label} TPOT vs Batch (seq=512, npu-ep7, t=20)")
     ax.grid(True, alpha=0.3)
     for x, y in zip(bs, tpot):
         ax.annotate(f"{y:.1f}", (x, y), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=8)
     plt.tight_layout()
-    out = ROOT / "decode_dbo_tpot_vs_batch_s512.png"
+    out = ROOT / f"{out_prefix}_tpot_vs_batch_s512.png"
     plt.savefig(out, dpi=120); plt.close()
     print(f"Wrote {out}")
 
@@ -211,9 +215,12 @@ def write_compute_doc(rows):
 
 def main():
     rows = load_decode_dbo_rows()
+    serial_rows = load_metric_rows("serial")
     print(f"Loaded {len(rows)} decode-dbo CSV rows")
+    print(f"Loaded {len(serial_rows)} serial CSV rows")
     make_throughput_heatmap(rows)
-    make_s512_lineplots(rows)
+    make_s512_lineplots(rows, "Decode-DBO", "decode_dbo")
+    make_s512_lineplots(serial_rows, "Serial", "serial")
     compute_rows = aggregate_compute_time()
     print(f"Aggregated {len(compute_rows)} compute-time configs at s=512")
     write_compute_doc(compute_rows)

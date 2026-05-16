@@ -94,6 +94,8 @@ round-5 prefill-dbo 仅 8 个配置（b8/16/32/64 × s512/1024）。本轮覆盖
 - `prefill_dbo_speedup_heatmap.png` — prefill DBO speedup 热力图
 - `decode_dbo_crosslayer_speedup_heatmap.png` — decode-crosslayer speedup 热力图
 - `crosslayer_comparison.png` — DBO vs crosslayer 同 (b,s) 对比
+- `serial_throughput_vs_batch_s512.png` — serial 在 seq=512 下的 throughput vs batch
+- `serial_tpot_vs_batch_s512.png` — serial 在 seq=512 下的 TPOT vs batch
 
 历史快照（round-4/5，保留参照，**勿用于结论**）：
 
@@ -105,12 +107,42 @@ round-5 prefill-dbo 仅 8 个配置（b8/16/32/64 × s512/1024）。本轮覆盖
 
 `pipeline_figs/`，命名约定：`{mode}_b{batch}_s{seq}_t{tokens}.png`，其中 mode ∈ {`decode_dbo`, `decode_crosslayer`, `prefill_dbo`}。
 
+`pipeline_figs_no_l0/` 是 decode-dbo 的 L0-filtered 重绘目录：每张图从 L1 开始画（`--start-layer 1 --num-layers 3 --no-auto-skip-warmup`），用于排除首层/首 micro-batch 的冷启动视觉干扰。现有静态分析见 `decode_dbo_l0_warmup_analysis.{csv,md}`：当前 EP7 decode-dbo 数据中 L0/mb0 相对后续层的最大倍率约 2.06×，没有达到 5× cold-start 阈值，因此它不像“完全没做 warmup”导致的巨大异常；更像首层调度/接收排队与 decode 首步 lazy path 的轻量放大。
+
 | 类别 | 张数 | 备注 |
 |---|---|---|
 | `decode_dbo_*` | 42 | 与 `decode-dbo/` 报告一一对应 |
 | `prefill_dbo_*` | 35 | 与 `prefill-dbo/` 报告一一对应 |
 | `decode_crosslayer_*` | 34 | 沿用 round-5 |
 | **合计** | **111** | |
+
+## Warmup 说明与 ablation
+
+当前代码里有两类 warmup，预热对象不同：
+
+- `--warmup-p2p --warmup-rounds N`：预热 HCCL/NCCL P2P 通信、communicator/proxy/lazy init 和 send/recv 路径，不跑模型 forward。
+- `--prefill-warmup-rounds N`：正式计时前跑 untimed prefill forward，并关闭 scheduler timing，吸收 prefill shape 下的 NPU JIT / graph compile / kernel lazy init；它不保证覆盖 decode loop 首步的所有 lazy path。
+
+NPU matrix runner 已支持四种组合，输出 suffix 会带 `wp2p*/pw*`，避免覆盖：
+
+```bash
+DRY_RUN=true BATCHES=4 SEQS=512 bash scripts/run_warmup_ablation_npu.sh
+
+# 实跑默认小矩阵：decode-dbo, batches={4,16,64}, seq=512
+bash scripts/run_warmup_ablation_npu.sh
+
+# 聚合 warmup_ablation 目录
+python3 scripts/aggregate_warmup_ablation_npu.py --root results_npu_ep7/warmup_ablation
+```
+
+四个变体：
+
+| variant | P2P warmup | prefill warmup |
+|---|---:|---:|
+| `both_on` | on | 1 round |
+| `p2p_only` | on | 0 round |
+| `prefill_only` | off | 1 round |
+| `both_off` | off | 0 round |
 
 ## 复现命令
 

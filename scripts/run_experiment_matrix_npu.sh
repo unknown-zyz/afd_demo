@@ -26,6 +26,12 @@
 #   --output-root path   Output root (default: results_npu)
 #   --serial-cache-root path  Serial cache root (default: results_npu/serial/cache)
 #   --comm-timing-mode enqueue | completion    (default: enqueue)
+#   --warmup-p2p / --no-warmup-p2p
+#                       Toggle untimed P2P communication warmup before inference
+#   --warmup-rounds N   P2P warmup rounds when --warmup-p2p is enabled (default: 5)
+#   --prefill-warmup-rounds N
+#                       Untimed prefill forward warmup rounds. If omitted, src.main
+#                       default applies (NPU: 1, CUDA/CPU: 0). Pass 0 to disable.
 #   --no-timing     Disable detailed timing/report output for overhead checks
 #   --no-cache      Force rerun of serial even if cached
 #   --append        Append to existing summary instead of replacing it
@@ -53,6 +59,11 @@ APPEND=false
 DRY_RUN=false
 CORRECTNESS_TOKENS=0
 NUM_MICRO_BATCHES=2
+WARMUP_P2P=false
+WARMUP_P2P_EXPLICIT=false
+WARMUP_ROUNDS=5
+PREFILL_WARMUP_ROUNDS=""
+PREFILL_WARMUP_EXPLICIT=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -71,12 +82,16 @@ while [ $# -gt 0 ]; do
         --comm-timing-mode) COMM_TIMING_MODE="$2"; shift 2;;
         --correctness-tokens) CORRECTNESS_TOKENS="$2"; shift 2;;
         --num-micro-batches) NUM_MICRO_BATCHES="$2"; shift 2;;
+        --warmup-p2p) WARMUP_P2P=true; WARMUP_P2P_EXPLICIT=true; shift;;
+        --no-warmup-p2p) WARMUP_P2P=false; WARMUP_P2P_EXPLICIT=true; shift;;
+        --warmup-rounds) WARMUP_ROUNDS="$2"; shift 2;;
+        --prefill-warmup-rounds) PREFILL_WARMUP_ROUNDS="$2"; PREFILL_WARMUP_EXPLICIT=true; shift 2;;
         --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
         --append) APPEND=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
         -h|--help)
-            sed -n '2,20p' "$0"; exit 0;;
+            sed -n '2,36p' "$0"; exit 0;;
         *) echo "Unknown option: $1"; exit 1;;
     esac
 done
@@ -87,6 +102,14 @@ IFS=',' read -ra SEQ_ARR   <<< "$SEQS"
 
 if [[ "$COMM_TIMING_MODE" != "enqueue" && "$COMM_TIMING_MODE" != "completion" ]]; then
     echo "ERROR: --comm-timing-mode must be enqueue or completion" >&2
+    exit 1
+fi
+if ! [[ "$WARMUP_ROUNDS" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --warmup-rounds must be a non-negative integer" >&2
+    exit 1
+fi
+if [ -n "$PREFILL_WARMUP_ROUNDS" ] && ! [[ "$PREFILL_WARMUP_ROUNDS" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --prefill-warmup-rounds must be a non-negative integer" >&2
     exit 1
 fi
 
@@ -112,6 +135,16 @@ if [ "$EP_SIZE" -gt 1 ]; then
     ACTIVE_WORLD_SIZE=$((EP_SIZE + 1))
 fi
 
+WARMUP_TAG=""
+if [ "$WARMUP_P2P_EXPLICIT" = true ] || [ "$PREFILL_WARMUP_EXPLICIT" = true ]; then
+    WARMUP_P2P_LABEL=0
+    if [ "$WARMUP_P2P" = true ]; then
+        WARMUP_P2P_LABEL=1
+    fi
+    PREFILL_WARMUP_LABEL="${PREFILL_WARMUP_ROUNDS:-auto}"
+    WARMUP_TAG="_wp2p${WARMUP_P2P_LABEL}_pw${PREFILL_WARMUP_LABEL}"
+fi
+
 # Runner wrapper --------------------------------------------------------------
 run_one() {
     local mode="$1" batch="$2" seq="$3" tokens="$4"
@@ -123,6 +156,7 @@ run_one() {
     if [ "$TIMING_ENABLED" = false ]; then
         suffix_extra="${suffix_extra}_notiming"
     fi
+    suffix_extra="${suffix_extra}${WARMUP_TAG}"
     local mb_tag=""
     if [ "$NUM_MICRO_BATCHES" -ne 2 ]; then
         mb_tag="_mb${NUM_MICRO_BATCHES}"
@@ -142,10 +176,19 @@ run_one() {
     if [ "$CORRECTNESS_TOKENS" -gt 0 ]; then
         extra="$extra --correctness-check $CORRECTNESS_TOKENS"
     fi
+    if [ "$WARMUP_P2P" = true ]; then
+        extra="$extra --warmup-p2p --warmup-rounds $WARMUP_ROUNDS"
+    fi
+    if [ -n "$PREFILL_WARMUP_ROUNDS" ]; then
+        extra="$extra --prefill-warmup-rounds $PREFILL_WARMUP_ROUNDS"
+    fi
 
     echo ""
     echo "════════════════════════════════════════════════════════════"
     echo "  Running: $run_suffix"
+    if [ -n "$WARMUP_TAG" ]; then
+        echo "  Warmup: p2p=$WARMUP_P2P rounds=$WARMUP_ROUNDS prefill_rounds=${PREFILL_WARMUP_ROUNDS:-auto}"
+    fi
     echo "════════════════════════════════════════════════════════════"
     if [ "$DRY_RUN" = true ]; then
         if [ -n "$RUN_PRESET" ]; then
@@ -225,12 +268,18 @@ run_one() {
 
     # Cache serial baselines
     if [ "$mode" = "serial" ] && [ -f "$attn_dst" ]; then
-        cp -f "$attn_dst" "$ROOT_OUT/serial/cache/b${batch}_s${seq}_t${tokens}.json"
-        cp -f "$attn_dst" "$SERIAL_CACHE_ROOT/b${batch}_s${seq}_t${tokens}.json"
+        cp -f "$attn_dst" "$ROOT_OUT/serial/cache/b${batch}_s${seq}_t${tokens}${WARMUP_TAG}.json"
+        cp -f "$attn_dst" "$SERIAL_CACHE_ROOT/b${batch}_s${seq}_t${tokens}${WARMUP_TAG}.json"
     fi
 
     # Generate report (uses serial baseline from cache if available)
-    local cache_file="$SERIAL_CACHE_ROOT/b${batch}_s${seq}_t${tokens}.json"
+    local cache_file="$SERIAL_CACHE_ROOT/b${batch}_s${seq}_t${tokens}${WARMUP_TAG}.json"
+    if [ ! -f "$cache_file" ]; then
+        cache_file="$ROOT_OUT/serial/cache/b${batch}_s${seq}_t${tokens}${WARMUP_TAG}.json"
+    fi
+    if [ ! -f "$cache_file" ] && [ -n "$WARMUP_TAG" ]; then
+        cache_file="$SERIAL_CACHE_ROOT/b${batch}_s${seq}_t${tokens}.json"
+    fi
     if [ ! -f "$cache_file" ]; then
         cache_file="$ROOT_OUT/serial/cache/b${batch}_s${seq}_t${tokens}.json"
     fi
@@ -253,7 +302,7 @@ run_one() {
 SUMMARY="$ROOT_OUT/experiment_matrix_summary.csv"
 VISIBLE_CHIP_POOL=$(echo "$VISIBLE_DEVS" | tr ',' '\n' | wc -l)
 if [ "$APPEND" = false ] || [ ! -f "$SUMMARY" ]; then
-    echo "mode,batch,seq,tokens,preset,ffn_ep_backend,visible_chip_pool,active_world_size,status,report" > "$SUMMARY"
+    echo "mode,batch,seq,tokens,preset,ffn_ep_backend,visible_chip_pool,active_world_size,status,report,warmup_p2p,warmup_rounds,prefill_warmup_rounds,warmup_tag" > "$SUMMARY"
 fi
 
 for MODE in "${MODE_ARR[@]}"; do
@@ -267,24 +316,30 @@ for MODE in "${MODE_ARR[@]}"; do
 
     for SEQ in "${SEQ_ARR[@]}"; do
         for BATCH in "${BATCH_ARR[@]}"; do
-            CACHE="$SERIAL_CACHE_ROOT/b${BATCH}_s${SEQ}_t${TOKENS}.json"
+            CACHE="$SERIAL_CACHE_ROOT/b${BATCH}_s${SEQ}_t${TOKENS}${WARMUP_TAG}.json"
             if [ ! -f "$CACHE" ]; then
-                CACHE="$ROOT_OUT/serial/cache/b${BATCH}_s${SEQ}_t${TOKENS}.json"
+                CACHE="$ROOT_OUT/serial/cache/b${BATCH}_s${SEQ}_t${TOKENS}${WARMUP_TAG}.json"
+            fi
+            if [ ! -f "$CACHE" ] && [ -z "$WARMUP_TAG" ]; then
+                CACHE="$SERIAL_CACHE_ROOT/b${BATCH}_s${SEQ}_t${TOKENS}.json"
+                if [ ! -f "$CACHE" ]; then
+                    CACHE="$ROOT_OUT/serial/cache/b${BATCH}_s${SEQ}_t${TOKENS}.json"
+                fi
             fi
             if [ "$MODE" = "serial" ] && [ "$NO_CACHE" = false ] && [ -f "$CACHE" ]; then
                 echo "[cache-hit] serial b${BATCH}_s${SEQ}_t${TOKENS}  (skipping)"
-                echo "serial,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,cached,$CACHE" >> "$SUMMARY"
+                echo "serial,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,cached,$CACHE,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
                 continue
             fi
 
             run_one "$MODE" "$BATCH" "$SEQ" "$TOKENS" "$OUTDIR"
             rc=$?
             if [ $rc -eq 2 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,OOM," >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,OOM,,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
                 echo "↳ OOM reached for $MODE seq=$SEQ; skipping larger batches."
                 break
             elif [ $rc -ne 0 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,FAIL," >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,FAIL,,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
             else
                 SUFFIX_EXTRA=""
                 if [ "$COMM_TIMING_MODE" = "completion" ]; then
@@ -293,6 +348,7 @@ for MODE in "${MODE_ARR[@]}"; do
                 if [ "$TIMING_ENABLED" = false ]; then
                     SUFFIX_EXTRA="${SUFFIX_EXTRA}_notiming"
                 fi
+                SUFFIX_EXTRA="${SUFFIX_EXTRA}${WARMUP_TAG}"
                 MB_TAG_S=""
                 if [ "$NUM_MICRO_BATCHES" -ne 2 ]; then
                     MB_TAG_S="_mb${NUM_MICRO_BATCHES}"
@@ -305,7 +361,7 @@ for MODE in "${MODE_ARR[@]}"; do
                 if [ "$TIMING_ENABLED" = false ]; then
                     REPORT=""
                 fi
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,ok,$REPORT" >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,ok,$REPORT,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
             fi
         done
     done

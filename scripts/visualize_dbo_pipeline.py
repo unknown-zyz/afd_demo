@@ -30,6 +30,8 @@ completion span 包含真实数据搬运，但也可能包含 backend 排队、�
         --output results/prefill_dbo/dbo_pipeline_local_b8_s128_t5.png
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
