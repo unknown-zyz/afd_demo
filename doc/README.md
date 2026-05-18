@@ -17,6 +17,7 @@
 | 8 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) | 最新 GPU/NPU 矩阵覆盖率、speedup、OOM 边界和结论。 |
 | 9 | [branch_consolidation.md](branch_consolidation.md) | 分支合入/删除建议与主线合并依据。 |
 | 10 | [experiment_archive.md](experiment_archive.md) | MB4、controller、dual-stream、MoE backend 等实验结论归档。 |
+| 11 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) | 910C 远程容器创建、环境部署、代码同步与冒烟流程。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。
@@ -32,7 +33,7 @@
 | 跑 GPU 全矩阵 | [02-usage.md](02-usage.md) |
 | 跑 NPU 全矩阵 | [02-usage.md](02-usage.md) |
 | 部署 GPU 多机 | [04-deployment.md](04-deployment.md) |
-| 使用 910C 容器 | [04-deployment.md](04-deployment.md) |
+| 使用 910C 容器 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) |
 | 判断 speedup 是否可信 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) |
 | 查看最新实验结论 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) |
 | 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |

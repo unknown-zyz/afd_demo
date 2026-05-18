@@ -91,6 +91,9 @@ bash scripts/run_node.sh attention <master_ip> <port> --prompt "Hello"
 
 ## 5. Ascend 910C NPU 工作流
 
+> 完整容器创建、环境部署、代码同步与冒烟流程见
+> [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md)。
+
 NPU 使用长期容器：
 
 ```bash
