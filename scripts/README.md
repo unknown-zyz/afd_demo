@@ -11,12 +11,13 @@
 | `run_experiment_matrix.sh` | GPU batch × seq × mode 矩阵扫描，写入 `results/experiment_matrix_summary.csv`。 |
 | `run_node.sh` | 手动启动单个 Attention 或 FFN 节点，用于多机调试。 |
 
-NPU/HCCL 脚本位于 `npu` 分支：
+NPU/HCCL 脚本已合入 `main`：
 
 | 脚本 | 用途 |
 |---|---|
 | `run_npu.sh` | Ascend 910C 单配置运行。当前验证拓扑显式使用 `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`。 |
 | `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`。 |
+| `run_warmup_ablation_npu.sh` | Ascend 910C warmup ablation：P2P warmup 与 prefill warmup 的 2x2 开关实验。 |
 
 ## 报告与验证
 

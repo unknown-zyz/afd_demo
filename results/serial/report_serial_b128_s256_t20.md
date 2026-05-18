@@ -13,11 +13,11 @@
 
 | Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Model-side generation total | 25350.047 ms | 25350.000 ms |
-| Prefill / TTFT-path | 3101.923 ms | 2980.160 ms |
-| Decode loop total | 22064.613 ms | 22064.517 ms |
-| Decode steps | 19 | 19 |
-| Decode TPOT | 1161.295 ms | 1161.290 ms |
+| Model-side generation total | 26214.321 ms | 26200.531 ms |
+| Prefill / TTFT-path | - | - |
+| Decode loop total | - | - |
+| Decode steps | - | - |
+| Decode TPOT | - | - |
 | Legacy decode step (not exact TPOT) | - | - |
 | Compute | - | - |
 | Recv wait | - | - |
@@ -25,7 +25,7 @@
 | MoE experts | - | - |
 | MoE shared/dense | - | - |
 | Compute ratio | - | - |
-| Tokens/sec | 0.79 | - |
+| Tokens/sec | 0.76 | - |
 
 - `Model-side generation total` is `total_time_ms` for the full generation call.
 - The Attention/FFN columns are rank-level wall-clock views of the same serial run; they are not per-role compute decomposition.

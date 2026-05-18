@@ -7,7 +7,7 @@
 
 | 顺序 | 文档 | 内容 |
 |---:|---|---|
-| 1 | [01-architecture.md](01-architecture.md) | AFD/DBO 架构、scheduler、KV cache、CUDA/NPU backend。 |
+| 1 | [01-architecture.md](01-architecture.md) | AFD/DBO 架构、A/F/EP 拆分、NPU EP overlap、token-aware 设计、KV cache、CUDA/NPU backend。 |
 | 2 | [02-usage.md](02-usage.md) | Serial、prefill DBO、decode DBO、crosslayer 和矩阵实验命令。 |
 | 3 | [03-api-reference.md](03-api-reference.md) | 当前公开代码接口和脚本接口。 |
 | 4 | [04-deployment.md](04-deployment.md) | GPU local、GPU multinode、Ascend 910C 容器部署。 |
@@ -15,6 +15,9 @@
 | 6 | [06-npu-910c-adaptation.md](06-npu-910c-adaptation.md) | 910C / HCCL 适配、验证拓扑、已知限制。 |
 | 7 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) | TTFT/TPOT 口径、旧 NPU 5x 误判原因、baseline audit。 |
 | 8 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) | 最新 GPU/NPU 矩阵覆盖率、speedup、OOM 边界和结论。 |
+| 9 | [branch_consolidation.md](branch_consolidation.md) | 分支合入/删除建议与主线合并依据。 |
+| 10 | [experiment_archive.md](experiment_archive.md) | MB4、controller、dual-stream、MoE backend 等实验结论归档。 |
+| 11 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) | 910C 远程容器创建、环境部署、代码同步与冒烟流程。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。
@@ -30,9 +33,12 @@
 | 跑 GPU 全矩阵 | [02-usage.md](02-usage.md) |
 | 跑 NPU 全矩阵 | [02-usage.md](02-usage.md) |
 | 部署 GPU 多机 | [04-deployment.md](04-deployment.md) |
-| 使用 910C 容器 | [04-deployment.md](04-deployment.md) |
+| 使用 910C 容器 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) |
 | 判断 speedup 是否可信 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) |
 | 查看最新实验结论 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) |
+| 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |
+| 判断哪些实验分支可以删除 | [branch_consolidation.md](branch_consolidation.md) |
+| 查负结果实验结论 | [experiment_archive.md](experiment_archive.md) |
 
 ## 当前实验结论摘要
 
@@ -42,6 +48,8 @@
 - Decode DBO 的 pipeline 明细来自 0-based decode step 1，只用于观察 overlap，不用于最终加速比。
 - 旧的 “NPU decode DBO 约 5x 加速” 是口径误用导致的历史结论，不能继续引用。
 - 当前 fresh rerun 中，最稳定的正收益来自 NPU prefill DBO；GPU DBO 和 NPU decode DBO 的中位数都低于 `1.0x`。
+- NPU EP7 + `broadcast_reduce_overlap` 是当前 NPU 主实验线，详见 `results_npu_ep7/README.md`。
+- MB2 fused dispatch 在小/中 batch decode 中有正收益；MB4 是负结果但保留为实验参数，详见 [experiment_archive.md](experiment_archive.md)。
 
 ## 维护原则
 

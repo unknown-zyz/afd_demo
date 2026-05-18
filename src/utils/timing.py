@@ -8,11 +8,11 @@ Records per-micro-batch timing for each stage:
 - Recv wait
 
 Supports two timing modes:
-- "cuda_events" (default): Uses current_stream().synchronize() + perf_counter.
+    - "cuda_events" (default): Uses current accelerator stream synchronize + perf_counter.
   Stream-level sync only blocks the default compute stream (not NCCL streams),
   preserving DBO overlap while giving consistent CPU timestamps for all events.
   This ensures compute and communication events share a single timeline.
-- "sync": Legacy mode using torch.cuda.synchronize() (device-level) + perf_counter.
+    - "sync": Legacy mode using device-level synchronize + perf_counter.
   Syncs ALL streams including NCCL — breaks DBO overlap. For debugging only.
 
 Outputs JSON timeline data for visualization.
@@ -27,6 +27,8 @@ from enum import Enum
 
 import torch
 
+from . import device as devmod
+
 
 class EventType(Enum):
     ATTN_COMPUTE = "attn_compute"
@@ -34,6 +36,12 @@ class EventType(Enum):
     MOE_ROUTER = "moe_router"
     MOE_EXPERTS = "moe_experts"
     MOE_SHARED_OR_DENSE = "moe_shared_or_dense"
+    EP_DISPATCH = "ep_dispatch"
+    EP_LOCAL_EXPERTS = "ep_local_experts"
+    EP_REDUCE = "ep_reduce"
+    EP_DISPATCH_WAIT = "ep_dispatch_wait"
+    EP_REDUCE_WAIT = "ep_reduce_wait"
+    EP_OVERLAP_HIDDEN = "ep_overlap_hidden"
     SEND_START = "send_start"
     # Send timing span. Meaning depends on PipelineTiming.comm_timing_mode:
     # "enqueue" records isend() return overhead; "completion" records effective
@@ -114,6 +122,12 @@ class PipelineTiming:
     total_moe_router_ms: float = 0.0
     total_moe_experts_ms: float = 0.0
     total_moe_shared_or_dense_ms: float = 0.0
+    total_ep_dispatch_ms: float = 0.0
+    total_ep_local_experts_ms: float = 0.0
+    total_ep_reduce_ms: float = 0.0
+    total_ep_dispatch_wait_ms: float = 0.0
+    total_ep_reduce_wait_ms: float = 0.0
+    total_ep_overlap_hidden_ms: float = 0.0
     
     def add_event(self, event: TimingEvent):
         self.events.append(event)
@@ -127,6 +141,18 @@ class PipelineTiming:
             self.total_moe_experts_ms += event.duration_ms
         elif event.event_type == EventType.MOE_SHARED_OR_DENSE.value:
             self.total_moe_shared_or_dense_ms += event.duration_ms
+        elif event.event_type == EventType.EP_DISPATCH.value:
+            self.total_ep_dispatch_ms += event.duration_ms
+        elif event.event_type == EventType.EP_LOCAL_EXPERTS.value:
+            self.total_ep_local_experts_ms += event.duration_ms
+        elif event.event_type == EventType.EP_REDUCE.value:
+            self.total_ep_reduce_ms += event.duration_ms
+        elif event.event_type == EventType.EP_DISPATCH_WAIT.value:
+            self.total_ep_dispatch_wait_ms += event.duration_ms
+        elif event.event_type == EventType.EP_REDUCE_WAIT.value:
+            self.total_ep_reduce_wait_ms += event.duration_ms
+        elif event.event_type == EventType.EP_OVERLAP_HIDDEN.value:
+            self.total_ep_overlap_hidden_ms += event.duration_ms
         elif event.event_type == EventType.RECV_WAIT.value:
             self.total_recv_wait_ms += event.duration_ms
         elif event.event_type == EventType.SEND_TRANSFER.value:
@@ -151,6 +177,12 @@ class PipelineTiming:
             "total_moe_router_ms": self.total_moe_router_ms,
             "total_moe_experts_ms": self.total_moe_experts_ms,
             "total_moe_shared_or_dense_ms": self.total_moe_shared_or_dense_ms,
+            "total_ep_dispatch_ms": self.total_ep_dispatch_ms,
+            "total_ep_local_experts_ms": self.total_ep_local_experts_ms,
+            "total_ep_reduce_ms": self.total_ep_reduce_ms,
+            "total_ep_dispatch_wait_ms": self.total_ep_dispatch_wait_ms,
+            "total_ep_reduce_wait_ms": self.total_ep_reduce_wait_ms,
+            "total_ep_overlap_hidden_ms": self.total_ep_overlap_hidden_ms,
             "compute_ratio": self.compute_ratio,
             "events": [e.to_dict() for e in self.events],
         }
@@ -195,6 +227,14 @@ class PipelineTiming:
                 f"experts={self.total_moe_experts_ms:.2f}ms, "
                 f"shared/dense={self.total_moe_shared_or_dense_ms:.2f}ms"
             )
+        if self.total_ep_dispatch_ms > 0 or self.total_ep_local_experts_ms > 0:
+            lines.append(
+                f"EP: dispatch={self.total_ep_dispatch_ms:.2f}ms, "
+                f"local_experts={self.total_ep_local_experts_ms:.2f}ms, "
+                f"reduce={self.total_ep_reduce_ms:.2f}ms, "
+                f"reduce_wait={self.total_ep_reduce_wait_ms:.2f}ms, "
+                f"hidden={self.total_ep_overlap_hidden_ms:.2f}ms"
+            )
         return "\n".join(lines)
 
 
@@ -205,10 +245,10 @@ class TimingTracker:
     Supports two modes:
     - "cuda_events" (default): Stream-level sync + CPU timestamps.
       current_stream().synchronize() only blocks the default compute stream,
-      not NCCL streams, so DBO overlap is preserved. All events use CPU
+      not NCCL/HCCL streams, so DBO overlap is preserved. All events use CPU
       perf_counter for a single consistent timeline.
-    - "sync": Device-level sync (torch.cuda.synchronize()) + CPU timestamps.
-      Syncs ALL streams including NCCL — breaks DBO overlap. For debugging.
+    - "sync": Device-level sync + CPU timestamps.
+      Syncs ALL streams including NCCL/HCCL — breaks DBO overlap. For debugging.
     
     Usage:
         tracker = TimingTracker("attention", num_layers=48, num_mb=2)
@@ -251,37 +291,33 @@ class TimingTracker:
         self._pending_send_events: Dict[int, Dict[str, Any]] = {}
         self._send_futures: List[Any] = []
         
-        if mode == "cuda_events" and torch.cuda.is_available():
-            # Verify CUDA is available for stream sync
-            pass
-        elif mode == "cuda_events":
-            # Fallback to sync if CUDA not available
-            self.mode = "sync"
+        if mode not in {"cuda_events", "sync"}:
+            raise ValueError(f"Unsupported timing mode: {mode}")
     
     def mark_start(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Record start of a GPU compute event.
         
         - cuda_events mode: current_stream().synchronize() + perf_counter.
-          Only syncs the default compute stream (not NCCL), preserving DBO overlap.
-        - sync mode: torch.cuda.synchronize() + perf_counter (syncs ALL streams).
+          Only syncs the default compute stream (not NCCL/HCCL), preserving DBO overlap.
+        - sync mode: device synchronize + perf_counter (syncs ALL streams).
         """
         if self.mode == "cuda_events":
-            torch.cuda.current_stream().synchronize()
+            devmod.current_stream_synchronize()
         else:
-            torch.cuda.synchronize()
+            devmod.synchronize()
         self._sync_start_time = time.perf_counter()
     
     def mark_end(self, event_type: EventType, layer_idx: int, mb_idx: int):
         """Record end of a GPU compute event.
         
         - cuda_events mode: current_stream().synchronize() + perf_counter.
-        - sync mode: torch.cuda.synchronize() + perf_counter.
+        - sync mode: device synchronize + perf_counter.
         Both record the event immediately via record_event().
         """
         if self.mode == "cuda_events":
-            torch.cuda.current_stream().synchronize()
+            devmod.current_stream_synchronize()
         else:
-            torch.cuda.synchronize()
+            devmod.synchronize()
         end_time = time.perf_counter()
         self.record_event(event_type, layer_idx, mb_idx,
                          self._sync_start_time, end_time)

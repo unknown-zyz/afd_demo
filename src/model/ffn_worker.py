@@ -17,6 +17,9 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
 
+from .ep_moe import EPFFNLayer, ExpertShardPlan, ShardedExperts
+from ..distributed import get_distributed_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +29,22 @@ class FFNStageTiming:
     router_s: float = 0.0
     experts_s: float = 0.0
     shared_or_dense_s: float = 0.0
+    ep_dispatch_s: float = 0.0
+    ep_local_experts_s: float = 0.0
+    ep_reduce_s: float = 0.0
+    ep_dispatch_enqueue_s: float = 0.0
+    ep_reduce_enqueue_s: float = 0.0
+    ep_dispatch_wait_s: float = 0.0
+    ep_reduce_wait_s: float = 0.0
+    ep_overlap_hidden_s: float = 0.0
+    ep_active_experts: int = 0
+    ep_local_assignments: int = 0
+    router_start_s: float = 0.0
+    router_end_s: float = 0.0
+    experts_start_s: float = 0.0
+    experts_end_s: float = 0.0
+    shared_or_dense_start_s: float = 0.0
+    shared_or_dense_end_s: float = 0.0
 
 
 class FFNLayer(nn.Module):
@@ -99,17 +118,23 @@ class FFNLayer(nn.Module):
             _, routing_weights, selected_experts = self.mlp.gate(hidden_states_2d)
             router_end = time.perf_counter()
             stage_timing.router_s = router_end - router_start
+            stage_timing.router_start_s = router_start
+            stage_timing.router_end_s = router_end
 
             experts_start = time.perf_counter()
             hidden_states = self.mlp.experts(hidden_states_2d, selected_experts, routing_weights)
             hidden_states = hidden_states.reshape(batch_size, seq_len, hidden_dim)
             experts_end = time.perf_counter()
             stage_timing.experts_s = experts_end - experts_start
+            stage_timing.experts_start_s = experts_start
+            stage_timing.experts_end_s = experts_end
         else:
             dense_start = time.perf_counter()
             hidden_states = self.mlp(hidden_states)
             dense_end = time.perf_counter()
             stage_timing.shared_or_dense_s = dense_end - dense_start
+            stage_timing.shared_or_dense_start_s = dense_start
+            stage_timing.shared_or_dense_end_s = dense_end
         
         # Second residual connection (FFN)
         hidden_states = residual + hidden_states
@@ -153,6 +178,8 @@ class FFNWorker(nn.Module):
         self.hidden_size = model.config.hidden_size
         self.num_layers = model.config.num_hidden_layers
         self.role_devices = self._resolve_role_devices(device)
+        self.ctx = get_distributed_context()
+        self.use_ep = self.ctx.ffn_ep_enabled
         
         # Extract and move components
         logger.info("Extracting FFN components from model...")
@@ -171,27 +198,62 @@ class FFNWorker(nn.Module):
             else:
                 layer_device_idx = 0
             layer_device = self.role_devices[layer_device_idx]
-            ffn_layer = FFNLayer(
-                post_attention_layernorm=layer.post_attention_layernorm.to(device=layer_device, dtype=dtype),
-                mlp=layer.mlp.to(device=layer_device, dtype=dtype),
-                hidden_size=self.hidden_size,
-                layer_idx=idx,
-                layer_device=layer_device,
-            )
+            if self.use_ep and hasattr(layer.mlp, "experts"):
+                experts = layer.mlp.experts
+                plan = ExpertShardPlan(
+                    num_experts=int(experts.num_experts),
+                    ep_size=self.ctx.ffn_ep_size,
+                    ep_rank=self.ctx.ffn_ep_rank,
+                    policy=self.ctx.config.ep_expert_policy,
+                )
+                sharded_experts = ShardedExperts(
+                    experts,
+                    plan,
+                    device=layer_device,
+                    dtype=dtype,
+                )
+                top_k = int(getattr(layer.mlp.gate, "top_k", getattr(model.config, "num_experts_per_tok", 8)))
+                ffn_layer = EPFFNLayer(
+                    post_attention_layernorm=(
+                        layer.post_attention_layernorm.to(device=layer_device, dtype=dtype)
+                        if self.ctx.is_ffn_coordinator
+                        else None
+                    ),
+                    gate=(
+                        layer.mlp.gate.to(device=layer_device, dtype=dtype)
+                        if self.ctx.is_ffn_coordinator
+                        else None
+                    ),
+                    sharded_experts=sharded_experts,
+                    hidden_size=self.hidden_size,
+                    top_k=top_k,
+                    layer_idx=idx,
+                    layer_device=layer_device,
+                    ctx=self.ctx,
+                )
+            else:
+                ffn_layer = FFNLayer(
+                    post_attention_layernorm=layer.post_attention_layernorm.to(device=layer_device, dtype=dtype),
+                    mlp=layer.mlp.to(device=layer_device, dtype=dtype),
+                    hidden_size=self.hidden_size,
+                    layer_idx=idx,
+                    layer_device=layer_device,
+                )
             self.ffn_layers.append(ffn_layer)
         self.supports_moe_timing = any(layer.is_sparse_moe for layer in self.ffn_layers)
 
         logger.info(
-            "FFNWorker initialized: layers=%d, devices=%s, moe_timing=%s",
+            "FFNWorker initialized: layers=%d, devices=%s, moe_timing=%s, ep=%s",
             self.num_layers,
             [str(d) for d in self.role_devices],
             self.supports_moe_timing,
+            self.use_ep,
         )
 
     def _resolve_role_devices(self, primary_device: torch.device) -> list[torch.device]:
         """Resolve all visible accelerator devices for role-internal layer sharding."""
         from ..utils import device as devmod
-        if primary_device.type != "cuda" or not devmod.is_available():
+        if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
             return [primary_device]
         count = devmod.device_count()
         if count <= 1:
