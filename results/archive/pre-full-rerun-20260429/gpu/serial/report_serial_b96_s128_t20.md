@@ -1,30 +1,43 @@
-# Experiment report — serial b96 s128 t20
+# Experiment report — serial b256 s128 t20
 
 ## Configuration
 
 - **Mode**: `serial`
-- **Batch size**: 96
+- **Batch size**: 256
 - **Prefill seq**: 128
 - **Decode tokens**: 20
 - **Layers**: ?
 - **Micro-batches**: ?
 
-## End-to-end decode timing (representative step)
+## Serial timing (model-side total + decode fields)
 
-| Metric | Attention | FFN |
+| Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Representative-step total | 25453.701 ms | 25439.928 ms |
+| Model-side generation total | 32431.164 ms | 32431.108 ms |
+| Prefill / TTFT-path | 2145.097 ms | 2141.421 ms |
+| Decode loop total | 29471.559 ms | 29471.559 ms |
+| Decode steps | 19 | 19 |
+| Decode TPOT | 1551.135 ms | 1551.135 ms |
+| Legacy decode step (not exact TPOT) | - | - |
 | Compute | - | - |
 | Recv wait | - | - |
 | MoE router | - | - |
 | MoE experts | - | - |
 | MoE shared/dense | - | - |
 | Compute ratio | - | - |
-| Tokens/sec | 0.79 | - |
+| Tokens/sec | 0.62 | - |
+
+- `Model-side generation total` is `total_time_ms` for the full generation call.
+- The Attention/FFN columns are rank-level wall-clock views of the same serial run; they are not per-role compute decomposition.
+- `Decode TPOT` is the serial decode baseline used for decode speedup.
+
+## Layer averages summary
+
+_No per-layer events recorded._
 
 ## Per-layer breakdown
 
 _No per-layer events recorded._
 
 ---
-_Generated from `timing_attention_serial_b96_s128_t20.json` + `timing_ffn_serial_b96_s128_t20.json`._
+_Generated from `timing_attention_serial_b256_s128_t20.json` + `timing_ffn_serial_b256_s128_t20.json`._

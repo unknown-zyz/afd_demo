@@ -131,6 +131,187 @@ class DecodeDBOScheduler:
         remainder = batch_size % num_mb
         return [base + (1 if i < remainder else 0) for i in range(num_mb)]
 
+    def _use_ep_overlap(self, num_mb: int) -> bool:
+        return (
+            self.ctx.ffn_ep_enabled
+            and self.ctx.config is not None
+            and self.ctx.config.ffn_ep_backend == "broadcast_reduce_overlap"
+            and num_mb >= 2
+        )
+
+    def _record_ffn_stage_timing(
+        self,
+        tracker: TimingTracker,
+        layer_idx: int,
+        mb_idx: int,
+        compute_start: float,
+        stage_timing: Any,
+    ) -> None:
+        """Record fine-grained MoE/EP stages within the FFN compute span."""
+        def _record_if_absolute(
+            event_type: EventType,
+            start_attr: str,
+            end_attr: str,
+        ) -> bool:
+            start = getattr(stage_timing, start_attr, 0.0)
+            end = getattr(stage_timing, end_attr, 0.0)
+            if start > 0 and end > start:
+                tracker.record_event(event_type, layer_idx, mb_idx, start, end)
+                return True
+            return False
+
+        has_absolute_stages = any(
+            getattr(stage_timing, attr, 0.0) > 0
+            for attr in (
+                "router_start_s",
+                "experts_start_s",
+                "shared_or_dense_start_s",
+                "ep_dispatch_start_s",
+                "ep_local_experts_start_s",
+                "ep_reduce_start_s",
+            )
+        )
+        if has_absolute_stages:
+            _record_if_absolute(EventType.MOE_ROUTER, "router_start_s", "router_end_s")
+            _record_if_absolute(EventType.MOE_EXPERTS, "experts_start_s", "experts_end_s")
+            _record_if_absolute(
+                EventType.MOE_SHARED_OR_DENSE,
+                "shared_or_dense_start_s",
+                "shared_or_dense_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_DISPATCH,
+                "ep_dispatch_start_s",
+                "ep_dispatch_wait_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_DISPATCH_WAIT,
+                "ep_dispatch_wait_start_s",
+                "ep_dispatch_wait_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_LOCAL_EXPERTS,
+                "ep_local_experts_start_s",
+                "ep_local_experts_end_s",
+            )
+            reduce_enqueue_done = getattr(stage_timing, "ep_reduce_enqueue_done_s", 0.0)
+            reduce_wait_start = getattr(stage_timing, "ep_reduce_wait_start_s", 0.0)
+            if reduce_enqueue_done > 0 and reduce_wait_start > reduce_enqueue_done:
+                tracker.record_event(
+                    EventType.EP_OVERLAP_HIDDEN,
+                    layer_idx,
+                    mb_idx,
+                    reduce_enqueue_done,
+                    reduce_wait_start,
+                )
+            _record_if_absolute(
+                EventType.EP_REDUCE,
+                "ep_reduce_start_s",
+                "ep_reduce_wait_end_s",
+            )
+            _record_if_absolute(
+                EventType.EP_REDUCE_WAIT,
+                "ep_reduce_wait_start_s",
+                "ep_reduce_wait_end_s",
+            )
+            return
+
+        cursor = compute_start
+        router_s = getattr(stage_timing, "router_s", 0.0)
+        if router_s > 0:
+            tracker.record_event(
+                EventType.MOE_ROUTER,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + router_s,
+            )
+            cursor += router_s
+
+        ep_dispatch_s = getattr(stage_timing, "ep_dispatch_s", 0.0)
+        if ep_dispatch_s > 0:
+            tracker.record_event(
+                EventType.EP_DISPATCH,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + ep_dispatch_s,
+            )
+            cursor += ep_dispatch_s
+
+        ep_dispatch_wait_s = getattr(stage_timing, "ep_dispatch_wait_s", 0.0)
+        if ep_dispatch_wait_s > 0:
+            tracker.record_event(
+                EventType.EP_DISPATCH_WAIT,
+                layer_idx,
+                mb_idx,
+                max(compute_start, cursor - ep_dispatch_wait_s),
+                cursor,
+            )
+
+        ep_local_experts_s = getattr(stage_timing, "ep_local_experts_s", 0.0)
+        if ep_local_experts_s > 0:
+            tracker.record_event(
+                EventType.EP_LOCAL_EXPERTS,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + ep_local_experts_s,
+            )
+            cursor += ep_local_experts_s
+        else:
+            experts_s = getattr(stage_timing, "experts_s", 0.0)
+            if experts_s > 0:
+                tracker.record_event(
+                    EventType.MOE_EXPERTS,
+                    layer_idx,
+                    mb_idx,
+                    cursor,
+                    cursor + experts_s,
+                )
+                cursor += experts_s
+
+        ep_reduce_s = getattr(stage_timing, "ep_reduce_s", 0.0)
+        if ep_reduce_s > 0:
+            tracker.record_event(
+                EventType.EP_REDUCE,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + ep_reduce_s,
+            )
+            cursor += ep_reduce_s
+
+        ep_reduce_wait_s = getattr(stage_timing, "ep_reduce_wait_s", 0.0)
+        if ep_reduce_wait_s > 0:
+            tracker.record_event(
+                EventType.EP_REDUCE_WAIT,
+                layer_idx,
+                mb_idx,
+                max(compute_start, cursor - ep_reduce_wait_s),
+                cursor,
+            )
+
+        ep_overlap_hidden_s = getattr(stage_timing, "ep_overlap_hidden_s", 0.0)
+        if ep_overlap_hidden_s > 0:
+            tracker.record_event(
+                EventType.EP_OVERLAP_HIDDEN,
+                layer_idx,
+                mb_idx,
+                max(compute_start, cursor - ep_reduce_wait_s - ep_overlap_hidden_s),
+                max(compute_start, cursor - ep_reduce_wait_s),
+            )
+
+        shared_or_dense_s = getattr(stage_timing, "shared_or_dense_s", 0.0)
+        if shared_or_dense_s > 0:
+            tracker.record_event(
+                EventType.MOE_SHARED_OR_DENSE,
+                layer_idx,
+                mb_idx,
+                cursor,
+                cursor + shared_or_dense_s,
+            )
+
     @torch.no_grad()
     def forward_decode_dbo(
         self,
@@ -165,6 +346,13 @@ class DecodeDBOScheduler:
 
         if self.ctx.is_attention_node:
             result = self._run_attention_decode(input_ids, position_ids, kv_cache, tracker)
+        elif self.ctx.is_ffn_expert_only and self.ctx.ffn_ep_enabled:
+            num_mb = min(self.num_micro_batches, batch_size)
+            if self._use_ep_overlap(num_mb):
+                self._run_ffn_ep_overlap_decode(batch_size, tracker, is_coordinator=False)
+            else:
+                self._run_ffn_ep_expert_decode(batch_size, tracker)
+            result = None
         else:
             self._run_ffn_decode(batch_size, tracker)
             result = None
@@ -474,6 +662,9 @@ class DecodeDBOScheduler:
         num_layers = self.model.num_layers
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
+        if self._use_ep_overlap(num_mb):
+            self._run_ffn_ep_overlap_decode(batch_size, tracker, is_coordinator=True)
+            return
         peer = self.ctx.peer_rank
         a2f_group = self.ctx.a2f_group
         f2a_group = self.ctx.f2a_group
@@ -511,15 +702,26 @@ class DecodeDBOScheduler:
                 if tracker:
                     tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
-                output = self.model.ffn_worker.forward_ffn_layer(
+                ffn_result = self.model.ffn_worker.forward_ffn_layer(
                     layer_idx=layer_idx,
                     hidden_states=a2f_recv_tensors[mb_idx],
+                    return_timing=bool(tracker and self.model.supports_moe_timing),
                 )
-                if isinstance(output, tuple):
-                    output = output[0]
+                if isinstance(ffn_result, tuple):
+                    output, stage_timing = ffn_result
+                else:
+                    output, stage_timing = ffn_result, None
                 output = output.contiguous()
                 if tracker:
                     tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    if stage_timing is not None:
+                        self._record_ffn_stage_timing(
+                            tracker,
+                            layer_idx,
+                            mb_idx,
+                            compute_start,
+                            stage_timing,
+                        )
                 compute_end = time.perf_counter()
                 compute_time = compute_end - compute_start
                 self.stats.compute_time += compute_time
@@ -569,6 +771,209 @@ class DecodeDBOScheduler:
                 a2f_recv_tensors = next_a2f_tensors
 
         self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
+
+    def _record_ep_item_timing(
+        self,
+        tracker: Optional[TimingTracker],
+        layer_idx: int,
+        mb_idx: int,
+        item,
+    ) -> None:
+        stage_timing = item.timing
+        compute_time = stage_timing.router_s + stage_timing.ep_local_experts_s
+        self.stats.compute_time += compute_time
+        self.stats.ffn_compute_time += compute_time
+        if tracker is None:
+            return
+
+        event_start = getattr(item, "ffn_event_start_s", time.perf_counter())
+        tracker.record_event(
+            EventType.FFN_COMPUTE,
+            layer_idx,
+            mb_idx,
+            event_start,
+            event_start + max(compute_time, 0.0),
+        )
+        self._record_ffn_stage_timing(
+            tracker,
+            layer_idx,
+            mb_idx,
+            event_start,
+            stage_timing,
+        )
+
+    def _run_ffn_ep_overlap_decode(
+        self,
+        batch_size: int,
+        tracker: Optional[TimingTracker] = None,
+        *,
+        is_coordinator: bool,
+    ) -> None:
+        """FFN EP decode path with in-layer MB overlap for dispatch/reduce."""
+        assert self.model.ffn_worker is not None
+
+        num_layers = self.model.num_layers
+        mb_sizes = self._compute_mb_sizes(batch_size)
+        num_mb = len(mb_sizes)
+
+        if is_coordinator:
+            peer = self.ctx.peer_rank
+            a2f_group = self.ctx.a2f_group
+            f2a_group = self.ctx.f2a_group
+            a2f_recv_handles: List[Optional[dist.Work]] = [None] * num_mb
+            a2f_recv_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
+            for mb_idx, mb_size in enumerate(mb_sizes):
+                tag = self._get_tag(0, mb_idx, "a2f")
+                recv_tensor = torch.empty(
+                    mb_size, 1, self.model.hidden_size,
+                    dtype=self.model.dtype, device=self.model.device,
+                )
+                a2f_recv_handles[mb_idx] = dist.irecv(
+                    recv_tensor, src=peer, tag=tag, group=a2f_group,
+                )
+                a2f_recv_tensors[mb_idx] = recv_tensor
+        else:
+            peer = None
+            a2f_group = None
+            f2a_group = None
+            a2f_recv_handles = []
+            a2f_recv_tensors = []
+
+        for layer_idx in range(num_layers):
+            layer = self.model.ffn_worker.ffn_layers[layer_idx]
+            items = []
+            send_handles: List[dist.Work] = []
+            next_a2f_handles: List[Optional[dist.Work]] = [None] * num_mb
+            next_a2f_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
+
+            for mb_idx, mb_size in enumerate(mb_sizes):
+                if is_coordinator:
+                    if tracker:
+                        tracker.mark_start(EventType.RECV_WAIT, layer_idx, mb_idx)
+                    recv_start = time.perf_counter()
+                    assert a2f_recv_handles[mb_idx] is not None
+                    a2f_recv_handles[mb_idx].wait()
+                    recv_end = time.perf_counter()
+                    if tracker:
+                        tracker.mark_end(EventType.RECV_WAIT, layer_idx, mb_idx)
+                    self.stats.a2f_comm_time += recv_end - recv_start
+                    hidden_states = a2f_recv_tensors[mb_idx]
+                else:
+                    hidden_states = torch.empty(
+                        mb_size, 1, self.model.hidden_size,
+                        dtype=self.model.dtype, device=self.model.device,
+                    )
+
+                item_start = time.perf_counter()
+                item = layer.create_work_item(
+                    hidden_states=hidden_states,
+                    output_device=self.model.device,
+                )
+                setattr(item, "ffn_event_start_s", item_start)
+                layer.dispatch_async(item)
+                items.append(item)
+
+            previous: Optional[Tuple[int, Any]] = None
+
+            def _finish_and_send(done_mb_idx: int, done_item) -> None:
+                layer.finish_reduce(done_item)
+                output = layer.finish_output(done_item)
+                self._record_ep_item_timing(tracker, layer_idx, done_mb_idx, done_item)
+                if is_coordinator:
+                    output = output.contiguous()
+                    tag = self._get_tag(layer_idx, done_mb_idx, "f2a")
+                    send_start = time.perf_counter()
+                    handle = dist.isend(output, dst=peer, tag=tag, group=f2a_group)
+                    if tracker:
+                        tracker.record_send(handle, layer_idx, done_mb_idx, send_start, output)
+                    send_handles.append(handle)
+
+            for mb_idx, item in enumerate(items):
+                layer.finish_dispatch(item)
+                layer.compute_local(item)
+                layer.reduce_async(item)
+                if previous is not None:
+                    prev_mb_idx, prev_item = previous
+                    _finish_and_send(prev_mb_idx, prev_item)
+                previous = (mb_idx, item)
+
+            if previous is not None:
+                prev_mb_idx, prev_item = previous
+                _finish_and_send(prev_mb_idx, prev_item)
+
+            if is_coordinator:
+                def _post_next_layer_irecvs():
+                    if layer_idx + 1 < num_layers:
+                        for mb_idx, mb_size in enumerate(mb_sizes):
+                            next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
+                            recv_tensor = torch.empty(
+                                mb_size, 1, self.model.hidden_size,
+                                dtype=self.model.dtype, device=self.model.device,
+                            )
+                            next_a2f_handles[mb_idx] = dist.irecv(
+                                recv_tensor, src=peer, tag=next_tag, group=a2f_group,
+                            )
+                            next_a2f_tensors[mb_idx] = recv_tensor
+
+                if self.use_crosslayer:
+                    _post_next_layer_irecvs()
+
+                for handle in send_handles:
+                    handle.wait()
+                    if tracker:
+                        tracker.observe_send_completion(handle)
+
+                if not self.use_crosslayer:
+                    _post_next_layer_irecvs()
+
+                if layer_idx + 1 < num_layers:
+                    a2f_recv_handles = next_a2f_handles
+                    a2f_recv_tensors = next_a2f_tensors
+
+        self.stats.comm_time = self.stats.a2f_comm_time + self.stats.f2a_comm_time
+
+    def _run_ffn_ep_expert_decode(self, batch_size: int, tracker: Optional[TimingTracker] = None) -> None:
+        """FFN EP non-coordinator decode loop: only participate in EP collectives."""
+        assert self.model.ffn_worker is not None
+
+        num_layers = self.model.num_layers
+        mb_sizes = self._compute_mb_sizes(batch_size)
+        num_mb = len(mb_sizes)
+
+        for layer_idx in range(num_layers):
+            for mb_idx in range(num_mb):
+                hidden_states = torch.empty(
+                    mb_sizes[mb_idx],
+                    1,
+                    self.model.hidden_size,
+                    dtype=self.model.dtype,
+                    device=self.model.device,
+                )
+                if tracker:
+                    tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                compute_start = time.perf_counter()
+                ffn_result = self.model.ffn_worker.forward_ffn_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=hidden_states,
+                    return_timing=bool(tracker and self.model.supports_moe_timing),
+                )
+                if isinstance(ffn_result, tuple):
+                    _, stage_timing = ffn_result
+                else:
+                    stage_timing = None
+                if tracker:
+                    tracker.mark_end(EventType.FFN_COMPUTE, layer_idx, mb_idx)
+                    if stage_timing is not None:
+                        self._record_ffn_stage_timing(
+                            tracker,
+                            layer_idx,
+                            mb_idx,
+                            compute_start,
+                            stage_timing,
+                        )
+                compute_time = time.perf_counter() - compute_start
+                self.stats.compute_time += compute_time
+                self.stats.ffn_compute_time += compute_time
 
     def get_stats(self) -> DecodeDBOStats:
         """Get statistics from last run."""

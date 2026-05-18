@@ -13,11 +13,11 @@
 
 | Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Model-side generation total | 23899.679 ms | 23899.599 ms |
-| Prefill / TTFT-path | 2863.771 ms | 2770.831 ms |
-| Decode loop total | 20794.684 ms | 20794.668 ms |
-| Decode steps | 19 | 19 |
-| Decode TPOT | 1094.457 ms | 1094.456 ms |
+| Model-side generation total | 23872.353 ms | 23859.156 ms |
+| Prefill / TTFT-path | - | - |
+| Decode loop total | - | - |
+| Decode steps | - | - |
+| Decode TPOT | - | - |
 | Legacy decode step (not exact TPOT) | - | - |
 | Compute | - | - |
 | Recv wait | - | - |

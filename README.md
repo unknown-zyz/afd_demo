@@ -4,12 +4,12 @@ AFD Demo 是一个用于研究 **Attention/FFN 分离推理**（Attention-FFN
 Disaggregation, AFD）和 **Dual Batch Overlap**（DBO）流水调度的实验仓库。
 当前主要模型为 **Qwen3-30B-A3B**。
 
-当前维护两条主线：
+当前 `main` 同时维护 CUDA/NCCL 与 Ascend NPU/HCCL 路径：
 
-| 分支 | 后端 | 结果目录 | 用途 |
-|---|---|---|---|
-| `main` | CUDA / NCCL | `results/` | GPU 基线与 GPU 实验。 |
-| `npu` | Ascend NPU / HCCL | `results_npu/` | 910C 适配与 NPU 实验。 |
+| 后端 | 结果目录 | 用途 |
+|---|---|---|
+| CUDA / NCCL | `results/` | GPU 基线与 GPU 实验。 |
+| Ascend NPU / HCCL | `results_npu/`, `results_npu_ep7/`, `results_npu_ep7_mb4_v2/` | 910C 适配、EP7 与 MB4/fused dispatch 实验。 |
 
 ## 当前能力
 
@@ -20,9 +20,10 @@ Disaggregation, AFD）和 **Dual Batch Overlap**（DBO）流水调度的实验�
 | Prefill DBO | 支持 | `AsyncPipelineScheduler` |
 | Decode DBO | 支持 | `DecodeDBOScheduler` |
 | Decode cross-layer pipeline | 实验性支持 | `--crosslayer` |
+| NPU EP overlap | 实验性支持 | `--ffn-ep-backend broadcast_reduce_overlap` |
 | KV cache / 自回归生成 | 支持 | HuggingFace `DynamicCache` |
 | TTFT/TPOT 报告与 pipeline Gantt 图 | 支持 | `scripts/gen_experiment_report.py`、`scripts/visualize_dbo_pipeline.py` |
-| Ascend 910C 运行 | 在 `npu` 分支支持 | `scripts/run_npu.sh`、`scripts/run_experiment_matrix_npu.sh` |
+| Ascend 910C 运行 | 支持 | `scripts/run_npu.sh`、`scripts/run_experiment_matrix_npu.sh` |
 
 ## 环境准备
 
@@ -107,6 +108,8 @@ batch，并把 OOM 明确写入 summary CSV。
 | `results/prefill-dbo/` / `results_npu/prefill-dbo/` | Prefill DBO timing、报告、PNG。 |
 | `results/decode-dbo/` / `results_npu/decode-dbo/` | Decode DBO timing、报告、PNG。 |
 | `results/decode-dbo-crosslayer/` / `results_npu/decode-dbo-crosslayer/` | Decode cross-layer timing、报告、PNG。 |
+| `results_npu/ep4_broadcast_reduce_sync/` | NPU EP4 + `broadcast_reduce_sync` 同步版负结果，保留用于复盘探索过程。 |
+| `results_npu/ep_overlap/` | NPU EP overlap 修复结果，包含 EP4/EP7 对比和首个 decode 正收益配置。 |
 | `*/experiment_matrix_summary.csv` | 矩阵状态：`ok`、`cached`、`OOM`、`FAIL`。 |
 | `*/baseline_audit.csv` | 每条 DBO 结果是否存在 mode-matched serial baseline。 |
 

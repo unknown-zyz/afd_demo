@@ -9,18 +9,31 @@
 - **Layers**: ?
 - **Micro-batches**: ?
 
-## End-to-end decode timing (representative step)
+## Serial timing (model-side total + decode fields)
 
-| Metric | Attention | FFN |
+| Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Representative-step total | 18325.874 ms | 18319.422 ms |
+| Model-side generation total | 12738.590 ms | 12738.540 ms |
+| Prefill / TTFT-path | 1811.752 ms | 1810.888 ms |
+| Decode loop total | 10773.904 ms | 10773.910 ms |
+| Decode steps | 19 | 19 |
+| Decode TPOT | 567.048 ms | 567.048 ms |
+| Legacy decode step (not exact TPOT) | - | - |
 | Compute | - | - |
 | Recv wait | - | - |
 | MoE router | - | - |
 | MoE experts | - | - |
 | MoE shared/dense | - | - |
 | Compute ratio | - | - |
-| Tokens/sec | 1.09 | - |
+| Tokens/sec | 1.57 | - |
+
+- `Model-side generation total` is `total_time_ms` for the full generation call.
+- The Attention/FFN columns are rank-level wall-clock views of the same serial run; they are not per-role compute decomposition.
+- `Decode TPOT` is the serial decode baseline used for decode speedup.
+
+## Layer averages summary
+
+_No per-layer events recorded._
 
 ## Per-layer breakdown
 

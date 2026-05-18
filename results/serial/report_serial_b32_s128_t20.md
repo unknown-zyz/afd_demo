@@ -13,12 +13,12 @@
 
 | Metric | Attention rank view | FFN rank view |
 |---|---:|---:|
-| Model-side generation total | 17493.335 ms | 17493.256 ms |
-| Prefill / TTFT-path | 2297.217 ms | 2265.139 ms |
-| Decode loop total | 14968.221 ms | 14968.225 ms |
-| Decode steps | 19 | 19 |
-| Decode TPOT | 787.801 ms | 787.801 ms |
-| Legacy decode step (not exact TPOT) | - | - |
+| Model-side generation total | 17583.379 ms | 17576.719 ms |
+| Prefill / TTFT-path | 5936.044 ms | - |
+| Decode loop total | - | - |
+| Decode steps | - | - |
+| Decode TPOT | - | - |
+| Legacy decode step (not exact TPOT) | 582.367 ms | - |
 | Compute | - | - |
 | Recv wait | - | - |
 | MoE router | - | - |
@@ -30,6 +30,8 @@
 - `Model-side generation total` is `total_time_ms` for the full generation call.
 - The Attention/FFN columns are rank-level wall-clock views of the same serial run; they are not per-role compute decomposition.
 - `Decode TPOT` is the serial decode baseline used for decode speedup.
+- Missing serial display fields were filled from the matching serial cache JSON.
+- `Legacy decode step` is shown for audit only; it is not exact TPOT and is not used for speedup.
 
 ## Layer averages summary
 

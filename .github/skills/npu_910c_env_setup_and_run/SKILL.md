@@ -3,10 +3,14 @@ name: npu_910c_env_setup_and_run
 description: |
   连接远程 NPU-910C 服务器，并在长期 Docker 容器 afd-npu-test 内运行
   AFD-DBO NPU/HCCL 实验。触发场景：用户要求在 NPU/910C 上跑实验、连接
-  NPU 环境、运行 NPU matrix、收集 results_npu 等。
+  NPU 环境、运行 NPU matrix、通信 microbenchmark、收集 results_npu 等。
+allowed-tools: shell
 ---
 
 # NPU-910C 远程实验 Skill
+
+> 本 skill 描述唯一允许的 NPU-910C 远程实验流程。不要使用 GPU 多机地址
+> `zyz@192.168.5.32:31310` 作为 NPU 入口。
 
 ## 固定环境
 
@@ -14,10 +18,12 @@ description: |
 |---|---|
 | SSH | `ssh schedTeam@1.95.114.229 -p 22 -i ~/.ssh/id_rsa_second` |
 | 远端宿主目录 | `/home/schedTeam/zhangyz` |
-| 长期容器 | `afd-npu-test` |
+| 模型权重宿主路径 | `/home/schedTeam/Qwen3-30B-A3B`，只读，禁止移动/覆盖/重新下载 |
+| 首选长期容器 | `afd-npu-test`，已装 torch_npu 2.6.0 + transformers，已挂模型，禁止删除 |
+| 备用容器 | `zhangyz-npu-1`，仅备用/CPU 冒烟，通常无模型挂载 |
 | 容器工作目录 | `/workspace/afd_demo` |
-| 模型路径 | `/models/Qwen3-30B-A3B` |
-| Python / NPU 栈 | torch 2.6.0 + torch_npu 2.6.0 + CANN 8.5 |
+| 容器模型路径 | `/models/Qwen3-30B-A3B` |
+| CANN | `/usr/local/Ascend/` |
 
 ## 红线
 
@@ -106,3 +112,9 @@ ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229 \
 - `results/prefill_dbo/logs/`（`run_npu.sh` 中间日志）
 
 需要拉回本地时优先只拉 JSON、CSV、Markdown、PNG，不复制模型或大 cache。
+
+## 失败排查
+
+- 失败时收集命令退出码、相关日志末尾 100 行、`npu-smi info`。
+- 若单侧 OOM 导致 peer 挂住，只能按 PID `kill <PID>`。
+- CANN 8.5 必须使用 torch_npu >= 2.6.0；不要切回 2.5.1。

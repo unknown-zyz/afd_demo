@@ -140,6 +140,11 @@ def parse_args():
                         help="Top-p (nucleus) sampling")
     parser.add_argument("--greedy", action="store_true",
                         help="Use greedy decoding instead of sampling")
+    parser.add_argument("--correctness-check", type=int, default=0,
+                        metavar="N",
+                        help="Record the first N generated token IDs (row 0) into the "
+                             "timing JSON under 'correctness_tokens' for serial-vs-DBO "
+                             "comparison. Forces --greedy when N>0. N=0 disables.")
 
     # P2P warmup options
     parser.add_argument('--warmup-p2p', action='store_true',
@@ -147,13 +152,33 @@ def parse_args():
     parser.add_argument('--warmup-rounds', type=int, default=3,
                         help='Number of warmup rounds')
     parser.add_argument('--prefill-warmup-rounds', type=int, default=None,
-                        help='Untimed prefill passes before the timed run. '
-                             'Default: 0 on CUDA/CPU.')
+                        help='Untimed prefill passes to absorb backend JIT/graph-compile '
+                             'overhead before the timed run. Default: 1 on NPU, 0 on CUDA/CPU. '
+                             'Required on Ascend — without it layers 0–1 of mb0 are dominated '
+                             'by per-shape HCCL op compilation (see doc/prefill_l1_anomaly.md).')
 
     # Backend (device + distributed backend selection)
-    parser.add_argument('--backend', type=str, choices=['auto', 'cuda', 'cpu'],
+    parser.add_argument('--backend', type=str, choices=['auto', 'cuda', 'npu', 'cpu'],
                         default='auto',
-                        help='Compute backend: cuda (NVIDIA) or cpu (dry-run).')
+                        help='Compute backend: cuda (NVIDIA), npu (Ascend 910/910C), cpu (dry-run).')
+    # NPU / multi-device parallel layout
+    parser.add_argument('--attn-size', type=int, default=1,
+                        help='Number of devices assigned to the attention role (DP over micro-batches).')
+    parser.add_argument('--ffn-size', type=int, default=1,
+                        help='Number of devices assigned to the FFN role.')
+    parser.add_argument('--ffn-tp-size', type=int, default=1,
+                        help='Tensor-parallel degree within the FFN role (must divide --ffn-size).')
+    parser.add_argument('--ffn-ep-size', type=int, default=1,
+                        help='Expert-parallel degree within the FFN role. 1 disables EP.')
+    parser.add_argument('--ffn-ep-backend', type=str,
+                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap'],
+                        default='broadcast_reduce_sync',
+                        help='FFN EP backend. Overlap mode is experimental.')
+    parser.add_argument('--ffn-coordinator-rank', type=int, default=None,
+                        help='Global FFN rank that communicates with Attention. Defaults to --ffn-node-rank.')
+    parser.add_argument('--ep-expert-policy', type=str,
+                        choices=['round_robin', 'contiguous'], default='round_robin',
+                        help='Expert assignment policy for FFN EP.')
 
     return parser.parse_args()
 
@@ -165,6 +190,30 @@ def get_dtype(dtype_str: str) -> torch.dtype:
 def get_effective_prefill_seq_len(prefill_seq_len: int | None, max_seq_len: int) -> int:
     """Return the prompt length that prefill/generation should allocate for."""
     return prefill_seq_len if prefill_seq_len is not None else max_seq_len
+
+
+def timing_role_name(ctx) -> str:
+    """Return a role label that stays unique when EP has many FFN expert ranks."""
+    if getattr(ctx, "is_ffn_expert_only", False):
+        return f"{ctx.role}_r{ctx.rank}"
+    return ctx.role
+
+
+def inject_correctness_tokens(timing_path: str, tokens: list, mode: str) -> None:
+    """Append correctness_tokens (first N row-0 generated token IDs) to a saved
+    timing JSON. Used by --correctness-check for serial-vs-DBO output equality.
+    """
+    if not tokens:
+        return
+    try:
+        with open(timing_path, 'r') as f:
+            data = json.load(f)
+    except Exception:
+        return
+    data["correctness_tokens"] = list(tokens)
+    data["correctness_mode"] = mode
+    with open(timing_path, 'w') as f:
+        json.dump(data, f, indent=2)
 
 
 def tokenize_batch_prompts(tokenizer, prompts, prefill_seq_len: int | None, max_seq_len: int):
@@ -220,6 +269,12 @@ def build_distributed_config(args) -> DistributedConfig:
         master_port=args.master_port,
         attn_node_rank=args.attn_node_rank,
         ffn_node_rank=args.ffn_node_rank,
+        attn_size=args.attn_size,
+        ffn_size=args.ffn_size,
+        ffn_ep_size=args.ffn_ep_size,
+        ffn_coordinator_rank=args.ffn_coordinator_rank,
+        ffn_ep_backend=args.ffn_ep_backend,
+        ep_expert_policy=args.ep_expert_policy,
     )
 
 
@@ -314,10 +369,11 @@ def run_inference_demo(args):
         scheduler = SimplePipelineScheduler(model=model, num_micro_batches=args.num_micro_batches)
         scheduler_name = "SYNC"
 
-    # Optional untimed prefill passes before the measured run.
+    # Prefill warmup — eat per-shape JIT/graph-compile cost before the timed run
+    # so that layer-0/1 of mb0 don't dominate the timing JSON and pipeline plot.
     warmup_rounds = args.prefill_warmup_rounds
     if warmup_rounds is None:
-        warmup_rounds = 0
+        warmup_rounds = 1 if devmod.DEVICE_TYPE == 'npu' else 0
     if warmup_rounds > 0:
         logger.info(f"Running {warmup_rounds} prefill warmup round(s) to absorb JIT compile cost")
         saved_timing = getattr(scheduler, 'enable_timing', False)
@@ -348,13 +404,14 @@ def run_inference_demo(args):
             os.makedirs("results/prefill_dbo", exist_ok=True)
             timing_data.prefill_seq_len = prefill_seq_len
             timing_data.actual_prompt_len = input_ids.shape[1]
+            role_name = timing_role_name(ctx)
             # Build timing file name with configuration info
             if args.timing_suffix:
-                timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+                timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
             else:
                 # Auto-generate suffix from config
                 suffix = f"b{args.batch_size}_t{args.max_new_tokens}"
-                timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+                timing_file = f"results/prefill_dbo/timing_{role_name}_{suffix}.json"
             timing_data.save(timing_file)
             logger.info(f"Timing saved: {timing_file}")
             logger.info(timing_data.summary())
@@ -371,11 +428,12 @@ def run_inference_demo(args):
             "actual_prompt_len": input_ids.shape[1],
             "max_new_tokens": args.max_new_tokens,
         }
+        role_name = timing_role_name(ctx)
         if args.timing_suffix:
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
         else:
             suffix = f"b{args.batch_size}_t{args.max_new_tokens}"
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_serial_{suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_serial_{suffix}.json"
         with open(timing_file, 'w') as f:
             json.dump(serial_data, f, indent=2)
         logger.info(f"Timing saved: {timing_file}")
@@ -386,7 +444,19 @@ def run_inference_demo(args):
         for i in range(min(args.batch_size, 2)):
             next_token = tokenizer.decode(predicted_ids[i, -1])
             logger.info(f"Output[{i}]: '{args.prompt}' → '{next_token}'")
-    
+
+        # --- correctness-check (prefill mode): record first N predicted next tokens ---
+        if args.correctness_check and args.timing:
+            n = min(args.correctness_check, predicted_ids.shape[0])
+            # For prefill we only have one next token per sequence; record up to N
+            # rows of the *last-position* prediction (acts as a tiny consistency hash).
+            corr_tokens = predicted_ids[:n, -1].detach().cpu().tolist()
+            try:
+                inject_correctness_tokens(timing_file, corr_tokens, mode="prefill")
+                logger.info(f"correctness_tokens (prefill) written: {corr_tokens}")
+            except NameError:
+                pass
+
     ctx.barrier()
     ctx.cleanup()
 
@@ -519,11 +589,12 @@ def run_generation_demo(args):
         )
     if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
         os.makedirs("results/prefill_dbo", exist_ok=True)
+        role_name = timing_role_name(ctx)
         if args.timing_suffix:
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
         else:
             suffix = f"decode_b{args.batch_size}_t{args.max_new_tokens}"
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{suffix}.json"
         model._last_decode_timing.prefill_ms = generation_metrics.get("prefill_ms")
         model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
         model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
@@ -550,22 +621,43 @@ def run_generation_demo(args):
             "max_new_tokens": args.max_new_tokens,
             "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,
         }
+        role_name = timing_role_name(ctx)
         if args.timing_suffix:
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{args.timing_suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{args.timing_suffix}.json"
         else:
             suffix = f"decode_serial_b{args.batch_size}_t{args.max_new_tokens}"
-            timing_file = f"results/prefill_dbo/timing_{ctx.role}_{suffix}.json"
+            timing_file = f"results/prefill_dbo/timing_{role_name}_{suffix}.json"
         with open(timing_file, 'w') as f:
             json_mod.dump(serial_data, f, indent=2)
         logger.info(f"Decode timing saved (serial): {timing_file}")
-    
+
+    # --- correctness-check (decode mode): record first N generated token IDs ---
+    if (args.correctness_check and args.timing
+            and ctx.is_attention_node and 'output_ids' in dir()):
+        n = min(args.correctness_check, output_ids.shape[1] - input_ids.shape[1])
+        if n > 0:
+            generated_only = output_ids[0, input_ids.shape[1]: input_ids.shape[1] + n]
+            corr_tokens = generated_only.detach().cpu().tolist()
+            try:
+                inject_correctness_tokens(timing_file, corr_tokens, mode="decode")
+                logger.info(f"correctness_tokens (decode) written: {corr_tokens}")
+            except NameError:
+                pass
+
     ctx.barrier()
     ctx.cleanup()
 
 
 def main():
     args = parse_args()
-    # Select device backend before init_process_group and any .to(device).
+    # Force greedy decoding when correctness check is requested for deterministic
+    # serial-vs-DBO token comparison.
+    if args.correctness_check and not args.greedy:
+        args.greedy = True
+    # Select device backend FIRST — this patches torch.cuda to torch.npu
+    # (via torch_npu.contrib.transfer_to_npu) when --backend=npu, so any
+    # subsequent torch.cuda.* call inside the codebase transparently runs
+    # on the NPU. Must happen before init_process_group and any .to(device).
     devmod.init_backend(args.backend)
     devmod.apply_backend_envs()
     try:
