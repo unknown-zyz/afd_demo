@@ -585,7 +585,10 @@ def run_generation_demo(args):
             f"prefill={_fmt_ms(generation_metrics.get('prefill_ms'))}, "
             f"decode_loop={_fmt_ms(generation_metrics.get('decode_loop_ms'))}, "
             f"decode_steps={generation_metrics.get('decode_steps')}, "
-            f"decode_tpot={_fmt_ms(generation_metrics.get('decode_tpot_ms'))}"
+            f"decode_tpot={_fmt_ms(generation_metrics.get('decode_tpot_ms'))}, "
+            f"tbt_mean={_fmt_ms(generation_metrics.get('tbt_mean_ms'))}, "
+            f"tbt_p50={_fmt_ms(generation_metrics.get('tbt_p50_ms'))}, "
+            f"tbt_p99={_fmt_ms(generation_metrics.get('tbt_p99_ms'))}"
         )
     if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
         os.makedirs("results/prefill_dbo", exist_ok=True)
@@ -599,6 +602,11 @@ def run_generation_demo(args):
         model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
         model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
         model._last_decode_timing.decode_tpot_ms = generation_metrics.get("decode_tpot_ms")
+        model._last_decode_timing.tbt_mean_ms = generation_metrics.get("tbt_mean_ms")
+        model._last_decode_timing.tbt_p50_ms = generation_metrics.get("tbt_p50_ms")
+        model._last_decode_timing.tbt_p99_ms = generation_metrics.get("tbt_p99_ms")
+        if generation_metrics.get("decode_step_times_ms"):
+            model._last_decode_timing.decode_step_times_ms = list(generation_metrics["decode_step_times_ms"])
         model._last_decode_timing.prefill_seq_len = prefill_seq_len
         model._last_decode_timing.actual_prompt_len = prompt_len
         model._last_decode_timing.save(timing_file)
@@ -615,6 +623,10 @@ def run_generation_demo(args):
             "decode_loop_ms": generation_metrics.get("decode_loop_ms"),
             "decode_steps": generation_metrics.get("decode_steps"),
             "decode_tpot_ms": generation_metrics.get("decode_tpot_ms"),
+            "tbt_mean_ms": generation_metrics.get("tbt_mean_ms"),
+            "tbt_p50_ms": generation_metrics.get("tbt_p50_ms"),
+            "tbt_p99_ms": generation_metrics.get("tbt_p99_ms"),
+            "decode_step_times_ms": generation_metrics.get("decode_step_times_ms"),
             "batch_size": args.batch_size,
             "prefill_seq_len": prefill_seq_len,
             "actual_prompt_len": prompt_len,

@@ -18,6 +18,7 @@
 | 9 | [branch_consolidation.md](branch_consolidation.md) | 分支合入/删除建议与主线合并依据。 |
 | 10 | [experiment_archive.md](experiment_archive.md) | MB4、controller、dual-stream、MoE backend 等实验结论归档。 |
 | 11 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) | 910C 远程容器创建、环境部署、代码同步与冒烟流程。 |
+| 12 | [11-code-review-guide.md](11-code-review-guide.md) | 完整代码审阅向导：目录速览、三条路径、TBT 指标、脚本手册。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。

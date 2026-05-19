@@ -110,6 +110,10 @@ class PipelineTiming:
     decode_loop_ms: float | None = None
     decode_steps: int | None = None
     decode_tpot_ms: float | None = None
+    tbt_mean_ms: float | None = None
+    tbt_p50_ms: float | None = None
+    tbt_p99_ms: float | None = None
+    decode_step_times_ms: List[float] = field(default_factory=list)
     timed_decode_step: int | None = None
     timed_decode_step_base: str | None = None
     timed_decode_step_note: str | None = None
@@ -198,6 +202,14 @@ class PipelineTiming:
             data["decode_steps"] = self.decode_steps
         if self.decode_tpot_ms is not None:
             data["decode_tpot_ms"] = self.decode_tpot_ms
+        if self.tbt_mean_ms is not None:
+            data["tbt_mean_ms"] = self.tbt_mean_ms
+        if self.tbt_p50_ms is not None:
+            data["tbt_p50_ms"] = self.tbt_p50_ms
+        if self.tbt_p99_ms is not None:
+            data["tbt_p99_ms"] = self.tbt_p99_ms
+        if self.decode_step_times_ms:
+            data["decode_step_times_ms"] = list(self.decode_step_times_ms)
         if self.timed_decode_step is not None:
             data["timed_decode_step"] = self.timed_decode_step
         if self.timed_decode_step_base is not None:

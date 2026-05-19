@@ -6,6 +6,7 @@ coordinating between attention and FFN workers across nodes.
 """
 
 import logging
+import statistics
 import time
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -22,6 +23,29 @@ from ..utils import device as devmod
 from ..utils.sampling import sample_next_token, StoppingCriteria
 
 logger = logging.getLogger(__name__)
+
+
+def _tbt_stats(step_times_ms: List[float]) -> Dict[str, Optional[float]]:
+    """Compute TBT mean / p50 / p99 from a list of per-decode-step latencies (ms).
+
+    Returns None for each field when no samples are available. With a single
+    sample, p50 = p99 = mean = that sample. p99 uses linear interpolation
+    between the two surrounding ordered samples (same convention as numpy).
+    """
+    if not step_times_ms:
+        return {"tbt_mean_ms": None, "tbt_p50_ms": None, "tbt_p99_ms": None}
+    sorted_times = sorted(step_times_ms)
+    n = len(sorted_times)
+    mean_v = statistics.fmean(sorted_times)
+    p50_v = statistics.median(sorted_times)
+    if n == 1:
+        p99_v = sorted_times[0]
+    else:
+        k = (n - 1) * 0.99
+        f = int(k)
+        c = min(f + 1, n - 1)
+        p99_v = sorted_times[f] + (sorted_times[c] - sorted_times[f]) * (k - f) if f != c else sorted_times[f]
+    return {"tbt_mean_ms": mean_v, "tbt_p50_ms": p50_v, "tbt_p99_ms": p99_v}
 
 
 class DisaggregatedQwenModel(nn.Module):
@@ -648,6 +672,7 @@ class DisaggregatedQwenModel(nn.Module):
 
         # Decode loop
         decode_steps = max(max_new_tokens - 1, 0)
+        decode_step_times_ms: List[float] = []
         devmod.synchronize()
         self.ctx.barrier()
         decode_start = time.perf_counter()
@@ -659,6 +684,7 @@ class DisaggregatedQwenModel(nn.Module):
                 device=self.device, dtype=torch.long
             )
             
+            step_start = time.perf_counter()
             if decode_scheduler is not None:
                 # Use Decode DBO
                 logits = decode_scheduler.forward_decode_dbo(
@@ -682,6 +708,8 @@ class DisaggregatedQwenModel(nn.Module):
             
             # Append to output
             generated_ids = torch.cat([generated_ids, next_token], dim=1)
+            devmod.synchronize()
+            decode_step_times_ms.append((time.perf_counter() - step_start) * 1000)
             
             # Check stopping (but don't break - need to sync with FFN node)
             if eos_token_id is not None and (next_token == eos_token_id).all():
@@ -692,11 +720,14 @@ class DisaggregatedQwenModel(nn.Module):
         self.ctx.barrier()
         decode_loop_ms = (time.perf_counter() - decode_start) * 1000
         decode_tpot_ms = decode_loop_ms / decode_steps if decode_steps > 0 else None
+        tbt = _tbt_stats(decode_step_times_ms)
         self._last_generation_metrics = {
             "prefill_ms": prefill_ms,
             "decode_loop_ms": decode_loop_ms,
             "decode_steps": decode_steps,
             "decode_tpot_ms": decode_tpot_ms,
+            "decode_step_times_ms": decode_step_times_ms,
+            **tbt,
         }
 
         # Log Decode DBO stats
@@ -709,6 +740,10 @@ class DisaggregatedQwenModel(nn.Module):
                 self._last_decode_timing.decode_loop_ms = decode_loop_ms
                 self._last_decode_timing.decode_steps = decode_steps
                 self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
+                self._last_decode_timing.tbt_mean_ms = tbt["tbt_mean_ms"]
+                self._last_decode_timing.tbt_p50_ms = tbt["tbt_p50_ms"]
+                self._last_decode_timing.tbt_p99_ms = tbt["tbt_p99_ms"]
+                self._last_decode_timing.decode_step_times_ms = list(decode_step_times_ms)
         
         return generated_ids
     
@@ -756,6 +791,7 @@ class DisaggregatedQwenModel(nn.Module):
         # Decode loop: max_new_tokens - 1 iterations
         # (first token is sampled after prefill on attention node)
         decode_steps = max(max_new_tokens - 1, 0)
+        decode_step_times_ms: List[float] = []
         devmod.synchronize()
         self.ctx.barrier()
         decode_start = time.perf_counter()
@@ -768,6 +804,7 @@ class DisaggregatedQwenModel(nn.Module):
                 batch_size, 1, dtype=torch.long, device=self.device
             )
             
+            step_start = time.perf_counter()
             if decode_scheduler is not None:
                 # Use Decode DBO
                 decode_scheduler.forward_decode_dbo(
@@ -777,15 +814,20 @@ class DisaggregatedQwenModel(nn.Module):
                 )
             else:
                 self.forward_decode(dummy_token)
+            devmod.synchronize()
+            decode_step_times_ms.append((time.perf_counter() - step_start) * 1000)
         devmod.synchronize()
         self.ctx.barrier()
         decode_loop_ms = (time.perf_counter() - decode_start) * 1000
         decode_tpot_ms = decode_loop_ms / decode_steps if decode_steps > 0 else None
+        tbt = _tbt_stats(decode_step_times_ms)
         self._last_generation_metrics = {
             "prefill_ms": prefill_ms,
             "decode_loop_ms": decode_loop_ms,
             "decode_steps": decode_steps,
             "decode_tpot_ms": decode_tpot_ms,
+            "decode_step_times_ms": decode_step_times_ms,
+            **tbt,
         }
 
         # Log Decode DBO stats for FFN node
@@ -797,6 +839,10 @@ class DisaggregatedQwenModel(nn.Module):
                 self._last_decode_timing.decode_loop_ms = decode_loop_ms
                 self._last_decode_timing.decode_steps = decode_steps
                 self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
+                self._last_decode_timing.tbt_mean_ms = tbt["tbt_mean_ms"]
+                self._last_decode_timing.tbt_p50_ms = tbt["tbt_p50_ms"]
+                self._last_decode_timing.tbt_p99_ms = tbt["tbt_p99_ms"]
+                self._last_decode_timing.decode_step_times_ms = list(decode_step_times_ms)
         
         # FFN node doesn't return meaningful output
         return input_ids

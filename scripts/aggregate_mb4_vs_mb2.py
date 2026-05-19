@@ -78,6 +78,12 @@ def main():
             "mb4_speedup": (ser_tpot / mb4_tpot) if (ser_tpot and mb4_tpot) else None,
             "mb2_throughput": (b * 1000.0 / mb2_tpot) if mb2_tpot else None,
             "mb4_throughput": (b * 1000.0 / mb4_tpot) if mb4_tpot else None,
+            "serial_tbt_p50_ms": (ser or {}).get("tbt_p50_ms"),
+            "serial_tbt_p99_ms": (ser or {}).get("tbt_p99_ms"),
+            "mb2_tbt_p50_ms": mb2[0].get("tbt_p50_ms") if mb2 else None,
+            "mb2_tbt_p99_ms": mb2[0].get("tbt_p99_ms") if mb2 else None,
+            "mb4_tbt_p50_ms": mb4[0].get("tbt_p50_ms") if mb4 else None,
+            "mb4_tbt_p99_ms": mb4[0].get("tbt_p99_ms") if mb4 else None,
         })
 
     prefill_rows = []
@@ -102,16 +108,23 @@ def main():
     with out_csv.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["metric", "batch", "serial_ms", "mb2_ms", "mb4_ms",
-                    "mb2_speedup", "mb4_speedup", "mb2_throughput", "mb4_throughput"])
+                    "mb2_speedup", "mb4_speedup", "mb2_throughput", "mb4_throughput",
+                    "serial_tbt_p50_ms", "serial_tbt_p99_ms",
+                    "mb2_tbt_p50_ms", "mb2_tbt_p99_ms",
+                    "mb4_tbt_p50_ms", "mb4_tbt_p99_ms"])
         for r in rows:
             w.writerow(["decode", r["batch"], r["serial_tpot_ms"],
                         r["mb2_tpot_ms"], r["mb4_tpot_ms"],
                         r["mb2_speedup"], r["mb4_speedup"],
-                        r["mb2_throughput"], r["mb4_throughput"]])
+                        r["mb2_throughput"], r["mb4_throughput"],
+                        r["serial_tbt_p50_ms"], r["serial_tbt_p99_ms"],
+                        r["mb2_tbt_p50_ms"], r["mb2_tbt_p99_ms"],
+                        r["mb4_tbt_p50_ms"], r["mb4_tbt_p99_ms"]])
         for r in prefill_rows:
             w.writerow(["prefill", r["batch"], r["serial_prefill_ms"],
                         r["mb2_total_ms"], r["mb4_total_ms"],
-                        r["mb2_speedup"], r["mb4_speedup"], "", ""])
+                        r["mb2_speedup"], r["mb4_speedup"], "", "",
+                        "", "", "", "", "", ""])
     print(f"Wrote {out_csv}")
 
     # Plots
