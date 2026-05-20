@@ -30,9 +30,40 @@ Buffer exposes `dispatch`, `combine`, `low_latency_combine`, `internode_dispatch
 asymmetric HCCS topology (rank 1's local device id is 0 since `ASCEND_VISIBLE_DEVICES`
 limits visibility); collective still succeeded.
 
-## Next
+## RT Bench: BLOCKED (API mismatch)
 
-- D3 next: actual dispatch+combine round-trip latency (<300 µs target) with real
-  hidden_states + topk_indices.
-- Then wire `MoECommunicator` into attn/ffn workers end-to-end (replace
-  `--no-init-dist` fallback path).
+`scripts/cross_host_deepep_rt_bench.py` calls
+`buf.get_dispatch_layout(topk_idx, num_experts)` → fails on both ranks:
+
+```
+RuntimeError: aclnnDispatchLayout or aclnnDispatchLayoutGetWorkspaceSize
+not in libopapi.so, or libopapi.so not found.
+```
+
+Root cause: this CANN ships the *new* MoE distribute API
+(`aclnnMoeDistributeDispatchV4` + `aclnnMoeDistributeCombineV2` + AddRmsNorm
+variants, confirmed via `strings libopapi.so`), but the deep_ep
+`1.0.0+0ff3be00.cann.8.5.0.b232` wheel was built against the *older*
+`aclnnDispatchLayout` op which has been removed/renamed.
+
+`Buffer.dispatch()` (normal mode) and `Buffer.get_dispatch_layout()` both rely on
+the missing op. `low_latency_combine` is exposed but no matching
+`low_latency_dispatch` is present in this wheel's symbol table either.
+
+**Action**: D3 dispatch/combine RT benchmark cannot proceed with this DeepEP wheel +
+CANN combination. Options to unblock (out of scope for this session):
+
+1. Rebuild deep_ep against current CANN (uses `aclnnMoeDistributeDispatchV4`)
+2. Install older CANN bundle matching the wheel
+3. Bypass deep_ep and call `aclnnMoeDistributeDispatchV4` directly via
+   `torch_npu.npu_*` (would replace `MoECommunicator` implementation)
+
+For now we proceed with **D4 (fallback)** via `torch.distributed.all_to_all_single`
+over HCCL, which is the system's documented fallback path when DeepEP is
+unusable.
+
+## Logs
+
+- `rank0.log` / `rank1.log` — Buffer construction PASS
+- `rt_rank0.log` / `rt_rank1.log` — RT bench FAIL (`aclnnDispatchLayout` missing)
+
