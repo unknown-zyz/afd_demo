@@ -1,0 +1,22 @@
+=== Cross-Host HCCL Smoke Test ===
+Date: 2024-05-20
+Topology: 2 ranks across 2 hosts (Host1 + Host2)
+Container: afd-npu-test (Host1), afd-npu-test-h2 (Host2)
+
+=== Rank 0 (Host1: 192.168.0.125) ===
+[rank0] Initializing: LOCAL_RANK=0, RANK=0, WORLD_SIZE=2
+[rank0] MASTER_ADDR=192.168.0.125, MASTER_PORT=29555
+[rank0] Set device to npu:0
+[rank0] Process group initialized
+[rank0] all_reduce sum=3072.0 expect=3072.0 dt=846.061ms
+[rank0] pingpong dt=400.545ms ok=False recv_sum=3072.0
+[rank0] Test completed successfully
+
+=== Rank 1 (Host2: 192.168.0.192) ===
+[rank1] Initializing: LOCAL_RANK=0, RANK=1, WORLD_SIZE=2
+[rank1] MASTER_ADDR=192.168.0.125, MASTER_PORT=29555
+[rank1] Set device to npu:0
+[rank1] Process group initialized
+[rank1] all_reduce sum=3072.0 expect=3072.0 dt=845.329ms
+[rank1] pingpong dt=399.949ms ok=False recv_sum=3072.0
+[rank1] Test completed successfully
