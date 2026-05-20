@@ -29,10 +29,13 @@
 | 跳板 SSH | 先登 Host1，然后 `sudo ssh -i /root/ssh_key/KeyPair-f1dd.pem root@192.168.0.192` |
 | 主机名 | `liteserver-910c-2-00001.novalocal` (aarch64) |
 | 用户 | `root`（通过 sudo，无密码 key） |
+| **宿主工作目录** | **`/root/schedTeam/zhangyz/`**（与 Host1 `/home/schedTeam/zhangyz` 对称） |
+| **Qwen3 权重** | **`/root/schedTeam/zhangyz/Qwen3-30B-A3B`（57G，2026-05-20 确认就位）** |
 | 硬件 | 8×Ascend910（16 chips，目前几乎空闲，HBM ~3 GB/65 GB） |
 | 既有容器（非本项目） | `GL-offload` / `odd` / `aiserver-agent`（vllm-ascend，torch_npu 2.9.0，**未挂 Qwen3-30B**） |
-| afd-npu-test 等价容器 | **尚未创建**（需要用户后续手工准备） |
-| 模型权重 | **Host2 上不存在 Qwen3-30B-A3B**，无 NFS 共享，需 scp/rsync 跨机传输（~60 GB） |
+| afd-npu-test 等价容器 | **`afd-npu-test-h2` 已就绪**（2026-05-20 创建，image `deepep-ascend-bench-dev:latest`，privileged + host net，挂 16 颗 davinci + 模型 ro + `/root/schedTeam/zhangyz/workspace`，torch_npu 2.6.0、grpc 1.80.0、deep_ep 1.0.0 已装） |
+| 容器工作目录 | `/workspace`（仓库 clone 到 `/workspace/afd_demo_repo`） |
+| 模型路径（容器内） | `/models/Qwen3-30B-A3B` |
 | CANN 路径 | 容器内 `/usr/local/Ascend/`（继承自 vllm-ascend 镜像） |
 
 ## 红线
