@@ -12,6 +12,7 @@ Branch: `feat/fallback-default-comm`
 | Coordinator smoke | Host2, CPU/no-init-dist skeleton | PASS | 1 coordinator + 1 attention worker + 1 FFN worker registered and stayed alive |
 | Fallback RT | Host2, 2 local NPU ranks over HCCL | PASS | 64 KiB payload: rank0 mean 314.2 us / p50 310.3 us / p99 338.6 us; rank1 mean 309.7 us / p50 302.6 us / p99 335.1 us |
 | Fallback RT | Host1 NPU0 <-> Host2 NPU0 | BLOCKED | HCCL communicator creation fails with Host1 `EJ0003` bind IP/port and Host2 `EI0006` socket timeout |
+| HCCL smoke | Host1 NPU0 <-> Host2 NPU0 | BLOCKED | Basic `dist.all_reduce` fails with the same Host1 `EJ0003` / Host2 `EI0006` pattern |
 
 ## Interpretation
 
@@ -23,6 +24,13 @@ The cross-host representative run did **not** reach a performance comparison poi
 - Rank1: `Communication_Error_Get_Socket(EI0006): srcRank[192.168.0.192/0] connect destRank[192.168.0.125/0] fail`
 
 Changing `MASTER_PORT` and `HCCL_IF_BASE_PORT` did not clear the failure. This matches the existing cross-host HCCL/DeepEP port-binding instability on Host1.
+
+I also reran the simpler `scripts/cross_host_hccl_smoke.py` all-reduce smoke with fresh ports. It failed before any fallback-specific logic:
+
+- Rank0 failed in `dist.all_reduce()` with `Communication_Error_Bind_IP_Port(EJ0003)`
+- Rank1 failed in `torch.npu.synchronize()` with `Communication_Error_Get_Socket(EI0006)`
+
+Therefore the current bottleneck is the cross-host HCCL/RoCE environment, not `FallbackMoECommunicator`.
 
 ## Decision
 
