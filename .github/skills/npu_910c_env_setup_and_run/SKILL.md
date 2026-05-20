@@ -77,14 +77,48 @@
 
 ## 标准连接（Host1）
 
+> **新 contributor 必读**：DeepEP-Ascend 实验前**必须** source 自定义 OPP vendor 环境，
+> 否则 `aclnnDispatchLayout` 等自定义 op 找不到（详见 `results_npu/coordinator_arch/d3_lowlatency/README.md`）。
+> 标准的连接命令应包含两条 source：
+> ```bash
+> source /usr/local/Ascend/ascend-toolkit/set_env.sh
+> source /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/bin/set_env.bash
+> ```
+> 若 `vendors/hwcomputing/` 缺失，需先跑安装命令（见下方"DeepEP 自定义 OPP 安装"小节）。
+
 ```bash
 ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229 \
   "docker exec afd-npu-test bash -lc '
      source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null
+     source /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/bin/set_env.bash 2>/dev/null
      cd /workspace/afd_demo
      git status --short --branch
   '"
 ```
+
+### DeepEP 自定义 OPP 安装（首次配新容器或重装 CANN 后必跑）
+
+**Host1**（有 SGLang-Kernel-NPU 源码）：
+
+```bash
+bash /workspace/sglang-kernel-npu/csrc/deepep/ops/build_out/custom_opp_ubuntu_aarch64.run \
+     --quiet --install-path=/usr/local/Ascend/cann-8.5.0/opp
+```
+
+**Host2**（无源码 — 从 site-packages cp vendor 目录）：
+
+```bash
+DEEPEP_DIR=/usr/local/python3.11.14/lib/python3.11/site-packages/deep_ep/vendors/hwcomputing
+VENDORS=/usr/local/Ascend/cann-8.5.0/opp/vendors
+mkdir -p "$VENDORS" && cp -a "$DEEPEP_DIR" "$VENDORS/"
+cat > "$VENDORS/hwcomputing/bin/set_env.bash" <<'EOF'
+#!/bin/bash
+export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing:${ASCEND_CUSTOM_OPP_PATH}
+export LD_LIBRARY_PATH=/usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/op_api/lib/:${LD_LIBRARY_PATH}
+EOF
+```
+
+验证：`nm -D /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/op_api/lib/libcust_opapi.so | grep aclnnDispatchLayout` 应输出 `T aclnnDispatchLayout`。
 
 如需同步最新分支：
 
