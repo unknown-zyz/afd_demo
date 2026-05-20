@@ -201,15 +201,18 @@ class FFNWorker:
     
     def register_with_coordinator(self):
         """Register this worker with the coordinator."""
+        import socket
         info = {
-            "worker_type": "ffn",
+            "role": "ffn",
             "rank": self.args.rank,
+            "host": socket.gethostname(),
+            "device_id": self.args.device_id,
             "world_size": self.args.world,
             "device_info": str(self.device),
             "num_local_experts": len(self.local_expert_ids),
-            "local_expert_ids": self.local_expert_ids[:10],  # First 10 for logging
+            "local_expert_ids": self.local_expert_ids[:10],
         }
-        
+
         response = self.coord.register_worker(info)
         logger.info(f"Registered with coordinator: {response}")
     
