@@ -470,7 +470,13 @@ def main():
     try:
         import time
         while True:
-            time.sleep(10)
+            time.sleep(2.0)
+            if worker.coord is not None:
+                worker.coord.update_metrics({
+                    "role": "attn",
+                    "rank": args.rank,
+                    "timestamp_us": int(time.time() * 1e6),
+                })
             logger.debug("AttentionWorker heartbeat")
     except KeyboardInterrupt:
         logger.info("Received interrupt signal")

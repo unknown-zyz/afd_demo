@@ -45,7 +45,7 @@ class CoordinatorServicer(pb_grpc.CoordinatorServicer):
         attn_world: int,
         ffn_world: int,
         initial_mode: str = "low_latency",
-        stale_threshold_s: float = 5.0,
+        stale_threshold_s: float = 30.0,
         min_rebalance_interval_ms: float = 100.0,
         imbalance_threshold: float = 0.10,
     ):

@@ -260,29 +260,24 @@ class FFNWorker:
         return hidden.clone()
     
     def serve_forever(self):
+        """Main serving loop (skeleton: heartbeat-only).
+
+        Periodically pushes a metrics heartbeat to the coordinator so the
+        worker isn't reaped by the stale-sweep. Real batch processing will
+        be wired in once the dispatch/combine path is enabled.
         """
-        Main serving loop.
-        
-        SKELETON: Placeholder for production serving loop.
-        In production, this would:
-        1. Poll queue for batches
-        2. Process via _forward_ffn
-        3. Send results via comm.combine() path
-        """
-        logger.info("FFNWorker.serve_forever() - skeleton placeholder")
-        
-        # In production, this would be:
-        # while True:
-        #     batch = self.queue.pop_batch()
-        #     if batch is not None:
-        #         outputs = self._forward_ffn(batch.hidden, ...)
-        #         # Send outputs back to ATTN workers
-        #     time.sleep(0.001)
-        
-        raise NotImplementedError(
-            "serve_forever() is a skeleton placeholder. "
-            "Use run_once() for testing."
-        )
+        logger.info("FFNWorker.serve_forever() - heartbeat-only skeleton")
+        import time
+        while True:
+            time.sleep(2.0)
+            if self.coord is not None:
+                self.coord.update_metrics({
+                    "role": "ffn",
+                    "rank": self.args.rank,
+                    "queue_len_avg": float(getattr(self.queue, "avg_len", 0.0))
+                    if hasattr(self, "queue") else 0.0,
+                    "timestamp_us": int(time.time() * 1e6),
+                })
     
     def shutdown(self):
         """Cleanup resources."""
@@ -330,7 +325,7 @@ def parse_args():
     parser.add_argument(
         "--model-path",
         type=str,
-        required=True,
+        default="/models/Qwen3-30B-A3B",
         help="Path to model (e.g., /models/Qwen3-30B-A3B)",
     )
     parser.add_argument(
