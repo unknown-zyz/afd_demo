@@ -64,18 +64,23 @@ class FFNWorker:
         
         self.ep_group = self._build_ep_group() if not args.no_init_dist else None
         
-        self.comm = build_communicator(
-            prefer_deepep=not args.use_fallback,
-            ep_group=self.ep_group,
-            hidden_size=args.hidden_size,
-            num_experts=args.num_experts,
-            max_tokens_per_rank=args.max_batch * 8,
-            device=self.device,
-            mode=args.mode,
-        )
+        if args.no_init_dist:
+            self.comm = None
+            logger.warning("Communicator not built (--no-init-dist)")
+        else:
+            self.comm = build_communicator(
+                prefer_deepep=not args.use_fallback,
+                ep_group=self.ep_group,
+                hidden_size=args.hidden_size,
+                num_experts=args.num_experts,
+                max_tokens_per_rank=args.max_batch * 8,
+                device=self.device,
+                mode=args.mode,
+            )
         
         self.routing_table = self._fetch_initial_routing_table()
-        self.comm.update_routing_table(self.routing_table)
+        if self.comm is not None:
+            self.comm.update_routing_table(self.routing_table)
         
         self.queue = FFNQueue(
             max_batch=args.max_batch,

@@ -103,10 +103,12 @@ RC=0
 grep -l "Coordinator listening on" "$LOG_DIR/coordinator.log" >/dev/null \
   || { echo "[smoke] FAIL: coordinator did not bind"; RC=1; }
 for f in "$LOG_DIR"/attn_rank*.log "$LOG_DIR"/ffn_rank*.log; do
-  if grep -Eq "register|CoordinatorClient connected|ready" "$f"; then
+  if grep -Eq "Successfully registered|FFNWorker initialized|AttentionWorker initialized" "$f"; then
     echo "[smoke] OK: $(basename $f)"
   else
-    echo "[smoke] WARN: $(basename $f) — no register/ready signature"
+    echo "[smoke] FAIL: $(basename $f) — no init/register signature"
+    tail -10 "$f" | sed 's/^/    /'
+    RC=1
   fi
 done
 
