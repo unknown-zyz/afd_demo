@@ -89,10 +89,18 @@ class TestMoECommunicator(unittest.TestCase):
         mock_topk_indices = MagicMock()
         mock_topk_weights = MagicMock()
 
+        self.mock_buffer_instance.get_dispatch_layout.return_value = (
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        )
         self.mock_buffer_instance.dispatch.return_value = (
             MagicMock(shape=(150, 4096)),
             MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
         )
+        self.mock_deep_ep.Buffer.get_low_latency_rdma_size_hint.return_value = 1024
 
         comm.dispatch(mock_hidden, mock_topk_indices, mock_topk_weights)
 
@@ -129,39 +137,118 @@ class TestMoECommunicator(unittest.TestCase):
         # Mock dispatch output
         mock_dispatched = MagicMock()
         mock_dispatched.shape = (80, 512)
+        mock_recv_topk = MagicMock()
+        mock_recv_weights = MagicMock()
         mock_expert_nums = MagicMock()
+        mock_handle = MagicMock()
+        self.mock_buffer_instance.get_dispatch_layout.return_value = (
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        )
         self.mock_buffer_instance.dispatch.return_value = (
             mock_dispatched,
+            mock_recv_topk,
+            mock_recv_weights,
             mock_expert_nums,
+            mock_handle,
+            MagicMock(),
         )
 
         # Test dispatch
         handle = comm.dispatch(mock_hidden, mock_topk_indices, mock_topk_weights)
 
-        # Verify buffer.dispatch was called
-        self.mock_buffer_instance.dispatch.assert_called_once_with(
-            mock_hidden, mock_topk_indices, mock_topk_weights
-        )
+        # Verify buffer.dispatch was called with the normal-mode DeepEP kwargs
+        _, kwargs = self.mock_buffer_instance.dispatch.call_args
+        self.assertEqual(self.mock_buffer_instance.dispatch.call_args.args[0], mock_hidden)
+        self.assertEqual(kwargs["topk_idx"], mock_topk_indices)
+        self.assertEqual(kwargs["topk_weights"], mock_topk_weights)
 
         # Verify handle structure
         self.assertEqual(handle["recv_hidden"], mock_dispatched)
         self.assertEqual(handle["expert_token_nums"], mock_expert_nums)
+        self.assertEqual(handle["deepep_handle"], mock_handle)
         self.assertEqual(handle["topk_indices"], mock_topk_indices)
         self.assertEqual(handle["topk_weights"], mock_topk_weights)
+        self.assertEqual(handle["recv_topk_indices"], mock_recv_topk)
+        self.assertEqual(handle["recv_topk_weights"], mock_recv_weights)
 
         # Mock FFN outputs
         mock_ffn_outputs = MagicMock()
         mock_ffn_outputs.shape = (80, 512)
         mock_combined = MagicMock()
         mock_combined.shape = (64, 512)
-        self.mock_buffer_instance.combine.return_value = mock_combined
+        self.mock_buffer_instance.combine.return_value = (
+            mock_combined,
+            MagicMock(),
+            MagicMock(),
+        )
 
         # Test combine
         result = comm.combine(mock_ffn_outputs, handle)
 
-        # Verify buffer.combine was called with correct args
-        self.mock_buffer_instance.combine.assert_called_once_with(
-            mock_ffn_outputs, mock_topk_indices, mock_topk_weights
+        # Verify buffer.combine was called with handle and recv top-k weights
+        _, kwargs = self.mock_buffer_instance.combine.call_args
+        self.assertEqual(self.mock_buffer_instance.combine.call_args.args[0], mock_ffn_outputs)
+        self.assertEqual(self.mock_buffer_instance.combine.call_args.args[1], mock_handle)
+        self.assertEqual(kwargs["topk_weights"], mock_recv_weights)
+        self.assertEqual(result, mock_combined)
+
+    def test_low_latency_dispatch_combine_forward(self):
+        """Test low_latency dispatch/combine calls the dedicated DeepEP APIs."""
+        self.mock_deep_ep.Buffer.get_low_latency_rdma_size_hint.return_value = 4096
+
+        comm = self.MoECommunicator(
+            ep_group=self.mock_pg,
+            hidden_size=512,
+            num_experts=8,
+            max_tokens_per_rank=256,
+            device=self.mock_device,
+            mode="low_latency",
+        )
+
+        mock_hidden = MagicMock()
+        mock_topk_indices = MagicMock()
+        mock_topk_weights = MagicMock()
+        mock_recv = MagicMock()
+        mock_expert_nums = MagicMock()
+        mock_handle = MagicMock()
+
+        self.mock_buffer_instance.low_latency_dispatch.return_value = (
+            mock_recv,
+            mock_expert_nums,
+            mock_handle,
+            MagicMock(),
+            MagicMock(),
+        )
+
+        handle = comm.dispatch(mock_hidden, mock_topk_indices, mock_topk_weights)
+
+        self.mock_deep_ep.Buffer.assert_called_once()
+        self.assertEqual(self.mock_deep_ep.Buffer.call_args.kwargs["low_latency_mode"], True)
+        self.assertEqual(self.mock_deep_ep.Buffer.call_args.kwargs["num_rdma_bytes"], 4096)
+        self.mock_buffer_instance.low_latency_dispatch.assert_called_once_with(
+            mock_hidden,
+            mock_topk_indices,
+            256,
+            8,
+            use_fp8=False,
+        )
+        self.assertEqual(handle["recv_hidden"], mock_recv)
+        self.assertEqual(handle["deepep_handle"], mock_handle)
+
+        mock_output = MagicMock()
+        mock_combined = MagicMock()
+        self.mock_buffer_instance.low_latency_combine.return_value = (
+            mock_combined,
+            MagicMock(),
+            MagicMock(),
+        )
+
+        result = comm.combine(mock_output, handle)
+        self.mock_buffer_instance.low_latency_combine.assert_called_once_with(
+            mock_output,
+            mock_topk_indices,
+            mock_topk_weights,
+            mock_handle,
         )
         self.assertEqual(result, mock_combined)
 
@@ -205,7 +292,7 @@ class TestFactory(unittest.TestCase):
                 del sys.modules[mod]
 
     def test_factory_with_deepep_available(self):
-        """Test factory returns MoECommunicator when deep_ep is available."""
+        """Test factory returns MoECommunicator when DeepEP is explicitly requested."""
         # Mock deep_ep
         mock_deep_ep = MagicMock()
         sys.modules["deep_ep"] = mock_deep_ep
@@ -260,6 +347,25 @@ class TestFactory(unittest.TestCase):
             self.assertEqual(
                 type(comm).__name__, "FallbackMoECommunicator"
             )
+
+    def test_factory_defaults_to_fallback_even_with_deepep_available(self):
+        """Test factory defaults to FallbackMoECommunicator even if deep_ep exists."""
+        mock_deep_ep = MagicMock()
+        sys.modules["deep_ep"] = mock_deep_ep
+
+        from src.coordinator_arch.comm.factory import build_communicator
+
+        with patch("torch.distributed.get_world_size", return_value=4), \
+             patch("torch.distributed.get_rank", return_value=0):
+            comm = build_communicator(
+                ep_group=MagicMock(),
+                hidden_size=512,
+                num_experts=8,
+                max_tokens_per_rank=256,
+                device=MagicMock(),
+            )
+
+            self.assertEqual(type(comm).__name__, "FallbackMoECommunicator")
 
     def test_factory_prefer_fallback(self):
         """Test factory returns FallbackMoECommunicator when prefer_deepep=False."""

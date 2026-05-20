@@ -19,6 +19,8 @@
 | 10 | [experiment_archive.md](experiment_archive.md) | MB4、controller、dual-stream、MoE backend 等实验结论归档。 |
 | 11 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) | 910C 远程容器创建、环境部署、代码同步与冒烟流程。 |
 | 12 | [11-code-review-guide.md](11-code-review-guide.md) | 完整代码审阅向导：目录速览、三条路径、TBT 指标、脚本手册。 |
+| 13 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) | DeepEP 安装、测试、报错与 Fallback 路径说明。 |
+| 14 | [14-communication-modes.md](14-communication-modes.md) | Coordinator 通信方式、默认策略与切换方法。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。
@@ -35,6 +37,8 @@
 | 跑 NPU 全矩阵 | [02-usage.md](02-usage.md) |
 | 部署 GPU 多机 | [04-deployment.md](04-deployment.md) |
 | 使用 910C 容器 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) |
+| 排查 DeepEP / fallback 数据面 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) |
+| 切换 Coordinator 通信方式 | [14-communication-modes.md](14-communication-modes.md) |
 | 判断 speedup 是否可信 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) |
 | 查看最新实验结论 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) |
 | 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |

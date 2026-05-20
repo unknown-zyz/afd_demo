@@ -2,7 +2,9 @@
 Factory for building MoE communicators.
 
 This module provides a factory function to build the appropriate MoE communicator
-implementation based on availability of specialized libraries like DeepEP-Ascend.
+implementation. FallbackMoECommunicator is the production default because the
+DeepEP-Ascend cross-host RDMA path is still experimental on the current 910C
+stack.
 """
 
 import logging
@@ -55,7 +57,7 @@ class CommunicatorProtocol(Protocol):
 
 def build_communicator(
     *,
-    prefer_deepep: bool = True,
+    prefer_deepep: bool = False,
     ep_group: dist.ProcessGroup,
     hidden_size: int,
     num_experts: int,
@@ -65,13 +67,13 @@ def build_communicator(
     nvl_bytes: int = 256 * 1024 * 1024,
 ) -> CommunicatorProtocol:
     """
-    Build a MoE communicator with automatic fallback.
+    Build a MoE communicator.
 
-    Returns DeepEP-backed MoECommunicator if prefer_deepep=True and deep_ep
-    is importable; otherwise returns FallbackMoECommunicator.
+    Returns FallbackMoECommunicator by default. DeepEP-backed MoECommunicator is
+    used only when prefer_deepep=True and deep_ep is importable.
 
     Args:
-        prefer_deepep: Whether to prefer DeepEP-Ascend if available
+        prefer_deepep: Whether to opt in to experimental DeepEP-Ascend
         ep_group: Expert parallel process group
         hidden_size: Hidden dimension size
         num_experts: Total number of experts
@@ -102,6 +104,8 @@ def build_communicator(
             communicator_type = "DeepEP-Ascend MoECommunicator"
         except (ImportError, RuntimeError) as e:
             logger.info(f"DeepEP-Ascend not available ({e}), falling back to torch.distributed")
+    else:
+        logger.info("Using fallback communicator by default; pass --use-deepep to opt in to DeepEP")
 
     if communicator is None:
         from .fallback_a2a import FallbackMoECommunicator

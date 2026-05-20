@@ -6,7 +6,7 @@
 #     --coord-addr 127.0.0.1:50051 \
 #     --rank 0 --world 2 --ffn-world 2 \
 #     --master-addr 127.0.0.1 --master-port 29500 \
-#     --device-id 0 [--use-fallback]
+#     --device-id 0 [--use-deepep]
 set -euo pipefail
 
 COORD_ADDR="127.0.0.1:50051"
@@ -36,7 +36,8 @@ while [[ $# -gt 0 ]]; do
     --topk) TOPK="$2"; shift 2;;
     --mode) MODE="$2"; shift 2;;
     --device-id) DEVICE_ID="$2"; shift 2;;
-    --use-fallback) EXTRA_FLAGS+=("--use-fallback"); shift;;
+    --use-deepep) EXTRA_FLAGS+=("--use-deepep"); shift;;
+    --use-fallback) shift;;  # Deprecated: fallback is the default.
     --no-init-dist) EXTRA_FLAGS+=("--no-init-dist"); shift;;
     --log-file) LOG_FILE="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 1;;

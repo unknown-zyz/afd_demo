@@ -10,6 +10,7 @@ import logging
 from typing import Dict, Optional
 
 import torch
+import torch.distributed as dist
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,8 @@ class MoECommunicator:
     DeepEP-Ascend on 910C supports two modes:
       - normal: high throughput, larger buffer; used for Prefill or batch >= 64.
       - low_latency: lower latency, smaller transactions; used for Decode (batch < 64).
-    Mode switching reallocates the internal Buffer.
+    DeepEP is experimental in this repository. FallbackMoECommunicator is the
+    default production path; this class is used only when explicitly requested.
     """
 
     def __init__(
@@ -80,11 +82,28 @@ class MoECommunicator:
         self.expert_to_rank: Optional[torch.Tensor] = None
         self.version: Optional[int] = None
 
+        self.world_size = self._get_world_size()
+
         logger.info(
-            f"MoECommunicator initialized: mode={mode}, "
-            f"hidden_size={hidden_size}, num_experts={num_experts}, "
-            f"nvl_bytes={nvl_bytes}"
+            "MoECommunicator initialized (experimental): mode=%s, "
+            "hidden_size=%s, num_experts=%s, world_size=%s, nvl_bytes=%s",
+            mode, hidden_size, num_experts, self.world_size, nvl_bytes,
         )
+
+    def _get_world_size(self) -> int:
+        """Return EP group world size, with a safe fallback for mocked tests."""
+        try:
+            world_size = dist.get_world_size(self.ep_group)
+            return world_size if isinstance(world_size, int) else 1
+        except Exception:
+            return 1
+
+    @staticmethod
+    def _unwrap_tensor(value):
+        """DeepEP may return tensors directly or nested in (tensor, scale) tuples."""
+        if isinstance(value, (tuple, list)):
+            return value[0]
+        return value
 
     def _create_buffer(self) -> None:
         """Create or recreate the DeepEP Buffer with current mode."""
@@ -93,17 +112,35 @@ class MoECommunicator:
             del self._buffer
             self._buffer = None
 
-        low_latency_mode = self.mode == "low_latency"
-        logger.debug(
-            f"Creating DeepEP Buffer: low_latency_mode={low_latency_mode}, "
-            f"nvl_bytes={self.nvl_bytes}"
-        )
-
-        self._buffer = _deep_ep.Buffer(
-            group=self.ep_group,
-            num_nvl_bytes=self.nvl_bytes,
-            low_latency_mode=low_latency_mode,
-        )
+        if self.mode == "low_latency":
+            rdma_bytes = _deep_ep.Buffer.get_low_latency_rdma_size_hint(
+                self.max_tokens_per_rank,
+                self.hidden_size,
+                self.world_size,
+                self.num_experts,
+            )
+            num_qps_per_rank = max(1, self.num_experts // max(1, self.world_size))
+            logger.debug(
+                "Creating DeepEP low_latency Buffer: rdma_bytes=%s, qps_per_rank=%s",
+                rdma_bytes, num_qps_per_rank,
+            )
+            self._buffer = _deep_ep.Buffer(
+                group=self.ep_group,
+                num_nvl_bytes=0,
+                num_rdma_bytes=rdma_bytes,
+                low_latency_mode=True,
+                num_qps_per_rank=num_qps_per_rank,
+            )
+        else:
+            logger.debug(
+                "Creating DeepEP normal Buffer: nvl_bytes=%s",
+                self.nvl_bytes,
+            )
+            self._buffer = _deep_ep.Buffer(
+                group=self.ep_group,
+                num_nvl_bytes=self.nvl_bytes,
+                low_latency_mode=False,
+            )
 
         logger.info(f"DeepEP Buffer created with mode={self.mode}")
 
@@ -192,24 +229,75 @@ class MoECommunicator:
         if self._buffer is None:
             self._create_buffer()
 
-        # Call DeepEP dispatch
-        dispatched, expert_token_nums = self._buffer.dispatch(
-            hidden_states, topk_indices, topk_weights
-        )
+        if self.mode == "low_latency":
+            ret = self._buffer.low_latency_dispatch(
+                hidden_states,
+                topk_indices,
+                self.max_tokens_per_rank,
+                self.num_experts,
+                use_fp8=False,
+            )
+            recv_hidden = self._unwrap_tensor(ret[0])
+            expert_token_nums = ret[1]
+            deepep_handle = ret[2]
+            return {
+                "recv_hidden": recv_hidden,
+                "expert_token_nums": expert_token_nums,
+                "deepep_handle": deepep_handle,
+                "topk_indices": topk_indices,
+                "topk_weights": topk_weights,
+                "_mode": self.mode,
+                "_comm_impl": "deepep",
+            }
+
+        layout = self._buffer.get_dispatch_layout(topk_indices, self.num_experts)
+        (
+            num_tokens_per_rank,
+            num_tokens_per_rdma_rank,
+            num_tokens_per_expert,
+            is_token_in_rank,
+            _layout_event,
+        ) = layout
+
+        dispatch_kwargs = {
+            "num_tokens_per_rank": num_tokens_per_rank,
+            "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
+            "is_token_in_rank": is_token_in_rank,
+            "num_tokens_per_expert": num_tokens_per_expert,
+            "topk_idx": topk_indices,
+            "topk_weights": topk_weights,
+        }
+        if hasattr(_deep_ep.Buffer, "get_dispatch_config"):
+            dispatch_kwargs["config"] = _deep_ep.Buffer.get_dispatch_config(self.world_size)
+
+        (
+            recv_hidden,
+            recv_topk_indices,
+            recv_topk_weights,
+            num_recv_per_expert_list,
+            deepep_handle,
+            _dispatch_event,
+        ) = self._buffer.dispatch(hidden_states, **dispatch_kwargs)
+
+        recv_hidden = self._unwrap_tensor(recv_hidden)
 
         logger.debug(
-            f"Dispatch complete: input shape {hidden_states.shape}, "
-            f"output shape {dispatched.shape}, "
-            f"expert_token_nums {expert_token_nums.shape if hasattr(expert_token_nums, 'shape') else expert_token_nums}"
+            "DeepEP dispatch complete: input_shape=%s, output_shape=%s, mode=%s",
+            getattr(hidden_states, "shape", None),
+            getattr(recv_hidden, "shape", None),
+            self.mode,
         )
 
-        # Return handle with cached routing info for combine
         return {
-            "recv_hidden": dispatched,
-            "expert_token_nums": expert_token_nums,
+            "recv_hidden": recv_hidden,
+            "expert_token_nums": num_recv_per_expert_list,
+            "deepep_handle": deepep_handle,
             "topk_indices": topk_indices,
             "topk_weights": topk_weights,
+            "recv_topk_indices": recv_topk_indices,
+            "recv_topk_weights": recv_topk_weights,
             "_mode": self.mode,
+            "_comm_impl": "deepep",
         }
 
     def combine(
@@ -230,12 +318,33 @@ class MoECommunicator:
         if self._buffer is None:
             raise RuntimeError("Buffer not initialized. Call dispatch() first.")
 
-        # Retrieve cached routing info
-        topk_indices = dispatch_handle["topk_indices"]
-        topk_weights = dispatch_handle["topk_weights"]
+        if "deepep_handle" not in dispatch_handle:
+            raise KeyError("dispatch_handle missing DeepEP handle")
 
-        # Call DeepEP combine
-        combined = self._buffer.combine(ffn_outputs, topk_indices, topk_weights)
+        if dispatch_handle.get("_mode") == "low_latency":
+            combined, _event, _hook = self._buffer.low_latency_combine(
+                ffn_outputs,
+                dispatch_handle["topk_indices"],
+                dispatch_handle["topk_weights"],
+                dispatch_handle["deepep_handle"],
+            )
+            return combined
+
+        combine_kwargs = {
+            "topk_weights": dispatch_handle.get(
+                "recv_topk_weights",
+                dispatch_handle["topk_weights"],
+            ),
+        }
+        if hasattr(_deep_ep.Buffer, "get_combine_config"):
+            combine_kwargs["config"] = _deep_ep.Buffer.get_combine_config(self.world_size)
+
+        combined_ret = self._buffer.combine(
+            ffn_outputs,
+            dispatch_handle["deepep_handle"],
+            **combine_kwargs,
+        )
+        combined = self._unwrap_tensor(combined_ret)
 
         logger.debug(
             f"Combine complete: input shape {ffn_outputs.shape}, "

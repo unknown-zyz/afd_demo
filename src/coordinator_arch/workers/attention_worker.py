@@ -84,8 +84,9 @@ class AttentionWorker:
         
         # Build communicator (only if distributed is initialized)
         if self.ep_group is not None:
+            prefer_deepep = bool(getattr(args, "use_deepep", False)) and not args.use_fallback
             self.comm = build_communicator(
-                prefer_deepep=not args.use_fallback,
+                prefer_deepep=prefer_deepep,
                 ep_group=self.ep_group,
                 hidden_size=args.hidden_size,
                 num_experts=args.num_experts,
@@ -93,6 +94,7 @@ class AttentionWorker:
                 device=self.device,
                 mode=args.mode
             )
+            logger.info("AttentionWorker communicator=%s", type(self.comm).__name__)
         else:
             self.comm = None
             logger.warning("Communicator not built (distributed not initialized)")
@@ -435,8 +437,10 @@ def parse_args():
                         help="Local NPU/GPU device index (-1 for CPU)")
     
     # Flags
+    parser.add_argument("--use-deepep", action="store_true",
+                        help="Opt in to experimental DeepEP communicator (default: fallback_a2a)")
     parser.add_argument("--use-fallback", action="store_true",
-                        help="Force fallback_a2a (torch.distributed)")
+                        help="Deprecated no-op: fallback_a2a is the default")
     parser.add_argument("--no-init-dist", action="store_true",
                         help="Skip distributed init (unit test mode)")
     

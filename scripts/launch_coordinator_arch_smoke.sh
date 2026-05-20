@@ -2,7 +2,7 @@
 # Local multi-process smoke test for the Coordinator architecture.
 #
 # Launches: 1 coordinator + N attn workers + M ffn workers, all on localhost,
-# all in --use-fallback mode (no DeepEP, no real NPU required).
+# all using the default fallback mode (no DeepEP, no real NPU required).
 #
 # Verifies gRPC control plane (register / get_routing_table / update_metrics)
 # and that workers stay alive for SMOKE_DURATION seconds.
@@ -75,7 +75,7 @@ for ((i=0; i<ATTN_WORLD; i++)); do
     --master-addr 127.0.0.1 --master-port "$MASTER_PORT" \
     --num-experts "$NUM_EXPERTS" \
     --device-id "-1" \
-    --use-fallback --no-init-dist \
+    --no-init-dist \
     --log-file "$LOG_DIR/attn_rank${i}.log" &
   PIDS+=($!)
 done
@@ -89,7 +89,7 @@ for ((j=0; j<FFN_WORLD; j++)); do
     --master-addr 127.0.0.1 --master-port "$MASTER_PORT" \
     --num-experts "$NUM_EXPERTS" \
     --device-id "-1" \
-    --use-fallback --no-init-dist \
+    --no-init-dist \
     --log-file "$LOG_DIR/ffn_rank${rank}.log" &
   PIDS+=($!)
 done

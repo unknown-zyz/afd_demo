@@ -68,8 +68,9 @@ class FFNWorker:
             self.comm = None
             logger.warning("Communicator not built (--no-init-dist)")
         else:
+            prefer_deepep = bool(getattr(args, "use_deepep", False)) and not args.use_fallback
             self.comm = build_communicator(
-                prefer_deepep=not args.use_fallback,
+                prefer_deepep=prefer_deepep,
                 ep_group=self.ep_group,
                 hidden_size=args.hidden_size,
                 num_experts=args.num_experts,
@@ -77,6 +78,7 @@ class FFNWorker:
                 device=self.device,
                 mode=args.mode,
             )
+            logger.info("FFNWorker communicator=%s", type(self.comm).__name__)
         
         self.routing_table = self._fetch_initial_routing_table()
         if self.comm is not None:
@@ -363,9 +365,14 @@ def parse_args():
         help="Communication mode",
     )
     parser.add_argument(
+        "--use-deepep",
+        action="store_true",
+        help="Opt in to experimental DeepEP communicator (default: fallback torch.distributed)",
+    )
+    parser.add_argument(
         "--use-fallback",
         action="store_true",
-        help="Use fallback torch.distributed instead of DeepEP",
+        help="Deprecated no-op: fallback torch.distributed is the default",
     )
     
     # Device
