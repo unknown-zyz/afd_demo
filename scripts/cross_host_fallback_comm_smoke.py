@@ -47,7 +47,9 @@ def main():
     sys.path.insert(0, str(repo))
     from src.coordinator_arch.comm.fallback_a2a import FallbackMoECommunicator
 
-    ep_group = dist.new_group(ranks=list(range(world)))
+    # Use default WORLD group as ep_group; creating a new_group on HCCL requires
+    # an additional bind port which collides with HCCL_IF_BASE_PORT on the same host.
+    ep_group = dist.group.WORLD
     comm = FallbackMoECommunicator(
         ep_group=ep_group,
         hidden_size=args.hidden,
