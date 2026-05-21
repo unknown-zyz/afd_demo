@@ -226,3 +226,50 @@ ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229 \
 - 若单侧 OOM 导致 peer 挂住，只能按 PID `kill <PID>`。
 - CANN 8.5 必须使用 torch_npu >= 2.6.0；不要切回 2.5.1。
 - 全部 chip 都被其他租户占满 → 切 Host2 决策树第 2 步；若 Host2 未就绪则报告阻塞。
+
+## 跨机 HCCL 配方（2026-05-21 验证）
+
+跨机 (Host1 ↔ Host2) HCCL 必须满足：
+
+| 变量 | 值/规则 |
+|---|---|
+| `MASTER_ADDR` | `192.168.0.125`（Host1 的 192.168 网卡 IP） |
+| `MASTER_PORT` | **每个新阶段换 fresh 端口**（如 29782, 29783, ...）。重用易触发 EJ0003 `bind IP/port already` |
+| `HCCL_IF_BASE_PORT` | 同样 **fresh**，并与 `MASTER_PORT` 至少差 10（如 29792, 29793, ...） |
+| `HCCL_IF_IP` | 每个 rank 设为 **自己** 那台机器的 192.168 网卡 IP（H1=192.168.0.125, H2=192.168.0.192） |
+| `HCCL_CONNECT_TIMEOUT` | **`600`**。注意 HCCL 拒绝 `60`（区间 120–7200） |
+| `HCCL_EXEC_TIMEOUT` | **`600`**。同上 |
+| `ASCEND_VISIBLE_DEVICES` | 单卡按 LOCAL_RANK，多 rank 写 NPU id 列表 |
+| `RANK` / `WORLD_SIZE` / `LOCAL_RANK` | 标准 torchrun 风格 |
+
+**重要陷阱**：HCCL 后端的 `dist.new_group()` 会额外占用一个 bind 端口，
+若与 `HCCL_IF_BASE_PORT` 冲突则报 EJ0003。多数 2-rank/4-rank 场景下可以
+直接复用 `dist.group.WORLD` 作为 ep_group。
+
+**已验证的可工作端口序列**：
+- P1 fallback comm smoke 2-rank：29782/29792 → PASS（mean 1407µs）
+- P2 fallback comm smoke 4-rank：29783/29793 → PASS（mean 2005µs）
+
+**进程清理**：必须用 `kill <PID>` 显式杀死，`pkill`/`killall` 在本环境
+不可用。Container 不可重启（红线），所以每次失败后务必检查 stale 进程：
+```bash
+ps -ef | grep -E "cross_host|src.main" | grep -v grep
+```
+
+## 仓库同步（容器没有公网）
+
+两台容器的 `origin` 都指向本地 bundle：
+```
+H1 afd-npu-test:  /tmp/afd_npu.bundle
+H2 afd-npu-test-h2: 用 fetch /tmp/afd_npu.bundle <branch>:<branch>-bundle
+```
+本地 push 流程：
+```bash
+git push origin <branch>
+git bundle create /tmp/afd_npu.bundle --all
+scp -i ~/.ssh/id_rsa_second /tmp/afd_npu.bundle schedTeam@1.95.114.229:/tmp/
+ssh ... "docker cp /tmp/afd_npu.bundle afd-npu-test:/tmp/afd_npu.bundle && \
+  docker exec afd-npu-test git -C /workspace/afd_demo fetch origin && \
+  docker exec afd-npu-test git -C /workspace/afd_demo reset --hard origin/<branch>"
+# H2 类似，先 sudo scp 到 H2 宿主，再 docker cp
+```
