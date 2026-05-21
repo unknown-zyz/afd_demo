@@ -2,6 +2,14 @@
 
 Date: 2026-05-20
 
+> **2026-05-21 UPDATE — RESOLVED**: 跨机 HCCL / fallback 已修复。Host1↔Host2 fallback RT
+> mean=406µs / p99=603µs (512KiB)。修复方法: fresh `MASTER_PORT=297xx` +
+> `HCCL_IF_BASE_PORT=297yy` + `HCCL_CONNECT_TIMEOUT=600` (替换历史
+> `29555/24500/60`)。详情见
+> `results_npu/coordinator_arch/crosshost_comm_repair/README.md` 与
+> `doc/15-cross-host-communication-diagnosis.md`。
+> DeepEP normal/low_latency 仍 blocked, 但已下沉为 DeepEP runtime 自身问题。
+
 Branch: `feat/fallback-default-comm`
 
 ## Summary
