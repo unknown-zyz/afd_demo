@@ -191,7 +191,8 @@ TBE (Tensor Boost Engine) 是 Ascend/CANN 用来为 NPU 生成算子 kernel 的�
 `run_npu.sh` 长命令观察前台输出：`run_npu.sh` 会把每个 rank 的日志重定向到
 `results/logs/npu_*.log`，Host2 EP7 冷编译时前台长时间没有新输出是预期现象。
 统一使用 `scripts/run_tbe_cache_warmup_npu.sh`，它会自动轮询 rank 数、`kernel_meta/`
-大小和 rank 日志尾部。
+大小和 rank 日志尾部；如果达到 `--timeout-sec`，脚本会返回 `124` 并按本次实验
+suffix 清理残留 `python -m src.main` rank，避免后续 HCCL 端口或进程状态被污染。
 
 1. 在 Host1 本地跑代表性 prefill 配置，让 attention 相关 kernel 先编译并落到 `/workspace/afd_demo/kernel_meta/`
    ```bash
@@ -219,6 +220,8 @@ TBE (Tensor Boost Engine) 是 Ascend/CANN 用来为 NPU 生成算子 kernel 的�
    Host2 会启动 8 个本地 ranks，前台由 wrapper 每 60 秒打印一次
    `active_src_main`、`kernel_meta` 和 rank log tail；如果日志停在
    `Running 1 prefill warmup round(s)`，通常表示仍在 TBE 冷编译。
+   若 7200 秒仍未完成并返回 `exit=124`，说明本轮仍未灌满 cache；确认
+   `active_src_main` 已清零后，可增大 `--timeout-sec` 或缩小 shape 继续预热。
 3. 确认两边 `kernel_meta/` 明显增大后，再启动跨机 1A7F 真实 decode
 
 这样做的好处是把“编译耗时”和“跨机通信验证”拆开: 单机 warmup 时没有 Host1/Host2 互相等待，失败也更容易定位；跨机正式运行时则可以复用已编译 kernel，减少 layer 0 / 首轮 prefill 的冷启动开销。

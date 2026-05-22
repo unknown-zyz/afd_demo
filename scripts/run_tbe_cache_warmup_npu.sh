@@ -121,6 +121,65 @@ export ASCEND_GLOBAL_CACHE_ENABLE="${ASCEND_GLOBAL_CACHE_ENABLE:-1}"
 LOG_GLOB="results/logs/npu_${SUFFIX}_r"*.log
 WRAPPER_LOG="results/logs/tbe_cache_warmup_${PROFILE}_b${BATCH}_s${SEQ}_t${TOKENS}.log"
 
+matching_rank_pids() {
+    ps -eo pid,args | awk -v suffix="$SUFFIX" '
+        {
+            cmd = $2
+            sub(".*/", "", cmd)
+            has_main = 0
+            for (i = 3; i < NF; i++) {
+                if ($i == "-m" && $(i + 1) == "src.main") {
+                    has_main = 1
+                    break
+                }
+            }
+        }
+        cmd ~ /^python[0-9.]*$/ && has_main && index($0, suffix) > 0 {
+            print $1
+        }
+    '
+}
+
+count_matching_ranks() {
+    matching_rank_pids | wc -l | tr -d ' '
+}
+
+cleanup_matching_ranks() {
+    mapfile -t pids < <(matching_rank_pids)
+    if [[ "${#pids[@]}" -eq 0 ]]; then
+        return 0
+    fi
+    echo "[warmup-cleanup] force terminating rank PIDs: ${pids[*]}"
+    kill -KILL "${pids[@]}" 2>/dev/null || true
+}
+
+cleanup_launcher() {
+    local pid="${RUN_PID:-}"
+    if [[ -z "$pid" ]] || ! ps -p "$pid" >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "[warmup-cleanup] terminating launcher PID: $pid"
+    if [[ "${LAUNCHER_SETSID:-false}" == true ]]; then
+        kill -TERM "-$pid" 2>/dev/null || true
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+        ps -p "$pid" >/dev/null 2>&1 || return 0
+        sleep 1
+    done
+    if [[ "${LAUNCHER_SETSID:-false}" == true ]]; then
+        kill -KILL "-$pid" 2>/dev/null || true
+    fi
+    kill -KILL "$pid" 2>/dev/null || true
+}
+
+on_signal() {
+    echo "[warmup-cleanup] signal received; cleaning matching ranks"
+    cleanup_matching_ranks
+    cleanup_launcher
+}
+trap on_signal INT TERM
+
 echo "=== TBE cache warmup ==="
 echo "profile=$PROFILE ($PROFILE_DESC)"
 echo "batch=$BATCH seq=$SEQ tokens=$TOKENS model=$MODEL_NAME"
@@ -133,19 +192,29 @@ echo "logs=results/logs/npu_${SUFFIX}_r*.log"
 echo "wrapper_log=$WRAPPER_LOG"
 echo ""
 
+LAUNCHER_SETSID=false
+if command -v setsid >/dev/null 2>&1; then
+    LAUNCHER_SETSID=true
+fi
+
 (
     export ASCEND_VISIBLE_DEVICES="$VISIBLE_DEVICES"
     export ASCEND_RT_VISIBLE_DEVICES="$VISIBLE_DEVICES"
-    timeout "${TIMEOUT_SEC}s" bash scripts/run_npu.sh "${RUN_ARGS[@]}"
+    if [[ "$LAUNCHER_SETSID" == true ]]; then
+        exec setsid bash scripts/run_npu.sh "${RUN_ARGS[@]}"
+    else
+        exec bash scripts/run_npu.sh "${RUN_ARGS[@]}"
+    fi
 ) > "$WRAPPER_LOG" 2>&1 &
 RUN_PID=$!
 
 start_ts=$(date +%s)
 rc=0
+timed_out=false
 while ps -p "$RUN_PID" >/dev/null 2>&1; do
     now_ts=$(date +%s)
     elapsed=$((now_ts - start_ts))
-    rank_count=$(pgrep -fc 'python.*src.main' 2>/dev/null || true)
+    rank_count=$(count_matching_ranks)
     meta_size=$(du -sh kernel_meta 2>/dev/null | awk '{print $1}' || echo missing)
     echo ""
     echo "[warmup-status] elapsed=${elapsed}s run_pid=$RUN_PID active_src_main=${rank_count:-0} kernel_meta=$meta_size"
@@ -168,11 +237,26 @@ while ps -p "$RUN_PID" >/dev/null 2>&1; do
         fi
     fi
 
+    if (( elapsed >= TIMEOUT_SEC )); then
+        echo "[warmup-timeout] elapsed=${elapsed}s reached timeout_sec=${TIMEOUT_SEC}; cleaning up"
+        timed_out=true
+        cleanup_matching_ranks
+        cleanup_launcher
+        break
+    fi
+
     sleep "$POLL_SEC"
 done
 
-wait "$RUN_PID"
-rc=$?
+if [[ "$timed_out" == true ]]; then
+    rc=124
+    wait "$RUN_PID" 2>/dev/null || true
+elif ! wait "$RUN_PID"; then
+    rc=$?
+fi
+if [[ "$rc" -ne 0 && "$timed_out" != true ]]; then
+    cleanup_matching_ranks
+fi
 
 echo ""
 echo "=== TBE cache warmup done ==="

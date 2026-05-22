@@ -459,7 +459,8 @@ P3 当前真正的阻塞点是首次冷编译，而不是 HCCL bootstrap。推�
 
 注意：`scripts/run_npu.sh` 会把每个 rank 的输出写到 `results/logs/npu_..._r*.log`，
 所以 Host2 EP7 冷编译时直接执行 `run_npu.sh` 会看起来“前台没反应”。使用下面的
-wrapper 可以持续看到 rank 数、`kernel_meta/` 大小和日志尾部。
+wrapper 可以持续看到 rank 数、`kernel_meta/` 大小和日志尾部；超时会返回 `124`
+并清理本次 suffix 对应的残留 `python -m src.main` rank。
 
 Host1（本地 1A1F 预编译 attention 路径为主）：
 
@@ -491,6 +492,7 @@ bash scripts/run_tbe_cache_warmup_npu.sh \
 
 - `kernel_meta/` 目录明显增大
 - 日志不再长期停在 `Running 1 prefill warmup round(s) to absorb JIT compile cost`
+- 如果返回 `exit=124`，表示仍在冷编译阶段超时；确认 `active_src_main` 清零后再复跑或增大 `--timeout-sec`
 
 ### 8.4 当前 P3 真实 decode 复现命令（1A7F，fallback）
 
