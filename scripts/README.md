@@ -29,6 +29,7 @@ NPU/HCCL 脚本已合入 `main`：
 | `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 pipeline Gantt 图。 |
 | `plot_all_pipelines.py` | 扫描结果目录，为所有有效 DBO 行生成 pipeline 图。 |
 | `aggregate_singlehost_coord_ep7.py` | 聚合单机 EP7 coordinator vs static decode-dbo 结果，生成对比 CSV、heatmap、seq=512 折线图和带源数据路径的 Markdown。 |
+| `report_ep_bandwidth.py` | 从 FFN timing JSON 提取 EP dispatch/reduce payload 与有效 GiB/s，便于观察网络带宽利用率。 |
 | `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
 | `bench_comm_transfer.py` | 两 rank 通信 microbenchmark，用独立 P2P 测试校准 DBO completion 图。 |
 | `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |

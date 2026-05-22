@@ -39,6 +39,7 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `scripts/cross_host_*.py` | 双机 HCCL / fallback / DeepEP 通信冒烟与 RT bench。 |
 | `scripts/plot_all_pipelines.py` / `scripts/gen_experiment_report.py` | 图表与单次报告生成。 |
 | `scripts/aggregate_singlehost_coord_ep7.py` | 单机 EP7 coordinator vs static 聚合、画图与带源数据路径的 Markdown 摘要。 |
+| `scripts/report_ep_bandwidth.py` | 从 FFN timing JSON 提取 EP dispatch/reduce payload 与有效 GiB/s，观察网络带宽利用率。 |
 
 ## 2. GPU 单次入口
 
@@ -413,6 +414,9 @@ python scripts/aggregate_singlehost_coord_ep7.py \
   --seqs 128,256,512 \
   --validation-configs 8:128,32:512,128:512 \
   --tokens 20
+
+python scripts/report_ep_bandwidth.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator
 ```
 
 ### 7.2 NPU warmup 消融实验
