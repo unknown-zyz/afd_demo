@@ -20,6 +20,16 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG_RE = re.compile(r"_b(?P<b>\d+)_s(?P<s>\d+)_t(?P<t>\d+)")
 
 
+def display_path(path: Path | str | None) -> str:
+    if not path:
+        return ""
+    p = Path(path)
+    try:
+        return str(p.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
 def parse_list(value: str) -> list[int]:
     return [int(x) for x in value.split(",") if x]
 
@@ -71,8 +81,8 @@ def timing_row(root: Path, label: str, b: int, s: int, t: int) -> dict[str, Any]
     throughput = (1000.0 * b / float(tpot)) if tpot else None
     return {
         f"{label}_status": "ok" if attn else "missing",
-        f"{label}_attn_timing": str(attn_path) if attn_path else "",
-        f"{label}_ffn_timing": str(ffn_path) if ffn_path else "",
+        f"{label}_attn_timing": display_path(attn_path),
+        f"{label}_ffn_timing": display_path(ffn_path),
         f"{label}_tpot_ms": tpot,
         f"{label}_throughput_tok_s": throughput,
         f"{label}_prefill_ms": attn.get("prefill_ms"),
@@ -280,17 +290,17 @@ def write_markdown(
     lines = [
         "# Single-host EP7 coordinator vs static summary",
         "",
-        f"- Static baseline root: `{static_root}`",
-        f"- Coordinator root: `{coord_root}`",
+        f"- Static baseline root: `{display_path(static_root)}`",
+        f"- Coordinator root: `{display_path(coord_root)}`",
         "- Metrics are read directly from `decode-dbo/timing_attention_*.json` and paired FFN timing JSONs.",
         "- Throughput is computed as `1000 * batch / decode_tpot_ms`.",
         "",
         "## Source data",
         "",
-        f"- Static summary/table source: `{static_root / 'experiment_matrix_summary.csv'}`",
-        f"- Static timing source: `{static_root / 'decode-dbo'}/timing_attention_*.json`",
-        f"- Coordinator timing source: `{coord_root / 'decode-dbo'}/timing_attention_*.json`",
-        f"- Aggregated CSV: `{out.with_name('coord_vs_static_summary.csv')}`",
+        f"- Static summary/table source: `{display_path(static_root / 'experiment_matrix_summary.csv')}`",
+        f"- Static timing source: `{display_path(static_root / 'decode-dbo')}/timing_attention_*.json`",
+        f"- Coordinator timing source: `{display_path(coord_root / 'decode-dbo')}/timing_attention_*.json`",
+        f"- Aggregated CSV: `{display_path(out.with_name('coord_vs_static_summary.csv'))}`",
         "",
     ]
     if validation_rows:
@@ -303,7 +313,7 @@ def write_markdown(
             "## Static reuse validation",
             "",
             f"- Representative current-code static runs within ±5%: {len(ok)}/{len(validation_rows)}.",
-            f"- Validation CSV: `{out.with_name('static_reuse_validation.csv')}`",
+            f"- Validation CSV: `{display_path(out.with_name('static_reuse_validation.csv'))}`",
             "",
             "| batch | seq | historical TPOT ms | current TPOT ms | delta % |",
             "|---:|---:|---:|---:|---:|",
@@ -330,10 +340,10 @@ def write_markdown(
         "",
         "## Figure outputs",
         "",
-        f"- Throughput ratio heatmap: `{out.with_name('coord_vs_static_throughput_ratio_heatmap.png')}`",
-        f"- TPOT delta heatmap: `{out.with_name('coord_vs_static_tpot_delta_heatmap.png')}`",
-        f"- seq=512 throughput line plot: `{out.with_name('static_vs_coord_throughput_vs_batch_s512.png')}`",
-        f"- seq=512 TPOT line plot: `{out.with_name('static_vs_coord_tpot_vs_batch_s512.png')}`",
+        f"- Throughput ratio heatmap: `{display_path(out.with_name('coord_vs_static_throughput_ratio_heatmap.png'))}`",
+        f"- TPOT delta heatmap: `{display_path(out.with_name('coord_vs_static_tpot_delta_heatmap.png'))}`",
+        f"- seq=512 throughput line plot: `{display_path(out.with_name('static_vs_coord_throughput_vs_batch_s512.png'))}`",
+        f"- seq=512 TPOT line plot: `{display_path(out.with_name('static_vs_coord_tpot_vs_batch_s512.png'))}`",
         "",
         "## Notes",
         "",
