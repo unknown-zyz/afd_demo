@@ -161,9 +161,6 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
     if (( R < ATTN_SIZE )); then ROLE=attention; RANK_DEVS="$ATTN_DEVICES"
     else ROLE=ffn;                               RANK_DEVS="$FFN_DEVICES"
     fi
-    if (( FFN_EP_SIZE > 1 )); then
-        RANK_DEVS="$R"
-    fi
     LOCAL_RANK=$R
     RANK=$R
     RUN_LOG="results/logs/npu_${SUFFIX}_r${RANK}.log"
@@ -174,6 +171,13 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             export ASCEND_VISIBLE_DEVICES="$RANK_DEVS"
             export ASCEND_RT_VISIBLE_DEVICES="$RANK_DEVS"
             LOCAL_RANK=0  # rank sees only its own devs starting at 0
+        fi
+        if (( FFN_EP_SIZE > 1 )); then
+            # EP ranks must keep distinct physical LOCAL_RANK values so HCCL can
+            # build the FFN EP subgroup topology. The workers force per-rank
+            # primary-device loading in EP mode, so all ranks may share the
+            # global visible device pool without loading weights on every chip.
+            LOCAL_RANK=$R
         fi
         RANK=$RANK LOCAL_RANK=$LOCAL_RANK WORLD_SIZE=$WORLD_SIZE \
         ATTN_SIZE=$ATTN_SIZE FFN_SIZE=$FFN_SIZE FFN_EP_SIZE=$FFN_EP_SIZE \

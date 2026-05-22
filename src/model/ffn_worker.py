@@ -178,9 +178,9 @@ class FFNWorker(nn.Module):
         self.config = model.config
         self.hidden_size = model.config.hidden_size
         self.num_layers = model.config.num_hidden_layers
-        self.role_devices = self._resolve_role_devices(device)
         self.ctx = get_distributed_context()
         self.use_ep = self.ctx.ffn_ep_enabled
+        self.role_devices = self._resolve_role_devices(device)
         self.expert_to_rank = tuple(int(rank) for rank in expert_to_rank) if expert_to_rank is not None else None
         
         # Extract and move components
@@ -259,6 +259,8 @@ class FFNWorker(nn.Module):
         """Resolve all visible accelerator devices for role-internal layer sharding."""
         from ..utils import device as devmod
         if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
+            return [primary_device]
+        if self.use_ep:
             return [primary_device]
         count = devmod.device_count()
         if count <= 1:

@@ -462,7 +462,7 @@ DeepEP normal / low_latency 的命令模板与 `doc/15-cross-host-communication-
 当前状态：
 
 - **1A1F** 已在 Host1 单机实测通过。
-- **1A7F / EP7** 代码已接入：coordinator `expert_to_rank` 会作为 explicit expert ownership 初始化真实 EP shard；需要在 910C 上做 smoke / 对比。
+- **1A7F / EP7** 已在 Host1 单机完成小配置 smoke：coordinator `expert_to_rank` 会作为 explicit expert ownership 初始化真实 EP shard。
 - 默认是 `--routing-update-mode oneshot`，不启动后台 gRPC 订阅线程。
 - 如需动态路由实验，用 `--routing-update-mode poll`；poll 只在 decode safe point 触发，失败沿用 cached table。
 
