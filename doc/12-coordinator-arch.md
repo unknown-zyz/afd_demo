@@ -1,6 +1,6 @@
 # 12. Coordinator-based Dynamic MoE Architecture
 
-> 状态：**Phase α 设计**（骨架已落地，端到端真实计算尚未接入）
+> 状态：**Phase α+**（骨架已落地；`src.main` 已支持 Host1 单机 1A1F coordinator smoke，真实多 FFN / EP decode 路径仍未接入）
 > 关联代码：`src/coordinator_arch/`
 > 关联文档：`doc/01-architecture.md`（旧静态 A↔F）、`doc/deepep_ascend_install_report.md`
 
@@ -17,6 +17,12 @@
 为支持双机 32×910C → 未来 DeepSeek-V3 多机 EP，需要一个 **Coordinator 控制面 +
 DeepEP-Ascend 数据面** 的新子系统。本子系统位于 `src/coordinator_arch/`，
 **不替换** 旧 prefill-DBO/decode-DBO，二者作为性能对照保留。
+
+当前进展补充：
+
+- `src.main` 已新增 `--routing-backend coordinator --coord-addr ...`，可在 **Host1 单机 1A1F**
+  上验证“真实 Qwen3 decode/prefill 路径 + coordinator 控制面”的最小 smoke
+- 这一桥接目前只覆盖 **注册 + 一次性拉表**；真实多 FFN / EP / 动态路由更新仍待后续接入
 
 ## 2. 目标拓扑
 

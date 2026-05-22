@@ -179,6 +179,14 @@ def parse_args():
     parser.add_argument('--ep-expert-policy', type=str,
                         choices=['round_robin', 'contiguous'], default='round_robin',
                         help='Expert assignment policy for FFN EP.')
+    parser.add_argument('--routing-backend', type=str,
+                        choices=['static', 'coordinator'], default='static',
+                        help='Routing/control-plane backend for the real decode path. '
+                             "'static' keeps the current built-in topology; "
+                             "'coordinator' fetches routing metadata from the gRPC coordinator.")
+    parser.add_argument('--coord-addr', type=str, default='',
+                        help='Coordinator gRPC address when --routing-backend=coordinator '
+                             '(for example 127.0.0.1:50071).')
 
     return parser.parse_args()
 
@@ -302,10 +310,12 @@ def run_inference_demo(args):
     model = DisaggregatedQwenModel.from_pretrained(
         args.model_name, device=device, dtype=dtype,
         max_seq_len=prefill_seq_len, max_batch_size=args.batch_size,
+        routing_backend=args.routing_backend, coord_addr=args.coord_addr or None,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
-        f"router={model.has_router}, moe_timing={model.supports_moe_timing}"
+        f"router={model.has_router}, moe_timing={model.supports_moe_timing}, "
+        f"routing_backend={model.routing_backend}, routing_table_version={model.routing_table_version}"
     )
     if args.verbose:
         print_memory_stats()
@@ -427,6 +437,8 @@ def run_inference_demo(args):
             "prefill_seq_len": prefill_seq_len,
             "actual_prompt_len": input_ids.shape[1],
             "max_new_tokens": args.max_new_tokens,
+            "routing_backend": model.routing_backend,
+            "routing_table_version": model.routing_table_version,
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -457,6 +469,7 @@ def run_inference_demo(args):
             except NameError:
                 pass
 
+    model.close()
     ctx.barrier()
     ctx.cleanup()
 
@@ -484,10 +497,12 @@ def run_generation_demo(args):
     model = DisaggregatedQwenModel.from_pretrained(
         args.model_name, device=device, dtype=dtype,
         max_seq_len=max_total_len, max_batch_size=args.batch_size,
+        routing_backend=args.routing_backend, coord_addr=args.coord_addr or None,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
-        f"router={model.has_router}, moe_timing={model.supports_moe_timing}"
+        f"router={model.has_router}, moe_timing={model.supports_moe_timing}, "
+        f"routing_backend={model.routing_backend}, routing_table_version={model.routing_table_version}"
     )
     
     ctx.barrier()
@@ -632,6 +647,8 @@ def run_generation_demo(args):
             "actual_prompt_len": prompt_len,
             "max_new_tokens": args.max_new_tokens,
             "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,
+            "routing_backend": model.routing_backend,
+            "routing_table_version": model.routing_table_version,
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -656,12 +673,15 @@ def run_generation_demo(args):
             except NameError:
                 pass
 
+    model.close()
     ctx.barrier()
     ctx.cleanup()
 
 
 def main():
     args = parse_args()
+    if args.routing_backend == "coordinator" and not args.coord_addr:
+        raise ValueError("--coord-addr is required when --routing-backend=coordinator")
     # Force greedy decoding when correctness check is requested for deterministic
     # serial-vs-DBO token comparison.
     if args.correctness_check and not args.greedy:

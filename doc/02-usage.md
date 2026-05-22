@@ -35,6 +35,7 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `scripts/run_experiment_matrix_npu.sh` | 910C 矩阵实验。 |
 | `scripts/run_warmup_ablation_npu.sh` | P2P warmup / prefill warmup 的 2×2 消融。 |
 | `scripts/run_tbe_cache_warmup_npu.sh` | 跨机前的 TBE / `kernel_meta` 预编译，带日志和 cache 轮询。 |
+| `scripts/run_npu_coordinator_single_host.sh` | Host1 单机 coordinator smoke；自动先起 coordinator，再走真实 `src.main` 1A1F decode/prefill 路径。当前仅支持 1A1F、无 FFN EP。 |
 | `scripts/cross_host_*.py` | 双机 HCCL / fallback / DeepEP 通信冒烟与 RT bench。 |
 | `scripts/plot_all_pipelines.py` / `scripts/gen_experiment_report.py` | 图表与单次报告生成。 |
 
@@ -452,6 +453,26 @@ python3 scripts/cross_host_fallback_rt_bench.py --iters 50 --warmup 10 --num-tok
 
 DeepEP normal / low_latency 的命令模板与 `doc/15-cross-host-communication-diagnosis.md`
 和 `doc/13-deepep-install-test-error-guide.md` 保持一致；如果只是验证当前生产可行路径，优先跑 fallback。
+
+### 8.2.1 Host1 单机 coordinator smoke（真实 decode/prefill 路径）
+
+当前 `coordinator_arch` 已经通过 `src.main` 打通 **Host1 单机 1A1F smoke**：
+会先起 gRPC coordinator，再走真实 Qwen3 `decode-dbo` / `prefill` 路径。当前限制：
+
+- 只支持 **1 attention + 1 ffn**
+- 不支持 FFN EP
+- 目前是 **注册 + 一次性拉表** 的 control-plane smoke，不包含真实动态路由更新
+
+```bash
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+ASCEND_VISIBLE_DEVICES=0,1 \
+bash scripts/run_npu_coordinator_single_host.sh \
+  --batch 2 --seq 128 --tokens 5 \
+  --model-name /models/Qwen3-30B-A3B \
+  --timing --timing-suffix coordinator_b2_s128_t5
+```
 
 ### 8.3 Host1 / Host2 单机预编译（TBE warmup）
 

@@ -6,6 +6,7 @@ coordinating between attention and FFN workers across nodes.
 """
 
 import logging
+import socket
 import statistics
 import time
 from typing import Optional, Tuple, List, Dict, Any
@@ -96,6 +97,96 @@ class DisaggregatedQwenModel(nn.Module):
         # Communicator
         self.communicator: Optional[AFDCommunicator] = None
         self._last_generation_metrics: Dict[str, Any] = {}
+        self.routing_backend: str = "static"
+        self.coord_addr: Optional[str] = None
+        self.coord_client = None
+        self.routing_table: Optional[Dict[str, Any]] = None
+        self.routing_table_version: Optional[int] = None
+
+    def _ensure_supported_coordinator_topology(self) -> None:
+        attn_world = len(self.ctx.attn_ranks)
+        ffn_world = len(self.ctx.ffn_ranks)
+        if attn_world != 1 or ffn_world != 1 or self.ctx.ffn_ep_enabled:
+            raise NotImplementedError(
+                "Real-path coordinator mode currently supports only 1A1F without FFN EP. "
+                "Use --routing-backend static for multi-FFN/EP runs until the coordinator "
+                "bridge is wired into the real EP path."
+            )
+
+    def _register_with_coordinator(self) -> None:
+        if self.coord_client is None:
+            return
+        role = "attn" if self.ctx.is_attention_node else "ffn"
+        world_size = len(self.ctx.attn_ranks) if role == "attn" else len(self.ctx.ffn_ranks)
+        num_experts = int(getattr(self.config, "num_experts", 0) or 0)
+        local_experts = list(range(num_experts)) if role == "ffn" and num_experts > 0 else []
+        ack = self.coord_client.register_worker(
+            {
+                "role": role,
+                "rank": self.ctx.rank,
+                "host": socket.gethostname(),
+                "device_id": self.ctx.local_rank,
+                "world_size": world_size,
+                "local_experts": local_experts,
+            }
+        )
+        if not ack.get("success"):
+            raise RuntimeError(
+                f"Coordinator registration failed for {role} rank {self.ctx.rank}: {ack.get('msg', 'unknown error')}"
+            )
+        logger.info(
+            "Coordinator registered: role=%s rank=%s table_version=%s",
+            role,
+            self.ctx.rank,
+            ack.get("initial_table_version"),
+        )
+
+    def _on_routing_table(self, table: Dict[str, Any]) -> None:
+        self.routing_table = dict(table)
+        self.routing_table_version = table.get("version")
+        logger.info(
+            "Routing table update: version=%s mode=%s",
+            self.routing_table_version,
+            table.get("mode"),
+        )
+
+    def refresh_routing_table(self) -> None:
+        if self.coord_client is None:
+            return
+        table = self.coord_client.get_routing_table()
+        if table is None:
+            raise RuntimeError(f"Coordinator {self.coord_addr} returned no routing table")
+        self._on_routing_table(table)
+
+    def setup_routing_backend(
+        self,
+        routing_backend: str = "static",
+        coord_addr: Optional[str] = None,
+    ) -> None:
+        self.routing_backend = routing_backend
+        self.coord_addr = coord_addr
+        if routing_backend == "static":
+            return
+        if not coord_addr:
+            raise ValueError("--coord-addr is required when --routing-backend=coordinator")
+
+        self._ensure_supported_coordinator_topology()
+
+        from ..coordinator_arch.coordinator_client import CoordinatorClient
+
+        self.coord_client = CoordinatorClient(coord_addr)
+        self._register_with_coordinator()
+        self.refresh_routing_table()
+        logger.info(
+            "Coordinator routing enabled (one-shot fetch): addr=%s version=%s",
+            coord_addr,
+            self.routing_table_version,
+        )
+
+    def close(self) -> None:
+        if self.coord_client is not None:
+            self.coord_client.close()
+            self.coord_client = None
     
     def load_weights(self, model_name: str) -> None:
         """
@@ -727,6 +818,8 @@ class DisaggregatedQwenModel(nn.Module):
             "decode_steps": decode_steps,
             "decode_tpot_ms": decode_tpot_ms,
             "decode_step_times_ms": decode_step_times_ms,
+            "routing_backend": self.routing_backend,
+            "routing_table_version": self.routing_table_version,
             **tbt,
         }
 
@@ -827,6 +920,8 @@ class DisaggregatedQwenModel(nn.Module):
             "decode_steps": decode_steps,
             "decode_tpot_ms": decode_tpot_ms,
             "decode_step_times_ms": decode_step_times_ms,
+            "routing_backend": self.routing_backend,
+            "routing_table_version": self.routing_table_version,
             **tbt,
         }
 
@@ -855,6 +950,8 @@ class DisaggregatedQwenModel(nn.Module):
         dtype: torch.dtype = torch.bfloat16,
         max_seq_len: int = 2048,
         max_batch_size: int = 4,
+        routing_backend: str = "static",
+        coord_addr: Optional[str] = None,
     ) -> "DisaggregatedQwenModel":
         """
         Create a disaggregated model from pretrained weights.
@@ -883,5 +980,9 @@ class DisaggregatedQwenModel(nn.Module):
             max_seq_len=max_seq_len,
             max_batch_size=max_batch_size,
         )
-        
+        model.setup_routing_backend(
+            routing_backend=routing_backend,
+            coord_addr=coord_addr,
+        )
+
         return model
