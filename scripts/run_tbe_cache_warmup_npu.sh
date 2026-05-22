@@ -119,6 +119,7 @@ export AFD_DIST_TIMEOUT_SEC="${AFD_DIST_TIMEOUT_SEC:-7200}"
 export ASCEND_GLOBAL_CACHE_ENABLE="${ASCEND_GLOBAL_CACHE_ENABLE:-1}"
 
 LOG_GLOB="results/logs/npu_${SUFFIX}_r"*.log
+WRAPPER_LOG="results/logs/tbe_cache_warmup_${PROFILE}_b${BATCH}_s${SEQ}_t${TOKENS}.log"
 
 echo "=== TBE cache warmup ==="
 echo "profile=$PROFILE ($PROFILE_DESC)"
@@ -129,13 +130,14 @@ echo "HCCL_CONNECT_TIMEOUT=$HCCL_CONNECT_TIMEOUT HCCL_EXEC_TIMEOUT=$HCCL_EXEC_TI
 echo "ASCEND_GLOBAL_CACHE_ENABLE=$ASCEND_GLOBAL_CACHE_ENABLE"
 echo "kernel_meta_before=$(du -sh kernel_meta 2>/dev/null | awk '{print $1}' || echo missing)"
 echo "logs=results/logs/npu_${SUFFIX}_r*.log"
+echo "wrapper_log=$WRAPPER_LOG"
 echo ""
 
 (
     export ASCEND_VISIBLE_DEVICES="$VISIBLE_DEVICES"
     export ASCEND_RT_VISIBLE_DEVICES="$VISIBLE_DEVICES"
     timeout "${TIMEOUT_SEC}s" bash scripts/run_npu.sh "${RUN_ARGS[@]}"
-) &
+) > "$WRAPPER_LOG" 2>&1 &
 RUN_PID=$!
 
 start_ts=$(date +%s)
@@ -149,6 +151,10 @@ while ps -p "$RUN_PID" >/dev/null 2>&1; do
     echo "[warmup-status] elapsed=${elapsed}s run_pid=$RUN_PID active_src_main=${rank_count:-0} kernel_meta=$meta_size"
 
     if [[ "$TAIL_LOGS" == true ]]; then
+        if [[ -f "$WRAPPER_LOG" ]]; then
+            echo "--- tail: $WRAPPER_LOG ---"
+            tail -n 8 "$WRAPPER_LOG"
+        fi
         found=false
         for log in $LOG_GLOB; do
             if [[ -f "$log" ]]; then
@@ -173,6 +179,7 @@ echo "=== TBE cache warmup done ==="
 echo "exit=$rc"
 echo "kernel_meta_after=$(du -sh kernel_meta 2>/dev/null | awk '{print $1}' || echo missing)"
 echo "logs=results/logs/npu_${SUFFIX}_r*.log"
+echo "wrapper_log=$WRAPPER_LOG"
 if [[ "$rc" -eq 0 ]]; then
     echo "Warmup completed. If kernel_meta grew, reuse this worktree/cache for cross-host P3."
 else
