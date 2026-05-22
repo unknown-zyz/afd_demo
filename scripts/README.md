@@ -16,7 +16,7 @@ NPU/HCCL 脚本已合入 `main`：
 | 脚本 | 用途 |
 |---|---|
 | `run_npu.sh` | Ascend 910C 单配置运行。当前验证拓扑显式使用 `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`。 |
-| `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`。 |
+| `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`；支持 `--routing-backend coordinator` 自动拉起单机 coordinator。 |
 | `run_warmup_ablation_npu.sh` | Ascend 910C warmup ablation：P2P warmup 与 prefill warmup 的 2x2 开关实验。 |
 | `run_tbe_cache_warmup_npu.sh` | Ascend TBE / `kernel_meta` 预编译脚本，带 rank/log/cache 轮询；超时返回 124 并清理本次残留 rank。 |
 | `run_npu_coordinator_single_host.sh` | 单机 coordinator smoke：先起 gRPC coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，也可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
@@ -28,6 +28,7 @@ NPU/HCCL 脚本已合入 `main`：
 | `gen_experiment_report.py` | 从 timing JSON 生成单次运行 Markdown 报告；prefill/decode 对比读取 serial cache。 |
 | `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 pipeline Gantt 图。 |
 | `plot_all_pipelines.py` | 扫描结果目录，为所有有效 DBO 行生成 pipeline 图。 |
+| `aggregate_singlehost_coord_ep7.py` | 聚合单机 EP7 coordinator vs static decode-dbo 结果，生成对比 CSV、heatmap、seq=512 折线图和带源数据路径的 Markdown。 |
 | `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
 | `bench_comm_transfer.py` | 两 rank 通信 microbenchmark，用独立 P2P 测试校准 DBO completion 图。 |
 | `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |

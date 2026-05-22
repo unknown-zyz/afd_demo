@@ -47,6 +47,17 @@ def plot_one(attn_path: Path, ffn_path: Path, out_png: Path,
     return True
 
 
+def matching_ffn_path(attn_path: Path, tag: str) -> Path | None:
+    candidates = [
+        attn_path.with_name(f"timing_ffn_{tag}.json"),
+        attn_path.with_name(f"timing_ffn_coordinator_{tag}.json"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default="results",
@@ -71,8 +82,8 @@ def main():
             if not m:
                 continue
             tag = m.group("tag")
-            ffn = d / f"timing_ffn_{tag}.json"
-            if not ffn.exists():
+            ffn = matching_ffn_path(attn, tag)
+            if ffn is None:
                 print(f"  ! missing ffn for {tag}")
                 continue
             # Parse b/s/t from tag, e.g. decode-dbo_b8_s128_t20

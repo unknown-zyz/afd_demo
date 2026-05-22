@@ -32,12 +32,13 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `scripts/run_single.sh` | GPU 单次 serial / prefill DBO / decode DBO / crosslayer。 |
 | `scripts/run_experiment_matrix.sh` | GPU 矩阵实验。 |
 | `scripts/run_npu.sh` | 910C 单次实验；支持 1A1F、EP4、EP7、EP8、EP15。 |
-| `scripts/run_experiment_matrix_npu.sh` | 910C 矩阵实验。 |
+| `scripts/run_experiment_matrix_npu.sh` | 910C 矩阵实验；支持 `--routing-backend coordinator` 自动拉起单机 coordinator。 |
 | `scripts/run_warmup_ablation_npu.sh` | P2P warmup / prefill warmup 的 2×2 消融。 |
 | `scripts/run_tbe_cache_warmup_npu.sh` | 跨机前的 TBE / `kernel_meta` 预编译，带日志和 cache 轮询。 |
 | `scripts/run_npu_coordinator_single_host.sh` | 单机 coordinator smoke；自动先起 coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
 | `scripts/cross_host_*.py` | 双机 HCCL / fallback / DeepEP 通信冒烟与 RT bench。 |
 | `scripts/plot_all_pipelines.py` / `scripts/gen_experiment_report.py` | 图表与单次报告生成。 |
+| `scripts/aggregate_singlehost_coord_ep7.py` | 单机 EP7 coordinator vs static 聚合、画图与带源数据路径的 Markdown 摘要。 |
 
 ## 2. GPU 单次入口
 
@@ -262,6 +263,11 @@ NPU matrix 需要在 910C 容器 / worktree 内运行。
 | `--visible-devs list` | `0..15` | `ASCEND_VISIBLE_DEVICES` 设备池。 |
 | `--attn-devs list` | 空 | Attention rank 的设备池覆盖。 |
 | `--ffn-devs list` | 空 | FFN rank 的设备池覆盖。 |
+| `--routing-backend static\|coordinator` | `static` | 真实 `src.main` 路径的 routing/control-plane backend；`coordinator` 会为每个 config 自动启动并回收本机 gRPC coordinator。 |
+| `--coord-bind host:port` | 自动本机端口 | coordinator 绑定地址；省略时每次运行选择一个 `127.0.0.1:<port>`，避免端口残留冲突。 |
+| `--routing-update-mode oneshot\|poll` | `oneshot` | coordinator routing 更新模式；matrix 对比默认使用 one-shot。 |
+| `--routing-poll-interval-steps N` | `16` | `poll` 模式下 decode step 轮询间隔。 |
+| `--routing-rpc-timeout-s SEC` | `0.05` | routing RPC 超时；失败时沿用 cached table。 |
 | `--no-cache` | false | 强制重跑 serial。 |
 | `--append` | false | 追加到已有 summary，而不是重写。 |
 | `--dry-run` | false | 只打印命令，不执行。 |
@@ -348,6 +354,66 @@ EP7 矩阵示例：
 
 该矩阵会在每个 seq 遇到 OOM 后停止更大 batch，并复用
 `results_npu/serial/cache/` 中的 serial baseline 计算 TPOT speedup。
+
+### 7.1.1 单机 EP7 coordinator 全矩阵
+
+当前 coordinator 已接入真实 `src.main` / Qwen3 decode-dbo 路径。单机 EP7 对比建议使用：
+
+```bash
+# coordinator EP7：跑本轮确认的 24 个 decode-dbo config
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --routing-backend coordinator \
+  --routing-update-mode oneshot \
+  --output-root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --modes decode-dbo \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --tokens 20
+
+# static 当前代码代表点校准；若相对 results_npu_ep7 漂移 >5%，再跑 static 全矩阵
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --output-root results_npu/coordinator_arch/singlehost_ep7/static_validation \
+  --modes decode-dbo \
+  --batches 8 \
+  --seqs 128 \
+  --tokens 20
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --output-root results_npu/coordinator_arch/singlehost_ep7/static_validation \
+  --append \
+  --modes decode-dbo \
+  --batches 32,128 \
+  --seqs 512 \
+  --tokens 20
+```
+
+static 全矩阵默认复用 `results_npu_ep7/` 作为 historical baseline；对比聚合：
+
+```bash
+python scripts/plot_all_pipelines.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator
+python scripts/analyze_decode_l0_warmup.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --write-no-l0-figs
+
+python scripts/aggregate_singlehost_coord_ep7.py \
+  --coord-root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --static-root results_npu_ep7 \
+  --current-static-root results_npu/coordinator_arch/singlehost_ep7/static_validation \
+  --out-dir results_npu/coordinator_arch/singlehost_ep7 \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --validation-configs 8:128,32:512,128:512 \
+  --tokens 20
+```
 
 ### 7.2 NPU warmup 消融实验
 

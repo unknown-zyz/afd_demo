@@ -32,6 +32,21 @@
 #   --prefill-warmup-rounds N
 #                       Untimed prefill forward warmup rounds. If omitted, src.main
 #                       default applies (NPU: 1, CUDA/CPU: 0). Pass 0 to disable.
+#   --routing-backend static | coordinator
+#                       Routing backend for src.main (default: static). coordinator
+#                       starts a local coordinator for each config and passes
+#                       --routing-backend coordinator --coord-addr.
+#   --coord-bind host:port
+#                       Coordinator bind address. If omitted with coordinator
+#                       routing, a per-run localhost port is selected.
+#   --coord-mode name   Coordinator mode metadata (default: low_latency)
+#   --routing-update-mode oneshot | poll
+#                       Safe-point routing update mode for coordinator runs
+#                       (default: oneshot)
+#   --routing-poll-interval-steps N
+#                       Decode-step polling interval for poll mode (default: 16)
+#   --routing-rpc-timeout-s SEC
+#                       Per-RPC timeout for routing fetch/poll (default: 0.05)
 #   --no-timing     Disable detailed timing/report output for overhead checks
 #   --no-cache      Force rerun of serial even if cached
 #   --append        Append to existing summary instead of replacing it
@@ -64,6 +79,25 @@ WARMUP_P2P_EXPLICIT=false
 WARMUP_ROUNDS=5
 PREFILL_WARMUP_ROUNDS=""
 PREFILL_WARMUP_EXPLICIT=false
+ROUTING_BACKEND="static"
+COORD_BIND=""
+COORD_MODE="low_latency"
+COORD_LOG_DIR=""
+NUM_EXPERTS=128
+ROUTING_UPDATE_MODE="oneshot"
+ROUTING_POLL_INTERVAL_STEPS=16
+ROUTING_RPC_TIMEOUT_S=0.05
+COORD_STARTUP_SEC=2
+CURRENT_COORD_PID=""
+
+cleanup_coord() {
+    if [ -n "${CURRENT_COORD_PID:-}" ] && kill -0 "$CURRENT_COORD_PID" 2>/dev/null; then
+        kill "$CURRENT_COORD_PID" 2>/dev/null || true
+        wait "$CURRENT_COORD_PID" 2>/dev/null || true
+    fi
+    CURRENT_COORD_PID=""
+}
+trap cleanup_coord EXIT INT TERM
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -86,12 +120,21 @@ while [ $# -gt 0 ]; do
         --no-warmup-p2p) WARMUP_P2P=false; WARMUP_P2P_EXPLICIT=true; shift;;
         --warmup-rounds) WARMUP_ROUNDS="$2"; shift 2;;
         --prefill-warmup-rounds) PREFILL_WARMUP_ROUNDS="$2"; PREFILL_WARMUP_EXPLICIT=true; shift 2;;
+        --routing-backend) ROUTING_BACKEND="$2"; shift 2;;
+        --coord-bind) COORD_BIND="$2"; shift 2;;
+        --coord-mode) COORD_MODE="$2"; shift 2;;
+        --coord-log-dir) COORD_LOG_DIR="$2"; shift 2;;
+        --num-experts) NUM_EXPERTS="$2"; shift 2;;
+        --routing-update-mode) ROUTING_UPDATE_MODE="$2"; shift 2;;
+        --routing-poll-interval-steps) ROUTING_POLL_INTERVAL_STEPS="$2"; shift 2;;
+        --routing-rpc-timeout-s) ROUTING_RPC_TIMEOUT_S="$2"; shift 2;;
+        --coord-startup-sec) COORD_STARTUP_SEC="$2"; shift 2;;
         --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
         --append) APPEND=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
         -h|--help)
-            sed -n '2,36p' "$0"; exit 0;;
+            sed -n '2,54p' "$0"; exit 0;;
         *) echo "Unknown option: $1"; exit 1;;
     esac
 done
@@ -112,10 +155,29 @@ if [ -n "$PREFILL_WARMUP_ROUNDS" ] && ! [[ "$PREFILL_WARMUP_ROUNDS" =~ ^[0-9]+$ 
     echo "ERROR: --prefill-warmup-rounds must be a non-negative integer" >&2
     exit 1
 fi
+if [[ "$ROUTING_BACKEND" != "static" && "$ROUTING_BACKEND" != "coordinator" ]]; then
+    echo "ERROR: --routing-backend must be static or coordinator" >&2
+    exit 1
+fi
+if [[ "$ROUTING_UPDATE_MODE" != "oneshot" && "$ROUTING_UPDATE_MODE" != "poll" ]]; then
+    echo "ERROR: --routing-update-mode must be oneshot or poll" >&2
+    exit 1
+fi
+if ! [[ "$ROUTING_POLL_INTERVAL_STEPS" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --routing-poll-interval-steps must be a non-negative integer" >&2
+    exit 1
+fi
+if ! [[ "$NUM_EXPERTS" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --num-experts must be a positive integer" >&2
+    exit 1
+fi
 
 mkdir -p $ROOT_OUT/serial/cache $ROOT_OUT/prefill-dbo $ROOT_OUT/decode-dbo $ROOT_OUT/decode-dbo-crosslayer
 mkdir -p "$SERIAL_CACHE_ROOT"
 mkdir -p results/prefill_dbo  # run_npu.sh writes intermediate timing here; we move out
+if [ -z "$COORD_LOG_DIR" ]; then
+    COORD_LOG_DIR="$ROOT_OUT/coordinator_logs"
+fi
 
 : "${MODEL_NAME:=/models/Qwen3-30B-A3B}"
 
@@ -134,6 +196,47 @@ ACTIVE_WORLD_SIZE=2
 if [ "$EP_SIZE" -gt 1 ]; then
     ACTIVE_WORLD_SIZE=$((EP_SIZE + 1))
 fi
+ATTN_WORLD=$((ACTIVE_WORLD_SIZE - EP_SIZE))
+if [ "$EP_SIZE" -le 1 ]; then
+    ATTN_WORLD=1
+fi
+FFN_WORLD=1
+if [ "$EP_SIZE" -gt 1 ]; then
+    FFN_WORLD=$EP_SIZE
+fi
+
+json_field() {
+    local path="$1"
+    local field="$2"
+    if [ ! -f "$path" ]; then
+        echo ""
+        return 0
+    fi
+    python3 - "$path" "$field" <<'PY'
+import json
+import sys
+path, field = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        value = json.load(f).get(field, "")
+except Exception:
+    value = ""
+if isinstance(value, float):
+    print(f"{value:.6f}")
+elif value is None:
+    print("")
+else:
+    print(value)
+PY
+}
+
+choose_coord_bind() {
+    if [ -n "$COORD_BIND" ]; then
+        echo "$COORD_BIND"
+    else
+        echo "127.0.0.1:$((50071 + (RANDOM % 1500)))"
+    fi
+}
 
 WARMUP_TAG=""
 if [ "$WARMUP_P2P_EXPLICIT" = true ] || [ "$PREFILL_WARMUP_EXPLICIT" = true ]; then
@@ -182,10 +285,21 @@ run_one() {
     if [ -n "$PREFILL_WARMUP_ROUNDS" ]; then
         extra="$extra --prefill-warmup-rounds $PREFILL_WARMUP_ROUNDS"
     fi
+    local coord_bind_effective=""
+    local coord_log=""
+    if [ "$ROUTING_BACKEND" = "coordinator" ]; then
+        coord_bind_effective="$(choose_coord_bind)"
+        coord_log="$COORD_LOG_DIR/coordinator_${run_suffix}.log"
+        extra="$extra --routing-backend coordinator --coord-addr $coord_bind_effective"
+        extra="$extra --routing-update-mode $ROUTING_UPDATE_MODE"
+        extra="$extra --routing-poll-interval-steps $ROUTING_POLL_INTERVAL_STEPS"
+        extra="$extra --routing-rpc-timeout-s $ROUTING_RPC_TIMEOUT_S"
+    fi
 
     echo ""
     echo "════════════════════════════════════════════════════════════"
     echo "  Running: $run_suffix"
+    echo "  Routing: backend=$ROUTING_BACKEND update_mode=$ROUTING_UPDATE_MODE"
     if [ -n "$WARMUP_TAG" ]; then
         echo "  Warmup: p2p=$WARMUP_P2P rounds=$WARMUP_ROUNDS prefill_rounds=${PREFILL_WARMUP_ROUNDS:-auto}"
     fi
@@ -200,6 +314,25 @@ run_one() {
     fi
 
     local port=$((29500 + (RANDOM % 2000)))
+    if [ "$ROUTING_BACKEND" = "coordinator" ]; then
+        mkdir -p "$COORD_LOG_DIR"
+        echo "  Coordinator: bind=$coord_bind_effective log=$coord_log"
+        bash scripts/launch_coordinator.sh \
+            --bind "$coord_bind_effective" \
+            --num-experts "$NUM_EXPERTS" \
+            --attn-world "$ATTN_WORLD" \
+            --ffn-world "$FFN_WORLD" \
+            --mode "$COORD_MODE" \
+            --log-file "$coord_log" &
+        CURRENT_COORD_PID=$!
+        sleep "$COORD_STARTUP_SEC"
+        if ! kill -0 "$CURRENT_COORD_PID" 2>/dev/null; then
+            echo "[FAIL] coordinator exited before run: $coord_log"
+            wait "$CURRENT_COORD_PID" 2>/dev/null || true
+            CURRENT_COORD_PID=""
+            return 1
+        fi
+    fi
     rm -f "results/prefill_dbo/timing_attention_${raw_suffix}.json" \
           "results/prefill_dbo/timing_ffn_${raw_suffix}.json" \
           "results/prefill_dbo/timing_ffn_coordinator_${raw_suffix}.json" \
@@ -222,6 +355,7 @@ run_one() {
         "${timing_flags[@]}" \
         $extra
     local rc=$?
+    cleanup_coord
 
     # Inspect logs for OOM
     if grep -q "out of memory\|OutOfMemory\|OOM" results/logs/npu_${raw_suffix}_r*.log 2>/dev/null; then
@@ -300,9 +434,9 @@ run_one() {
 
 # Main sweep ------------------------------------------------------------------
 SUMMARY="$ROOT_OUT/experiment_matrix_summary.csv"
-VISIBLE_CHIP_POOL=$(echo "$VISIBLE_DEVS" | tr ',' '\n' | wc -l)
+VISIBLE_CHIP_POOL=$(echo "$VISIBLE_DEVS" | tr ',' '\n' | wc -l | tr -d ' ')
 if [ "$APPEND" = false ] || [ ! -f "$SUMMARY" ]; then
-    echo "mode,batch,seq,tokens,preset,ffn_ep_backend,visible_chip_pool,active_world_size,status,report,warmup_p2p,warmup_rounds,prefill_warmup_rounds,warmup_tag" > "$SUMMARY"
+    echo "mode,batch,seq,tokens,preset,ffn_ep_backend,routing_backend,routing_update_mode,visible_chip_pool,active_world_size,status,tpot_ms,prefill_ms,total_time_ms,routing_table_version,routing_poll_count,routing_poll_ms,report,warmup_p2p,warmup_rounds,prefill_warmup_rounds,warmup_tag" > "$SUMMARY"
 fi
 
 for MODE in "${MODE_ARR[@]}"; do
@@ -328,18 +462,21 @@ for MODE in "${MODE_ARR[@]}"; do
             fi
             if [ "$MODE" = "serial" ] && [ "$NO_CACHE" = false ] && [ -f "$CACHE" ]; then
                 echo "[cache-hit] serial b${BATCH}_s${SEQ}_t${TOKENS}  (skipping)"
-                echo "serial,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,cached,$CACHE,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
+                CACHE_TPOT=$(json_field "$CACHE" "decode_tpot_ms")
+                CACHE_PREFILL=$(json_field "$CACHE" "prefill_ms")
+                CACHE_TOTAL=$(json_field "$CACHE" "total_time_ms")
+                echo "serial,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$ROUTING_BACKEND,$ROUTING_UPDATE_MODE,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,cached,$CACHE_TPOT,$CACHE_PREFILL,$CACHE_TOTAL,,,,$CACHE,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
                 continue
             fi
 
             run_one "$MODE" "$BATCH" "$SEQ" "$TOKENS" "$OUTDIR"
             rc=$?
             if [ $rc -eq 2 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,OOM,,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$ROUTING_BACKEND,$ROUTING_UPDATE_MODE,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,OOM,,,,,,,,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
                 echo "↳ OOM reached for $MODE seq=$SEQ; skipping larger batches."
                 break
             elif [ $rc -ne 0 ]; then
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,FAIL,,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$ROUTING_BACKEND,$ROUTING_UPDATE_MODE,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,FAIL,,,,,,,,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
             else
                 SUFFIX_EXTRA=""
                 if [ "$COMM_TIMING_MODE" = "completion" ]; then
@@ -361,7 +498,18 @@ for MODE in "${MODE_ARR[@]}"; do
                 if [ "$TIMING_ENABLED" = false ]; then
                     REPORT=""
                 fi
-                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,ok,$REPORT,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
+                TIMING_JSON=""
+                if [ -n "$REPORT" ]; then
+                    TIMING_JSON="${REPORT/report_/timing_attention_}"
+                    TIMING_JSON="${TIMING_JSON%.md}.json"
+                fi
+                TPOT_MS=$(json_field "$TIMING_JSON" "decode_tpot_ms")
+                PREFILL_MS=$(json_field "$TIMING_JSON" "prefill_ms")
+                TOTAL_MS=$(json_field "$TIMING_JSON" "total_time_ms")
+                ROUTING_TABLE_VERSION=$(json_field "$TIMING_JSON" "routing_table_version")
+                ROUTING_POLL_COUNT=$(json_field "$TIMING_JSON" "routing_poll_count")
+                ROUTING_POLL_MS=$(json_field "$TIMING_JSON" "routing_poll_ms")
+                echo "$MODE,$BATCH,$SEQ,$TOKENS,$RUN_PRESET,$FFN_EP_BACKEND,$ROUTING_BACKEND,$ROUTING_UPDATE_MODE,$VISIBLE_CHIP_POOL,$ACTIVE_WORLD_SIZE,ok,$TPOT_MS,$PREFILL_MS,$TOTAL_MS,$ROUTING_TABLE_VERSION,$ROUTING_POLL_COUNT,$ROUTING_POLL_MS,$REPORT,$WARMUP_P2P,$WARMUP_ROUNDS,${PREFILL_WARMUP_ROUNDS:-auto},${WARMUP_TAG#_}" >> "$SUMMARY"
             fi
         done
     done
