@@ -18,6 +18,7 @@ NPU/HCCL 脚本已合入 `main`：
 | `run_npu.sh` | Ascend 910C 单配置运行。当前验证拓扑显式使用 `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`。 |
 | `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`。 |
 | `run_warmup_ablation_npu.sh` | Ascend 910C warmup ablation：P2P warmup 与 prefill warmup 的 2x2 开关实验。 |
+| `run_tbe_cache_warmup_npu.sh` | Ascend TBE / `kernel_meta` 预编译脚本，带 rank/log/cache 轮询，适合 Host1/Host2 跨机前置 warmup。 |
 
 ## 报告与验证
 
@@ -29,7 +30,28 @@ NPU/HCCL 脚本已合入 `main`：
 | `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
 | `bench_comm_transfer.py` | 两 rank 通信 microbenchmark，用独立 P2P 测试校准 DBO completion 图。 |
 | `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |
-| `capture_serial_prefill.sh` | 旧 GPU-only 辅助脚本；新流程优先使用 `capture_serial_split.py`。 |
+
+## 跨机调试
+
+| 脚本 | 用途 |
+|---|---|
+| `cross_host_hccl_smoke.py` | 双机 2-rank HCCL all_reduce / send-recv 冒烟。 |
+| `cross_host_fallback_comm_smoke.py` | 驱动 `FallbackMoECommunicator.dispatch/combine` 的真实类级 smoke。 |
+| `cross_host_fallback_rt_bench.py` | 用两次 `all_to_all_single` 模拟 dispatch+combine 的 round-trip latency。 |
+| `cross_host_deepep_smoke.py` | DeepEP buffer 构造 smoke。 |
+| `cross_host_deepep_rt_bench.py` | DeepEP normal mode dispatch+combine round-trip。 |
+| `cross_host_deepep_lowlatency_rt_bench.py` | DeepEP low_latency mode dispatch+combine round-trip。 |
+| `run_node.sh` | 手动拉起 Attention / FFN 节点，适合多机逐步调试。 |
+
+## 历史专题分析脚本（保留归档）
+
+以下脚本主要服务于已完成轮次或专题数据分析，当前主流程通常不需要直接调用，但为了复现历史结论仍保留：
+
+- `aggregate_full_matrix_v2.py`
+- `aggregate_mb4_v2.py`
+- `aggregate_mb4_vs_mb2.py`
+- `r8_throughput_and_compute.py`
+- `analyze_decode_l0_warmup.py`
 
 报告口径：
 
@@ -70,7 +92,7 @@ NPU/HCCL 脚本已合入 `main`：
 
 ## NPU 示例
 
-以下命令需要在 `npu` 分支和已准备好的 910C 容器 / worktree 内运行。
+以下命令需要在已准备好的 910C 容器 / worktree 内运行。
 
 ```bash
 # 串行基线
@@ -122,7 +144,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
   --warmup 5 --iters 50 --blocking \
   --output results/comm_bench/gpu_comm.json
 
-# NPU / HCCL（在 afd-npu-test 容器和 npu 分支内）
+# NPU / HCCL（在 910C 容器 / worktree 内）
 ASCEND_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
   scripts/bench_comm_transfer.py \
   --backend npu --sizes-mib 0.004,0.031,1,16,32 \
