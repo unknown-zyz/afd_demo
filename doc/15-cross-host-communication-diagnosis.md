@@ -175,11 +175,12 @@ TBE (Tensor Boost Engine) 是 Ascend/CANN 用来为 NPU 生成算子 kernel 的�
 - 之后进程仍在第一轮 warmup 内等待，直到脚本级 `timeout 3600` 在 60min wall clock 后杀掉进程
 - 现场 `kernel_meta/` 只有约数百 KB，说明冷编译没有完整跑完，缓存产物很少
 
-慢的主要原因有三点:
+慢的主要原因有四点:
 
 1. **模型和 shape 复杂**: Qwen3-30B-A3B 是 48 层 MoE 模型，prefill 会一次性触达大量 attention、router、expert FFN 和通信相关 kernel。
 2. **首次冷编译不能复用缓存**: 当前 `kernel_meta/` 基本为空，每个新 shape/dtype/backend 组合都要从头编。
 3. **跨机 rank 互相等待**: 1A7F 拓扑下 H1 attention rank 与 H2 7 个 FFN rank 的进度不完全一致。某些 rank 可能已经进入 collective 等待，而另一些 rank 仍在 TBE 编译，最终整体被最慢 rank 卡住。
+4. **跨机等待不是唯一因素**: 2026-05-22 的 Host2 本地 isolate 中，同样的 EP7 / prefill warmup 配置在不涉及 Host1 的情况下，也已经能走到 `Running 1 prefill warmup round(s)` 但长时间没有完成，且 `kernel_meta/` 仍只有数百 KB。这说明当前阻塞至少部分发生在 Host2 本地 FFN/MoE/EP warmup 路径本身，跨机只会进一步放大体感。
 
 所以当前结论是: **HCCL bootstrap 已经通过，Fallback 通信路径也可用；P3 真实 decode 的新阻塞点是 Qwen3-30B-A3B 首次 TBE JIT 冷编译耗时超过当前脚本 60min 限制。**
 
@@ -217,11 +218,18 @@ suffix 清理残留 `python -m src.main` rank，避免后续 HCCL 端口或进�
      --model-name /models/Qwen3-30B-A3B \
      --timeout-sec 7200 --poll-sec 60
    ```
-   Host2 会启动 8 个本地 ranks，前台由 wrapper 每 60 秒打印一次
-   `active_src_main`、`kernel_meta` 和 rank log tail；如果日志停在
-   `Running 1 prefill warmup round(s)`，通常表示仍在 TBE 冷编译。
-   若 7200 秒仍未完成并返回 `exit=124`，说明本轮仍未灌满 cache；确认
-   `active_src_main` 已清零后，可增大 `--timeout-sec` 或缩小 shape 继续预热。
+    Host2 会启动 8 个本地 ranks，前台由 wrapper 每 60 秒打印一次
+    `active_src_main`、`kernel_meta` 和 rank log tail；如果日志停在
+    `Running 1 prefill warmup round(s)`，通常表示仍在 TBE 冷编译。
+    若 7200 秒仍未完成并返回 `exit=124`，说明本轮仍未灌满 cache；确认
+    `active_src_main` 已清零后，可增大 `--timeout-sec` 或缩小 shape 继续预热。
+   2026-05-22 的一次 Host2 本地 isolate 中，以上命令已经完成 distributed init、
+   权重加载并进入 prefill warmup，但在约 241s 观察窗口内 `kernel_meta/` 仍仅
+   为约 360-388KB，没有出现“灌满 cache 后快速结束”的迹象；因此当前更应把它视为
+   **Host2 本地 EP7 / FFN-MoE warmup 的重点排障对象**，而不是单纯的“跨机等待”。
+   同一天尝试在 Host2 上改跑 `--profile host1-attn` 作为 1A1F 对照时，FFN rank
+   在加载真实 Qwen3 FFN 时直接 OOM（已分配约 51.77GiB，再申请 770MiB 失败），
+   所以 **Host2 1A1F 不是有效的 compile 控制组**，后续应继续围绕 EP7 拓扑做 isolate。
 3. 确认两边 `kernel_meta/` 明显增大后，再启动跨机 1A7F 真实 decode
 
 这样做的好处是把“编译耗时”和“跨机通信验证”拆开: 单机 warmup 时没有 Host1/Host2 互相等待，失败也更容易定位；跨机正式运行时则可以复用已编译 kernel，减少 layer 0 / 首轮 prefill 的冷启动开销。
