@@ -93,6 +93,8 @@ class EPStageTiming:
     ep_dispatch_wait_s: float = 0.0
     ep_reduce_wait_s: float = 0.0
     ep_overlap_hidden_s: float = 0.0
+    ep_dispatch_bytes: int = 0
+    ep_reduce_bytes: int = 0
     ep_active_experts: int = 0
     ep_local_assignments: int = 0
     router_start_s: float = 0.0
@@ -392,6 +394,7 @@ class EPFFNLayer(nn.Module):
         item.timing.ep_dispatch_enqueue_s = item.dispatch_enqueue_done_s - item.dispatch_start_s
         item.timing.ep_dispatch_start_s = item.dispatch_start_s
         item.timing.ep_dispatch_enqueue_done_s = item.dispatch_enqueue_done_s
+        item.timing.ep_dispatch_bytes = total_bytes
 
     def finish_dispatch(self, item: EPWorkItem) -> None:
         """Wait until dispatch inputs are ready for local expert compute."""
@@ -438,6 +441,7 @@ class EPFFNLayer(nn.Module):
         item.timing.ep_reduce_enqueue_s = item.reduce_enqueue_done_s - item.reduce_start_s
         item.timing.ep_reduce_start_s = item.reduce_start_s
         item.timing.ep_reduce_enqueue_done_s = item.reduce_enqueue_done_s
+        item.timing.ep_reduce_bytes = item.partial.numel() * item.partial.element_size()
 
     def finish_reduce(self, item: EPWorkItem) -> None:
         """Wait for partial-output reduce, tracking how much delay was hidden."""
@@ -520,11 +524,15 @@ class EPFFNLayer(nn.Module):
         self._broadcast_inputs(hidden_2d, selected_experts, routing_weights)
         sync_if_needed(self.layer_device)
         dispatch_end = time.perf_counter()
+        dispatch_h_bytes = hidden_2d.numel() * hidden_2d.element_size()
+        dispatch_s_bytes = selected_experts.numel() * selected_experts.element_size()
+        dispatch_r_bytes = routing_weights.numel() * routing_weights.element_size()
         timing.ep_dispatch_s = dispatch_end - dispatch_start
         timing.ep_dispatch_start_s = dispatch_start
         timing.ep_dispatch_enqueue_done_s = dispatch_end
         timing.ep_dispatch_wait_start_s = dispatch_start
         timing.ep_dispatch_wait_end_s = dispatch_end
+        timing.ep_dispatch_bytes = dispatch_h_bytes + dispatch_s_bytes + dispatch_r_bytes
 
         local_start = time.perf_counter()
         partial, active, assignments = self.sharded_experts.forward_local(
@@ -555,6 +563,7 @@ class EPFFNLayer(nn.Module):
         timing.ep_reduce_enqueue_done_s = reduce_end
         timing.ep_reduce_wait_start_s = reduce_start
         timing.ep_reduce_wait_end_s = reduce_end
+        timing.ep_reduce_bytes = partial.numel() * partial.element_size()
 
         if not self.is_coordinator:
             if return_timing:

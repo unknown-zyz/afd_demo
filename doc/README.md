@@ -21,6 +21,7 @@
 | 12 | [11-code-review-guide.md](11-code-review-guide.md) | 完整代码审阅向导：目录速览、三条路径、TBT 指标、脚本手册。 |
 | 13 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) | DeepEP 安装、测试、报错与 Fallback 路径说明。 |
 | 14 | [14-communication-modes.md](14-communication-modes.md) | Coordinator 通信方式、默认策略与切换方法。 |
+| 15 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) | Coordinator routing / 负载均衡现状、限制、实验顺序与后续计划。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。
@@ -39,6 +40,7 @@
 | 使用 910C 容器 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) |
 | 排查 DeepEP / fallback 数据面 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) |
 | 切换 Coordinator 通信方式 | [14-communication-modes.md](14-communication-modes.md) |
+| 理解 routing / 负载均衡当前到底做到哪一步 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) |
 | 判断 speedup 是否可信 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) |
 | 查看最新实验结论 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) |
 | 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |

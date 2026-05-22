@@ -152,11 +152,20 @@ class DecodeDBOScheduler:
             event_type: EventType,
             start_attr: str,
             end_attr: str,
+            bytes_attr: str | None = None,
         ) -> bool:
             start = getattr(stage_timing, start_attr, 0.0)
             end = getattr(stage_timing, end_attr, 0.0)
             if start > 0 and end > start:
-                tracker.record_event(event_type, layer_idx, mb_idx, start, end)
+                tensor_bytes = getattr(stage_timing, bytes_attr, None) if bytes_attr else None
+                tracker.record_event(
+                    event_type,
+                    layer_idx,
+                    mb_idx,
+                    start,
+                    end,
+                    tensor_bytes=tensor_bytes,
+                )
                 return True
             return False
 
@@ -183,6 +192,7 @@ class DecodeDBOScheduler:
                 EventType.EP_DISPATCH,
                 "ep_dispatch_start_s",
                 "ep_dispatch_wait_end_s",
+                "ep_dispatch_bytes",
             )
             _record_if_absolute(
                 EventType.EP_DISPATCH_WAIT,
@@ -208,6 +218,7 @@ class DecodeDBOScheduler:
                 EventType.EP_REDUCE,
                 "ep_reduce_start_s",
                 "ep_reduce_wait_end_s",
+                "ep_reduce_bytes",
             )
             _record_if_absolute(
                 EventType.EP_REDUCE_WAIT,
@@ -236,6 +247,7 @@ class DecodeDBOScheduler:
                 mb_idx,
                 cursor,
                 cursor + ep_dispatch_s,
+                tensor_bytes=getattr(stage_timing, "ep_dispatch_bytes", None),
             )
             cursor += ep_dispatch_s
 
@@ -279,6 +291,7 @@ class DecodeDBOScheduler:
                 mb_idx,
                 cursor,
                 cursor + ep_reduce_s,
+                tensor_bytes=getattr(stage_timing, "ep_reduce_bytes", None),
             )
             cursor += ep_reduce_s
 
