@@ -3,7 +3,7 @@
 **日期**: 2026-05-21
 **作者**: Agent (Copilot CLI)
 **分支**: `feat/fallback-default-comm`
-**状态**: HCCL + Fallback 已修复; DeepEP 运行时仍阻塞; P3 真实 decode 当前阻塞在 TBE JIT 冷编译
+**状态**: HCCL + Fallback 已修复; DeepEP 运行时仍阻塞; P3 真实 decode 当前最新阻塞点是 Host2 本地 EP7 路径的 HCCL `EJ0003` bind-port 异常（fresh ports 仍复现）
 
 ---
 
@@ -14,7 +14,7 @@
 - ✅ 修复跨机 HCCL: `cross_host_hccl_smoke.py` PASS
 - ✅ 修复跨机 Fallback: `cross_host_fallback_rt_bench.py` PASS (mean 406µs / p99 603µs @ 512KiB)
 - ❌ DeepEP normal 和 low_latency 仍失败 —— 但失败已不再发生在 HCCL 基础层，下沉为 **DeepEP 运行时自身问题**
-- ⚠️ 真实 Qwen3-30B-A3B 1A7F 跨机 decode 已通过 HCCL bootstrap，但首次 prefill warmup 卡在 **TBE JIT 冷编译 > 60min**，暂未产出端到端 timing 数据
+- ⚠️ 真实 Qwen3-30B-A3B 1A7F 跨机 decode 的历史问题曾表现为 **prefill warmup / TBE JIT 冷编译过久**；但 2026-05-22 最新 isolate 显示，当前 immediate blocker 已变成 **Host2 本地 EP7 rank 在模型加载后 barrier 触发 HCCL `EJ0003` bind-port 异常**，因此暂未产出新的端到端 timing 数据
 
 **修复手段**: 用全新端口组合 `MASTER_PORT=297xx` + `HCCL_IF_BASE_PORT=297yy` + 合法的 `HCCL_CONNECT_TIMEOUT=600` 替换历史值 `29555/24500/60`。
 
@@ -148,9 +148,9 @@ timeout: the monitored command dumped core
 
 ---
 
-## 9. 当前多机真实 decode 阻塞: TBE JIT / `kernel_meta`
+## 9. 当前多机真实 decode 阻塞: 先是 TBE JIT，最新又叠加 Host2 HCCL `EJ0003`
 
-本节说明 P3 真实 Qwen3-30B-A3B 跨机 1A7F 实验为什么仍然跑不完。这里的阻塞点**不是已经修复的 HCCL 端口/建链问题**，而是 Ascend 后端首次运行时的 TBE JIT 冷编译。
+本节说明 P3 真实 Qwen3-30B-A3B 跨机 1A7F 实验为什么仍然跑不完。这里的阻塞曾经主要表现为 Ascend 后端首次运行时的 TBE JIT 冷编译，但到 2026-05-22 最新 isolate 时，**Host2 本地 EP7 路径又出现了新的 HCCL `EJ0003` bind-port 异常**，导致当前 immediate blocker 已不再只是 compile。
 
 ### 9.1 TBE JIT 编译是什么
 
@@ -165,7 +165,7 @@ TBE (Tensor Boost Engine) 是 Ascend/CANN 用来为 NPU 生成算子 kernel 的�
 
 因此，第一次跑某个新配置时，日志里看到 `Running 1 prefill warmup round(s) to absorb JIT compile cost` 之后长时间没有继续输出，并不一定表示 HCCL 已死锁；也可能是 CANN/TBE 正在编译或等待编译任务完成。
 
-### 9.2 为什么当前实验这么慢
+### 9.2 为什么之前实验表现得像“纯 compile 慢”
 
 本次 P3 v6 的最新状态是:
 
@@ -182,9 +182,30 @@ TBE (Tensor Boost Engine) 是 Ascend/CANN 用来为 NPU 生成算子 kernel 的�
 3. **跨机 rank 互相等待**: 1A7F 拓扑下 H1 attention rank 与 H2 7 个 FFN rank 的进度不完全一致。某些 rank 可能已经进入 collective 等待，而另一些 rank 仍在 TBE 编译，最终整体被最慢 rank 卡住。
 4. **跨机等待不是唯一因素**: 2026-05-22 的 Host2 本地 isolate 中，同样的 EP7 / prefill warmup 配置在不涉及 Host1 的情况下，也已经能走到 `Running 1 prefill warmup round(s)` 但长时间没有完成，且 `kernel_meta/` 仍只有数百 KB。这说明当前阻塞至少部分发生在 Host2 本地 FFN/MoE/EP warmup 路径本身，跨机只会进一步放大体感。
 
-所以当前结论是: **HCCL bootstrap 已经通过，Fallback 通信路径也可用；P3 真实 decode 的新阻塞点是 Qwen3-30B-A3B 首次 TBE JIT 冷编译耗时超过当前脚本 60min 限制。**
+这组证据说明：在这一阶段，**HCCL bootstrap 已经通过，Fallback 通信路径也可用；P3 真实 decode 的主要体感阻塞来自 Qwen3-30B-A3B 首次 TBE JIT 冷编译耗时过长**。
 
-### 9.3 “每台机器单机跑一次 prefill warmup 灌满 `kernel_meta/`”是什么意思
+### 9.3 2026-05-22 最新 isolate：当前 immediate blocker 已转成 Host2 本地 EP7 的 HCCL `EJ0003`
+
+在新的干净 worktree (`/workspace/afd_demo_repo_exp_1a7f`) 上，对 Host2 本地 EP7 做了两轮 fresh-port 复验：
+
+1. `MASTER_PORT=29950 HCCL_IF_BASE_PORT=30950`，`seq=64`，wrapper warmup；
+2. `MASTER_PORT=31950 HCCL_IF_BASE_PORT=33950`，`seq=64`，并显式关闭 `--prefill-warmup-rounds 0`。
+
+两轮都有同一个结论：
+
+- rank0/rank1 都能完成 distributed init、加载权重、初始化 `AFDCommunicator`
+- 但在模型加载后的 `ctx.barrier()` 处触发
+  `hcclCommInitRootInfoConfig(...), error code is 7`
+- 日志固定落成
+  `Communication_Error_Bind_IP_Port(EJ0003): Failed to bind the IP port. Reason: The IP address and port have been bound already.`
+- 这一错误在 fresh `MASTER_PORT` / fresh `HCCL_IF_BASE_PORT` 下仍出现，因此**已经不能再简单归因为“上一轮进程没清干净”或“只是 compile 太慢”**
+
+因此截至当前，跨机 1A7F 的 immediate blocker 应更新为：
+**Host2 本地 EP7 / HCCL runtime 状态异常；即便换新端口，rank0/rank1 仍会在模型加载后 barrier 阶段打出 `EJ0003`。**
+
+这也解释了为什么当前还不能继续用 cross-host smoke 去验证 coordinator：Host2 单机同拓扑都还不能稳定越过 barrier。
+
+### 9.4 “每台机器单机跑一次 prefill warmup 灌满 `kernel_meta/`”是什么意思
 
 `kernel_meta/` 是 CANN/TBE 保存编译产物和元信息的缓存目录。单机 prefill warmup 的目的，是先在每台机器本地把常用 kernel 编出来，避免第一次跨机实验时所有 rank 一边编译一边等待跨机 collective。
 
@@ -236,7 +257,7 @@ suffix 清理残留 `python -m src.main` rank，避免后续 HCCL 端口或进�
 
 需要注意: warmup 的 shape 要尽量覆盖后续跨机实验。至少应覆盖计划中的 `batch_size`、`prefill_seq_len`、dtype 和 micro-batch 组织；如果后续换了很不一样的 shape，仍可能触发新的 TBE 编译。
 
-### 9.4 cache 能不能存储下来，避免每次重编
+### 9.5 cache 能不能存储下来，避免每次重编
 
 可以。`kernel_meta/` 应该作为可复用缓存保留下来，避免每次清理工作目录或重建容器后重新冷编译。建议把它放在持久化目录或宿主机挂载卷中，并在实验记录里保存对应的软件栈信息。
 

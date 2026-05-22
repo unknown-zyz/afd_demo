@@ -40,6 +40,7 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `scripts/plot_all_pipelines.py` / `scripts/gen_experiment_report.py` | 图表与单次报告生成。 |
 | `scripts/aggregate_singlehost_coord_ep7.py` | 单机 EP7 coordinator vs static 聚合、画图与带源数据路径的 Markdown 摘要。 |
 | `scripts/report_ep_bandwidth.py` | 从 FFN timing JSON 提取 EP dispatch/reduce payload 与有效 GiB/s，观察网络带宽利用率。 |
+| `scripts/report_decode_mfu.py` | 从 attention timing JSON + model config 估算 decode achieved TFLOPS / MFU；适合跨机 1A7F 结果补充计算利用率口径。 |
 
 ## 2. GPU 单次入口
 
@@ -417,6 +418,11 @@ python scripts/aggregate_singlehost_coord_ep7.py \
 
 python scripts/report_ep_bandwidth.py \
   --root results_npu/coordinator_arch/singlehost_ep7/coordinator
+
+python scripts/report_decode_mfu.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --model-name /models/Qwen3-30B-A3B \
+  --peak-tflops-per-device 800
 ```
 
 ### 7.2 NPU warmup 消融实验
