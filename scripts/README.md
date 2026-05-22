@@ -19,7 +19,7 @@ NPU/HCCL 脚本已合入 `main`：
 | `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`。 |
 | `run_warmup_ablation_npu.sh` | Ascend 910C warmup ablation：P2P warmup 与 prefill warmup 的 2x2 开关实验。 |
 | `run_tbe_cache_warmup_npu.sh` | Ascend TBE / `kernel_meta` 预编译脚本，带 rank/log/cache 轮询；超时返回 124 并清理本次残留 rank。 |
-| `run_npu_coordinator_single_host.sh` | Host1 单机 1A1F coordinator smoke：先起 gRPC coordinator，再走真实 `src.main` decode/prefill 路径。当前仅支持 1A1F、无 FFN EP。 |
+| `run_npu_coordinator_single_host.sh` | 单机 coordinator smoke：先起 gRPC coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，也可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
 
 ## 报告与验证
 

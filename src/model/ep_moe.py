@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import os
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Optional, Sequence
 
 import torch
 import torch.distributed as dist
@@ -21,6 +21,7 @@ class ExpertShardPlan:
     ep_size: int
     ep_rank: int
     policy: str = "round_robin"
+    expert_to_rank: Optional[Sequence[int]] = None
 
     def __post_init__(self) -> None:
         if self.num_experts <= 0:
@@ -29,11 +30,33 @@ class ExpertShardPlan:
             raise ValueError("ep_size must be positive")
         if not 0 <= self.ep_rank < self.ep_size:
             raise ValueError(f"ep_rank must be in [0, {self.ep_size}), got {self.ep_rank}")
-        if self.policy not in {"round_robin", "contiguous"}:
+        if self.policy not in {"round_robin", "contiguous", "explicit"}:
             raise ValueError(f"Unsupported expert shard policy: {self.policy}")
+        if self.policy == "explicit":
+            if self.expert_to_rank is None:
+                raise ValueError("expert_to_rank is required for explicit expert shard policy")
+            mapping = tuple(int(rank) for rank in self.expert_to_rank)
+            if len(mapping) != self.num_experts:
+                raise ValueError(
+                    f"expert_to_rank len {len(mapping)} != num_experts {self.num_experts}"
+                )
+            invalid = [rank for rank in mapping if rank < 0 or rank >= self.ep_size]
+            if invalid:
+                raise ValueError(
+                    f"expert_to_rank values must be in [0, {self.ep_size}); got {invalid[:5]}"
+                )
+            object.__setattr__(self, "expert_to_rank", mapping)
+        elif self.expert_to_rank is not None:
+            raise ValueError("expert_to_rank is only valid with explicit expert shard policy")
 
     @property
     def local_expert_ids(self) -> list[int]:
+        if self.policy == "explicit":
+            assert self.expert_to_rank is not None
+            return [
+                idx for idx, owner_rank in enumerate(self.expert_to_rank)
+                if owner_rank == self.ep_rank
+            ]
         if self.policy == "round_robin":
             return [idx for idx in range(self.num_experts) if idx % self.ep_size == self.ep_rank]
         base = self.num_experts // self.ep_size
@@ -43,9 +66,14 @@ class ExpertShardPlan:
         return list(range(start, start + count))
 
     @staticmethod
-    def all_assignments(num_experts: int, ep_size: int, policy: str = "round_robin") -> list[list[int]]:
+    def all_assignments(
+        num_experts: int,
+        ep_size: int,
+        policy: str = "round_robin",
+        expert_to_rank: Optional[Sequence[int]] = None,
+    ) -> list[list[int]]:
         return [
-            ExpertShardPlan(num_experts, ep_size, ep_rank, policy).local_expert_ids
+            ExpertShardPlan(num_experts, ep_size, ep_rank, policy, expert_to_rank).local_expert_ids
             for ep_rank in range(ep_size)
         ]
 

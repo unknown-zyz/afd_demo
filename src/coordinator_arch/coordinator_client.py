@@ -86,11 +86,11 @@ class CoordinatorClient:
             return {"success": False, "msg": str(e), "initial_table_version": 0}
 
     # ---------------- routing table ----------------
-    def get_routing_table(self) -> Optional[Dict[str, Any]]:
+    def get_routing_table(self, timeout_s: Optional[float] = None) -> Optional[Dict[str, Any]]:
         if self._stub is None:
             return None
         try:
-            r = self._stub.GetRoutingTable(_pb.Empty())
+            r = self._stub.GetRoutingTable(_pb.Empty(), timeout=timeout_s)
             return {
                 "version": r.version,
                 "expert_to_rank": list(r.expert_to_rank),

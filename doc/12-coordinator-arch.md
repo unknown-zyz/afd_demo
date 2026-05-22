@@ -1,6 +1,6 @@
 # 12. Coordinator-based Dynamic MoE Architecture
 
-> 状态：**Phase α+**（骨架已落地；`src.main` 已支持 Host1 单机 1A1F coordinator smoke，真实多 FFN / EP decode 路径仍未接入）
+> 状态：**Phase α++**（骨架已落地；`src.main` 已支持真实 Qwen3 路径的 coordinator one-shot routing，1A1F 已实测，1A7F/EP7 已接入代码等待 NPU smoke）
 > 关联代码：`src/coordinator_arch/`
 > 关联文档：`doc/01-architecture.md`（旧静态 A↔F）、`doc/deepep_ascend_install_report.md`
 
@@ -20,9 +20,10 @@ DeepEP-Ascend 数据面** 的新子系统。本子系统位于 `src/coordinator_
 
 当前进展补充：
 
-- `src.main` 已新增 `--routing-backend coordinator --coord-addr ...`，可在 **Host1 单机 1A1F**
-  上验证“真实 Qwen3 decode/prefill 路径 + coordinator 控制面”的最小 smoke
-- 这一桥接目前只覆盖 **注册 + 一次性拉表**；真实多 FFN / EP / 动态路由更新仍待后续接入
+- `src.main` 已新增 `--routing-backend coordinator --coord-addr ...`，可在真实 Qwen3 decode/prefill 路径里启用 coordinator 控制面。
+- 已实测 **Host1 单机 1A1F**：注册 + one-shot 拉表后能完成 decode-dbo smoke。
+- 1A7F/EP7 代码路径已接入：coordinator `expert_to_rank` 可作为 explicit expert ownership 初始化真实 EP shard；下一步需要在 910C 上做单机 coordinator EP7 vs static EP7 对比。
+- 后台 `SubscribeRoutingTable` 不再用于真实 NPU decode path；动态更新改为主线程 safe-point polling（默认仍是 `oneshot`）。
 
 ## 2. 目标拓扑
 

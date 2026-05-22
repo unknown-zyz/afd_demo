@@ -61,9 +61,7 @@ class CoordinatorServicer(pb_grpc.CoordinatorServicer):
         self._workers_lock = asyncio.Lock()
 
         # routing state
-        uniform = [
-            (e * ffn_world) // num_experts for e in range(num_experts)
-        ]
+        uniform = [e % ffn_world for e in range(num_experts)]
         self._table = pb.RoutingTable(
             version=1,
             expert_to_rank=uniform,

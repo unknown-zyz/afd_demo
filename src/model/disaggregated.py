@@ -102,15 +102,24 @@ class DisaggregatedQwenModel(nn.Module):
         self.coord_client = None
         self.routing_table: Optional[Dict[str, Any]] = None
         self.routing_table_version: Optional[int] = None
+        self.routing_update_mode: str = "oneshot"
+        self.routing_poll_interval_steps: int = 16
+        self.routing_rpc_timeout_s: float = 0.05
+        self.routing_poll_count: int = 0
+        self.routing_poll_ms: float = 0.0
 
     def _ensure_supported_coordinator_topology(self) -> None:
         attn_world = len(self.ctx.attn_ranks)
         ffn_world = len(self.ctx.ffn_ranks)
-        if attn_world != 1 or ffn_world != 1 or self.ctx.ffn_ep_enabled:
+        supported = attn_world == 1 and (
+            ffn_world == 1
+            or (self.ctx.ffn_ep_enabled and self.ctx.ffn_ep_size == ffn_world)
+        )
+        if not supported:
             raise NotImplementedError(
-                "Real-path coordinator mode currently supports only 1A1F without FFN EP. "
-                "Use --routing-backend static for multi-FFN/EP runs until the coordinator "
-                "bridge is wired into the real EP path."
+                "Real-path coordinator mode currently supports 1A1F and 1A{N}F with "
+                "FFN EP size equal to FFN world size. Use --routing-backend static for "
+                "other topologies."
             )
 
     def _register_with_coordinator(self) -> None:
@@ -119,7 +128,21 @@ class DisaggregatedQwenModel(nn.Module):
         role = "attn" if self.ctx.is_attention_node else "ffn"
         world_size = len(self.ctx.attn_ranks) if role == "attn" else len(self.ctx.ffn_ranks)
         num_experts = int(getattr(self.config, "num_experts", 0) or 0)
-        local_experts = list(range(num_experts)) if role == "ffn" and num_experts > 0 else []
+        local_experts: List[int] = []
+        if role == "ffn" and num_experts > 0:
+            explicit_mapping = self.coordinator_expert_to_rank
+            if self.ctx.ffn_ep_enabled and explicit_mapping is not None:
+                local_experts = [
+                    eid for eid, owner_rank in enumerate(explicit_mapping)
+                    if owner_rank == self.ctx.ffn_ep_rank
+                ]
+            elif self.ctx.ffn_ep_enabled:
+                local_experts = [
+                    eid for eid in range(num_experts)
+                    if eid % self.ctx.ffn_ep_size == self.ctx.ffn_ep_rank
+                ]
+            else:
+                local_experts = list(range(num_experts))
         ack = self.coord_client.register_worker(
             {
                 "role": role,
@@ -141,7 +164,29 @@ class DisaggregatedQwenModel(nn.Module):
             ack.get("initial_table_version"),
         )
 
+    def _validate_routing_table(self, table: Dict[str, Any]) -> None:
+        expert_to_rank = table.get("expert_to_rank") or []
+        num_experts = int(getattr(self.config, "num_experts", 0) or 0)
+        if num_experts <= 0:
+            return
+        if len(expert_to_rank) != num_experts:
+            raise ValueError(
+                f"Routing table expert_to_rank len {len(expert_to_rank)} != num_experts {num_experts}"
+            )
+        max_rank = self.ctx.ffn_ep_size if self.ctx.ffn_ep_enabled else len(self.ctx.ffn_ranks)
+        invalid = [int(rank) for rank in expert_to_rank if int(rank) < 0 or int(rank) >= max_rank]
+        if invalid:
+            raise ValueError(
+                f"Routing table rank values must be in [0, {max_rank}); got {invalid[:5]}"
+            )
+
+    def _routing_ownership_changed(self, table: Dict[str, Any]) -> bool:
+        if self.routing_table is None:
+            return False
+        return list(table.get("expert_to_rank") or []) != list(self.routing_table.get("expert_to_rank") or [])
+
     def _on_routing_table(self, table: Dict[str, Any]) -> None:
+        self._validate_routing_table(table)
         self.routing_table = dict(table)
         self.routing_table_version = table.get("version")
         logger.info(
@@ -150,38 +195,81 @@ class DisaggregatedQwenModel(nn.Module):
             table.get("mode"),
         )
 
-    def refresh_routing_table(self) -> None:
+    def refresh_routing_table(self, timeout_s: Optional[float] = None) -> None:
         if self.coord_client is None:
             return
-        table = self.coord_client.get_routing_table()
+        table = self.coord_client.get_routing_table(timeout_s=timeout_s)
         if table is None:
             raise RuntimeError(f"Coordinator {self.coord_addr} returned no routing table")
+        self._on_routing_table(table)
+
+    def maybe_poll_routing_table(self, step: int) -> None:
+        """Poll coordinator at decode safe points when explicitly enabled."""
+        if self.coord_client is None or self.routing_update_mode != "poll":
+            return
+        if self.routing_poll_interval_steps <= 0:
+            return
+        if step % self.routing_poll_interval_steps != 0:
+            return
+        start = time.perf_counter()
+        table = self.coord_client.get_routing_table(timeout_s=self.routing_rpc_timeout_s)
+        self.routing_poll_ms += (time.perf_counter() - start) * 1000
+        self.routing_poll_count += 1
+        if table is None:
+            logger.debug("Routing poll skipped: coordinator returned no table")
+            return
+        if table.get("version") == self.routing_table_version:
+            return
+        if self.ctx.ffn_ep_enabled and self._routing_ownership_changed(table):
+            logger.warning(
+                "Routing table v%s changes expert ownership during EP decode; "
+                "keeping v%s because live expert migration is not implemented",
+                table.get("version"),
+                self.routing_table_version,
+            )
+            return
         self._on_routing_table(table)
 
     def setup_routing_backend(
         self,
         routing_backend: str = "static",
         coord_addr: Optional[str] = None,
+        routing_update_mode: str = "oneshot",
+        routing_poll_interval_steps: int = 16,
+        routing_rpc_timeout_s: float = 0.05,
     ) -> None:
         self.routing_backend = routing_backend
         self.coord_addr = coord_addr
+        self.routing_update_mode = routing_update_mode
+        self.routing_poll_interval_steps = routing_poll_interval_steps
+        self.routing_rpc_timeout_s = routing_rpc_timeout_s
         if routing_backend == "static":
             return
         if not coord_addr:
             raise ValueError("--coord-addr is required when --routing-backend=coordinator")
+        if routing_update_mode not in {"oneshot", "poll"}:
+            raise ValueError(f"Unsupported routing update mode: {routing_update_mode}")
 
         self._ensure_supported_coordinator_topology()
 
         from ..coordinator_arch.coordinator_client import CoordinatorClient
 
         self.coord_client = CoordinatorClient(coord_addr)
-        self._register_with_coordinator()
         self.refresh_routing_table()
         logger.info(
-            "Coordinator routing enabled (one-shot fetch): addr=%s version=%s",
+            "Coordinator routing table fetched: addr=%s version=%s update_mode=%s poll_interval_steps=%s",
             coord_addr,
             self.routing_table_version,
+            self.routing_update_mode,
+            self.routing_poll_interval_steps,
         )
+
+    @property
+    def coordinator_expert_to_rank(self) -> Optional[List[int]]:
+        if self.routing_backend != "coordinator" or self.routing_table is None:
+            return None
+        expert_to_rank = self.routing_table.get("expert_to_rank")
+        return list(expert_to_rank) if expert_to_rank is not None else None
 
     def close(self) -> None:
         if self.coord_client is not None:
@@ -214,7 +302,16 @@ class DisaggregatedQwenModel(nn.Module):
         if self.ctx.is_attention_node:
             self.attention_worker = AttentionWorker(model, self.device, self.dtype)
         else:
-            self.ffn_worker = FFNWorker(model, self.device, self.dtype)
+            self.ffn_worker = FFNWorker(
+                model,
+                self.device,
+                self.dtype,
+                expert_to_rank=(
+                    self.coordinator_expert_to_rank
+                    if self.ctx.ffn_ep_enabled
+                    else None
+                ),
+            )
             self.supports_moe_timing = self.ffn_worker.supports_moe_timing
         
         # Free the full model and cleanup
@@ -768,6 +865,7 @@ class DisaggregatedQwenModel(nn.Module):
         self.ctx.barrier()
         decode_start = time.perf_counter()
         for step in range(max_new_tokens - 1):
+            self.maybe_poll_routing_table(step)
             # Current position = KV cache length (accurate regardless of path)
             cur_pos = self.kv_cache.get_seq_length()
             position_ids = torch.full(
@@ -820,6 +918,9 @@ class DisaggregatedQwenModel(nn.Module):
             "decode_step_times_ms": decode_step_times_ms,
             "routing_backend": self.routing_backend,
             "routing_table_version": self.routing_table_version,
+            "routing_update_mode": self.routing_update_mode,
+            "routing_poll_count": self.routing_poll_count,
+            "routing_poll_ms": self.routing_poll_ms,
             **tbt,
         }
 
@@ -889,6 +990,7 @@ class DisaggregatedQwenModel(nn.Module):
         self.ctx.barrier()
         decode_start = time.perf_counter()
         for step in range(max_new_tokens - 1):
+            self.maybe_poll_routing_table(step)
             # Create dummy token input
             dummy_token = torch.zeros(
                 batch_size, 1, dtype=torch.long, device=self.device
@@ -922,6 +1024,9 @@ class DisaggregatedQwenModel(nn.Module):
             "decode_step_times_ms": decode_step_times_ms,
             "routing_backend": self.routing_backend,
             "routing_table_version": self.routing_table_version,
+            "routing_update_mode": self.routing_update_mode,
+            "routing_poll_count": self.routing_poll_count,
+            "routing_poll_ms": self.routing_poll_ms,
             **tbt,
         }
 
@@ -952,6 +1057,9 @@ class DisaggregatedQwenModel(nn.Module):
         max_batch_size: int = 4,
         routing_backend: str = "static",
         coord_addr: Optional[str] = None,
+        routing_update_mode: str = "oneshot",
+        routing_poll_interval_steps: int = 16,
+        routing_rpc_timeout_s: float = 0.05,
     ) -> "DisaggregatedQwenModel":
         """
         Create a disaggregated model from pretrained weights.
@@ -971,18 +1079,24 @@ class DisaggregatedQwenModel(nn.Module):
         
         # Create model
         model = cls(config, device, dtype)
+
+        model.setup_routing_backend(
+            routing_backend=routing_backend,
+            coord_addr=coord_addr,
+            routing_update_mode=routing_update_mode,
+            routing_poll_interval_steps=routing_poll_interval_steps,
+            routing_rpc_timeout_s=routing_rpc_timeout_s,
+        )
         
         # Load weights
         model.load_weights(model_name)
+
+        if routing_backend == "coordinator":
+            model._register_with_coordinator()
         
         # Setup communicator
         model.setup_communicator(
             max_seq_len=max_seq_len,
             max_batch_size=max_batch_size,
         )
-        model.setup_routing_backend(
-            routing_backend=routing_backend,
-            coord_addr=coord_addr,
-        )
-
         return model

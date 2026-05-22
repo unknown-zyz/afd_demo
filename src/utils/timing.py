@@ -114,6 +114,11 @@ class PipelineTiming:
     tbt_p50_ms: float | None = None
     tbt_p99_ms: float | None = None
     decode_step_times_ms: List[float] = field(default_factory=list)
+    routing_backend: str | None = None
+    routing_table_version: int | None = None
+    routing_update_mode: str | None = None
+    routing_poll_count: int | None = None
+    routing_poll_ms: float | None = None
     timed_decode_step: int | None = None
     timed_decode_step_base: str | None = None
     timed_decode_step_note: str | None = None
@@ -210,6 +215,16 @@ class PipelineTiming:
             data["tbt_p99_ms"] = self.tbt_p99_ms
         if self.decode_step_times_ms:
             data["decode_step_times_ms"] = list(self.decode_step_times_ms)
+        if self.routing_backend is not None:
+            data["routing_backend"] = self.routing_backend
+        if self.routing_table_version is not None:
+            data["routing_table_version"] = self.routing_table_version
+        if self.routing_update_mode is not None:
+            data["routing_update_mode"] = self.routing_update_mode
+        if self.routing_poll_count is not None:
+            data["routing_poll_count"] = self.routing_poll_count
+        if self.routing_poll_ms is not None:
+            data["routing_poll_ms"] = self.routing_poll_ms
         if self.timed_decode_step is not None:
             data["timed_decode_step"] = self.timed_decode_step
         if self.timed_decode_step_base is not None:
