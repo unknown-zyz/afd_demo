@@ -40,6 +40,7 @@ NPU/HCCL 脚本已合入 `main`：
 | 脚本 | 用途 |
 |---|---|
 | `cross_host_hccl_smoke.py` | 双机 2-rank HCCL all_reduce / send-recv 冒烟。 |
+| `repro_hccl_ep7_ej0003.py` | 单机 8-rank EP7 HCCL 最小复现：只初始化 default group / FFN EP groups / barriers，不加载 Qwen，不触发 TBE，用于定位 Host2 `EJ0003`。 |
 | `cross_host_fallback_comm_smoke.py` | 驱动 `FallbackMoECommunicator.dispatch/combine` 的真实类级 smoke。 |
 | `cross_host_fallback_rt_bench.py` | 用两次 `all_to_all_single` 模拟 dispatch+combine 的 round-trip latency。 |
 | `cross_host_deepep_smoke.py` | DeepEP buffer 构造 smoke。 |

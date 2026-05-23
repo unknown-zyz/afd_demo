@@ -16,6 +16,9 @@
 - ❌ DeepEP normal 和 low_latency 仍失败 —— 但失败已不再发生在 HCCL 基础层，下沉为 **DeepEP 运行时自身问题**
 - ⚠️ 真实 Qwen3-30B-A3B 1A7F 跨机 decode 的历史问题曾表现为 **prefill warmup / TBE JIT 冷编译过久**；但 2026-05-22 最新 isolate 显示，当前 immediate blocker 已变成 **Host2 本地 EP7 rank 在模型加载后 barrier 触发 HCCL `EJ0003` bind-port 异常**，因此暂未产出新的端到端 timing 数据
 
+更完整的 HCCL `EJ0003` / TBE JIT 根因拆解、最小复现脚本和分层实验矩阵见
+[`doc/17-hccl-ej0003-and-tbe-jit-root-cause.md`](17-hccl-ej0003-and-tbe-jit-root-cause.md)。
+
 **修复手段**: 用全新端口组合 `MASTER_PORT=297xx` + `HCCL_IF_BASE_PORT=297yy` + 合法的 `HCCL_CONNECT_TIMEOUT=600` 替换历史值 `29555/24500/60`。
 
 ---

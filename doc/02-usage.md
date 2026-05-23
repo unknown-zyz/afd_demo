@@ -464,6 +464,7 @@ bash scripts/run_warmup_ablation_npu.sh
 | `scripts/cross_host_hccl_smoke.py` | 验证双机 HCCL 基础可用。 |
 | `scripts/cross_host_fallback_comm_smoke.py` | 验证 `FallbackMoECommunicator` 真实 dispatch/combine 路径。 |
 | `scripts/cross_host_fallback_rt_bench.py` | 测 fallback round-trip latency。 |
+| `scripts/repro_hccl_ep7_ej0003.py` | 单机 8-rank EP7 HCCL 最小复现：只测 default group / FFN EP groups / barriers，不加载 Qwen，不触发 TBE。 |
 | `scripts/cross_host_deepep_smoke.py` | 验证 DeepEP buffer 能否建起来。 |
 | `scripts/cross_host_deepep_rt_bench.py` | DeepEP normal mode RT。 |
 | `scripts/cross_host_deepep_lowlatency_rt_bench.py` | DeepEP low_latency RT。 |
@@ -471,9 +472,35 @@ bash scripts/run_warmup_ablation_npu.sh
 当前推荐排查顺序：
 
 1. 先跑 `cross_host_hccl_smoke.py`
-2. 再跑 `cross_host_fallback_rt_bench.py`
-3. 再看 `cross_host_deepep_*.py`
-4. 最后再尝试 P3 真实 1A7F decode
+2. 若 Host2 本地 EP7 报 `EJ0003`，先跑 `repro_hccl_ep7_ej0003.py`
+3. 再跑 `cross_host_fallback_rt_bench.py`
+4. 再看 `cross_host_deepep_*.py`
+5. 最后再尝试 P3 真实 1A7F decode
+
+Host2 本地 EP7 / HCCL `EJ0003` 最小复现：
+
+```bash
+cd /workspace/afd_demo_repo_exp_1a7f
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+
+# 只测 default process group + world barrier
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+MASTER_ADDR=127.0.0.1 MASTER_PORT=35001 HCCL_IF_BASE_PORT=36001 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/repro_hccl_ep7_ej0003.py \
+  --spawn-local --world-size 8 --master-port 35001 --skip-ep-groups
+
+# 模拟真实 EP7 路径：创建 ep / dispatch / reduce 三个 FFN subgroups
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+MASTER_ADDR=127.0.0.1 MASTER_PORT=35041 HCCL_IF_BASE_PORT=36041 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/repro_hccl_ep7_ej0003.py \
+  --spawn-local --world-size 8 --master-port 35041 --groups all
+```
+
+更完整的 Host1/Host2 对照矩阵与判读规则见
+[`17-hccl-ej0003-and-tbe-jit-root-cause.md`](17-hccl-ej0003-and-tbe-jit-root-cause.md)。
 
 ### 8.2 双机 HCCL / fallback / DeepEP 命令参考
 
