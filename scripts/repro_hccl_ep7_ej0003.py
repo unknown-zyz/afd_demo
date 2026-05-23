@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -101,6 +102,23 @@ def _spawn_local(args: argparse.Namespace) -> int:
         base_cmd.append("--skip-ep-groups")
 
     children: list[subprocess.Popen] = []
+
+    def _terminate_children(signum: int | None = None, _frame=None) -> None:
+        for child in children:
+            if child.poll() is None:
+                child.terminate()
+        deadline = time.time() + 5
+        for child in children:
+            while child.poll() is None and time.time() < deadline:
+                time.sleep(0.1)
+            if child.poll() is None:
+                child.kill()
+        if signum is not None:
+            raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _terminate_children)
+    signal.signal(signal.SIGINT, _terminate_children)
+
     for rank in range(args.world_size):
         env = os.environ.copy()
         env.setdefault("HCCL_CONNECT_TIMEOUT", str(max(120, min(args.timeout_sec, 7200))))
