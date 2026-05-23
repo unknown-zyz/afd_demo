@@ -3,7 +3,7 @@
 **日期**: 2026-05-21
 **作者**: Agent (Copilot CLI)
 **分支**: `feat/fallback-default-comm`
-**状态**: HCCL + Fallback 已修复; DeepEP 运行时仍阻塞; P3 真实 decode 当前最新阻塞点是 Host2 本地 EP7 路径的 HCCL `EJ0003` bind-port 异常（fresh ports 仍复现）
+**状态**: HCCL + Fallback 已修复; DeepEP 运行时仍阻塞; 2026-05-23 最小复现显示 Host2 本地 EP7 `EJ0003` 与残留 `src.main` rank 强相关，清理后 8-rank default group 和 EP/dispatch/reduce subgroups 均通过；Host2 真实 `src.main` EP7 b2/s64 与 b2/s128 prefill warmup 也已恢复通过
 
 ---
 
@@ -14,7 +14,7 @@
 - ✅ 修复跨机 HCCL: `cross_host_hccl_smoke.py` PASS
 - ✅ 修复跨机 Fallback: `cross_host_fallback_rt_bench.py` PASS (mean 406µs / p99 603µs @ 512KiB)
 - ❌ DeepEP normal 和 low_latency 仍失败 —— 但失败已不再发生在 HCCL 基础层，下沉为 **DeepEP 运行时自身问题**
-- ⚠️ 真实 Qwen3-30B-A3B 1A7F 跨机 decode 的历史问题曾表现为 **prefill warmup / TBE JIT 冷编译过久**；但 2026-05-22 最新 isolate 显示，当前 immediate blocker 已变成 **Host2 本地 EP7 rank 在模型加载后 barrier 触发 HCCL `EJ0003` bind-port 异常**，因此暂未产出新的端到端 timing 数据
+- ⚠️ 真实 Qwen3-30B-A3B 1A7F 跨机 decode 的历史问题曾表现为 **prefill warmup / TBE JIT 冷编译过久**；2026-05-22 的 Host2 local EP7 isolate 曾在模型加载后 barrier 触发 HCCL `EJ0003`，但 2026-05-23 最小脚本证明该问题与残留 `src.main` rank / HCCL runtime 状态污染强相关，清理后 local 8-rank HCCL default group、EP groups 和真实 b2/s128 prefill warmup 均恢复通过
 
 更完整的 HCCL `EJ0003` / TBE JIT 根因拆解、最小复现脚本和分层实验矩阵见
 [`doc/17-hccl-ej0003-and-tbe-jit-root-cause.md`](17-hccl-ej0003-and-tbe-jit-root-cause.md)。

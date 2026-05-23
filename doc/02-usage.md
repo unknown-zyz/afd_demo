@@ -481,7 +481,7 @@ Host2 本地 EP7 / HCCL `EJ0003` 最小复现：
 
 ```bash
 cd /workspace/afd_demo_repo_exp_1a7f
-source venv/bin/activate
+[ -f venv/bin/activate ] && source venv/bin/activate
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 
 # 只测 default process group + world barrier
