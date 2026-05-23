@@ -135,9 +135,18 @@ def _spawn_local(args: argparse.Namespace) -> int:
         children.append(subprocess.Popen(cmd, env=env))
 
     rc = 0
-    for child in children:
-        if child.wait() != 0:
-            rc = 1
+    remaining = set(children)
+    while remaining:
+        for child in list(remaining):
+            child_rc = child.poll()
+            if child_rc is None:
+                continue
+            remaining.remove(child)
+            if child_rc != 0:
+                rc = child_rc
+                _terminate_children()
+                return rc
+        time.sleep(0.2)
     return rc
 
 
