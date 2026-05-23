@@ -36,6 +36,7 @@ export MODEL_NAME=/models/Qwen3-30B-A3B
 | `scripts/run_warmup_ablation_npu.sh` | P2P warmup / prefill warmup 的 2×2 消融。 |
 | `scripts/run_tbe_cache_warmup_npu.sh` | 跨机前的 TBE / `kernel_meta` 预编译，带日志和 cache 轮询。 |
 | `scripts/run_npu_coordinator_single_host.sh` | 单机 coordinator smoke；自动先起 coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
+| `scripts/run_crosshost_coord_1a7f_smoke.sh` | 跨机 1A7F coordinator 小配置 smoke 的单侧启动器；用于 Host2 FFN ranks 与 Host1 coordinator/attention rank 分别启动。 |
 | `scripts/cross_host_*.py` | 双机 HCCL / fallback / DeepEP 通信冒烟与 RT bench。 |
 | `scripts/plot_all_pipelines.py` / `scripts/gen_experiment_report.py` | 图表与单次报告生成。 |
 | `scripts/aggregate_singlehost_coord_ep7.py` | 单机 EP7 coordinator vs static 聚合、画图与带源数据路径的 Markdown 摘要。 |

@@ -238,6 +238,7 @@ bash scripts/run_tbe_cache_warmup_npu.sh \
 | all groups | Host1 | `MASTER_PORT=35181`, `HCCL_IF_BASE_PORT=36181` | PASS | Host1 EP/dispatch/reduce groups 对照通过 |
 | real EP7 warmup | Host2 | wrapper b2/s64, default `MASTER_PORT=29650` | PASS | `Exit=0`，rank0 warmup `2759.4 ms`，prefill timing 写入 `results/prefill_dbo/` |
 | real EP7 warmup | Host2 | wrapper b2/s128, default `MASTER_PORT=29650` | PASS | `Exit=0`，rank0 warmup `2676.5 ms`，prefill timing 写入 `results/prefill_dbo/` |
+| cross-host coordinator decode | Host1+Host2 | `MASTER_PORT=35201`, Host1 `HCCL_IF_BASE_PORT=37300`, Host2 `37400`, coordinator `50091` | PASS | b2/s128/t5 真实跨机 1A7F decode-dbo 完成；SSH 会话曾返回 255，但远端 logs/timing 显示 workload 成功 |
 | `src.main` no-warmup | Host2 | `31950/33950` | 可选复测 | 旧失败发生在残留 rank 存在背景下；小 shape warmup 已证明真实模型路径当前可越过 HCCL barrier |
 
 关键日志片段：
@@ -260,6 +261,11 @@ Communication_Error_Bind_IP_Port(EJ0003): Failed to bind the IP port.
 Running 1 prefill warmup round(s) to absorb JIT compile cost
   warmup 1/1: 2676.5 ms
 Timing saved: results/prefill_dbo/timing_attention_serial-prefill_npu_ep7_broadcast_reduce_overlap_b2_s128_t5.json
+
+# Cross-host 1A7F coordinator b2/s128/t5
+Generated 5 tokens in 4765.61ms (1.0 tok/s)
+Generation timing: prefill=2836.959ms, decode_loop=1059.660ms, decode_steps=4, decode_tpot=264.915ms
+Decode timing saved: results/prefill_dbo/timing_attention_xhost_coord_decode_b2_s128_t5.json
 ```
 
 ---
@@ -278,6 +284,7 @@ Timing saved: results/prefill_dbo/timing_attention_serial-prefill_npu_ep7_broadc
 - 已经修复过的 2-rank cross-host HCCL / fallback RT 不能证明 Host2 local EP7 多 group 当前健康；但本次最小脚本已补齐 8-rank local EP7 group 证据。
 - Host2 local EP7 最小 HCCL 已恢复；此前 `EJ0003` 与残留 `src.main` rank / HCCL runtime 状态污染强相关。
 - Host2 local EP7 真实 warmup 小 shape 已恢复；b2/s64 与 b2/s128 不再复现 60min 级别卡死，且没有再触发 `EJ0003`。
+- 跨机 1A7F coordinator b2/s128/t5 已有一次真实 decode-dbo smoke 成功；本地 SSH 返回 255 不能直接视为 workload 失败，必须以远端 rank logs 和 timing JSON 为准。
 - TBE JIT 冷编译仍是历史真实 decode 的重要风险，但当前证据显示本轮主要 blocker 是残留 rank 造成的 HCCL 状态污染。后续扩大 shape 或跨机 1A7F 前仍应先检查/清理 `src.main` 残留。
 - 跨机 1A7F coordinator 可以进入下一轮小配置复测，但不应直接扩大 full matrix；先用 b2/s128/t5 或更小 shape 验证跨机真实路径和日志/metrics。
 - DeepEP runtime 仍保持 deferred；当前主线是先恢复 HCCL/fallback EP7 真实路径。
