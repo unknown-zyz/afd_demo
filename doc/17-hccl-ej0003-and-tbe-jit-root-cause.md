@@ -1,6 +1,6 @@
 # HCCL `EJ0003` 与 TBE JIT 编译过久根因分析
 
-**状态**：跨机 1A7F coordinator 继续推进前的阻塞拆解文档。2026-05-23 的最小复现实验显示，Host2 本地 EP7 `EJ0003` 与一个残留 `python -m src.main` rank 相关；清理该 PID 后，Host2 / Host1 的 8-rank default group 与 EP/dispatch/reduce subgroups 都能通过。随后 Host2 真实 `src.main` EP7 prefill warmup 的 b2/s64 与 b2/s128 也完成，当前阻塞已从“Host2 HCCL barrier 过不去”解除，下一步应回到跨机 1A7F 或更大 shape 的真实路径验证。
+**状态**：跨机 1A7F coordinator 继续推进前的阻塞拆解文档。2026-05-23 的最小复现实验显示，Host2 本地 EP7 `EJ0003` 与一个残留 `python -m src.main` rank 相关；清理该 PID 后，Host2 / Host1 的 8-rank default group 与 EP/dispatch/reduce subgroups 都能通过。随后 Host2 真实 `src.main` EP7 prefill warmup 的 b2/s64 与 b2/s128 也完成。跨机 1A7F coordinator 已连续完成 b2/s128/t5、b2/s128/t5 repeat、b4/s128/t5 三个小配置 smoke，并产出 TPOT、MFU 与 EP bandwidth 汇总；下一步可以在清理残留和磁盘空间后进入串行 decode-dbo 矩阵。
 
 ---
 
@@ -12,6 +12,7 @@
 2. **最新 isolate 先复现、再恢复**：Host2 最小脚本在残留 rank 存在时，8-rank default world barrier 即复现 `EJ0003`；清理明确属于本项目的残留 PID `54952` 后，Host2 default group 与 all-groups 复测均通过。
 3. **EP subgroup 本身不是当前根因**：Host2 和 Host1 都能按真实顺序创建 `ffn_ep_group`、`ffn_ep_dispatch_group`、`ffn_ep_reduce_group` 并完成 group barrier；当前应把 `EJ0003` 根因收敛到残留实验进程 / HCCL runtime 状态污染，而不是多 `new_group` 逻辑错误。
 4. **真实 Host2 local EP7 小 shape 已恢复**：清理后，`run_tbe_cache_warmup_npu.sh --profile host2-ep7` 在 b2/s64 与 b2/s128 上均 `Exit=0`，rank 日志显示 `Running 1 prefill warmup round(s)` 后约 2.7s 完成 warmup 并写出 timing。
+5. **跨机 1A7F coordinator 小配置已可复现**：通过新 launcher 重复 b2/s128/t5，并进一步通过 b4/s128/t5；两端 rank 均正常退出，attention / FFN timing JSON 和 metrics summary 已生成。
 
 ---
 
@@ -239,6 +240,9 @@ bash scripts/run_tbe_cache_warmup_npu.sh \
 | real EP7 warmup | Host2 | wrapper b2/s64, default `MASTER_PORT=29650` | PASS | `Exit=0`，rank0 warmup `2759.4 ms`，prefill timing 写入 `results/prefill_dbo/` |
 | real EP7 warmup | Host2 | wrapper b2/s128, default `MASTER_PORT=29650` | PASS | `Exit=0`，rank0 warmup `2676.5 ms`，prefill timing 写入 `results/prefill_dbo/` |
 | cross-host coordinator decode | Host1+Host2 | `MASTER_PORT=35201`, Host1 `HCCL_IF_BASE_PORT=37300`, Host2 `37400`, coordinator `50091` | PASS | b2/s128/t5 真实跨机 1A7F decode-dbo 完成；SSH 会话曾返回 255，但远端 logs/timing 显示 workload 成功 |
+| cross-host coordinator repeat | Host1+Host2 | launcher, `MASTER_PORT=35301`, Host1 `HCCL_IF_BASE_PORT=37500`, Host2 `37600`, coordinator `50101` | PASS | b2/s128/t5 repeat 完成；Host1 attention `decode_tpot=247.483 ms`；两端无 `src.main` 残留 |
+| cross-host coordinator safe point | Host1+Host2 | launcher, `MASTER_PORT=35311`, Host1 `HCCL_IF_BASE_PORT=37700`, Host2 `37800`, coordinator `50111` | PASS | b4/s128/t5 完成；Host1 attention `decode_tpot=274.100 ms`；Host2 FFN rank1 / rank7 timing 正常写出 |
+| cross-host metrics summary | Host1+Host2 | staged under `results_npu/coordinator_arch/crosshost_1a7f_smoke_metrics/` | PASS | Host1 生成 `decode_mfu_summary.csv`；Host2 生成 `ep_bandwidth_summary.csv`；用于后续矩阵前的 TPOT/MFU/带宽 sanity |
 | `src.main` no-warmup | Host2 | `31950/33950` | 可选复测 | 旧失败发生在残留 rank 存在背景下；小 shape warmup 已证明真实模型路径当前可越过 HCCL barrier |
 
 关键日志片段：
@@ -266,6 +270,26 @@ Timing saved: results/prefill_dbo/timing_attention_serial-prefill_npu_ep7_broadc
 Generated 5 tokens in 4765.61ms (1.0 tok/s)
 Generation timing: prefill=2836.959ms, decode_loop=1059.660ms, decode_steps=4, decode_tpot=264.915ms
 Decode timing saved: results/prefill_dbo/timing_attention_xhost_coord_decode_b2_s128_t5.json
+
+# Cross-host 1A7F coordinator b2/s128/t5 repeat
+Generated 5 tokens in 5636.96ms (0.9 tok/s)
+Generation timing: prefill=4073.992ms, decode_loop=989.933ms, decode_steps=4, decode_tpot=247.483ms
+Decode timing saved: results/prefill_dbo/timing_attention_xhost_coord_repeat_b2_s128_t5.json
+
+# Cross-host 1A7F coordinator b4/s128/t5
+Generated 5 tokens in 5677.01ms (0.9 tok/s)
+Generation timing: prefill=3717.755ms, decode_loop=1096.399ms, decode_steps=4, decode_tpot=274.100ms
+Decode timing saved: results/prefill_dbo/timing_attention_xhost_coord_b4_s128_t5.json
+```
+
+跨机 smoke metrics 汇总位置：
+
+```text
+# Host1 clean worktree
+/workspace/afd_demo_exp_1a7f/results_npu/coordinator_arch/crosshost_1a7f_smoke_metrics/decode_mfu_summary.csv
+
+# Host2 clean worktree
+/workspace/afd_demo_repo_exp_1a7f/results_npu/coordinator_arch/crosshost_1a7f_smoke_metrics/ep_bandwidth_summary.csv
 ```
 
 ---
@@ -284,7 +308,7 @@ Decode timing saved: results/prefill_dbo/timing_attention_xhost_coord_decode_b2_
 - 已经修复过的 2-rank cross-host HCCL / fallback RT 不能证明 Host2 local EP7 多 group 当前健康；但本次最小脚本已补齐 8-rank local EP7 group 证据。
 - Host2 local EP7 最小 HCCL 已恢复；此前 `EJ0003` 与残留 `src.main` rank / HCCL runtime 状态污染强相关。
 - Host2 local EP7 真实 warmup 小 shape 已恢复；b2/s64 与 b2/s128 不再复现 60min 级别卡死，且没有再触发 `EJ0003`。
-- 跨机 1A7F coordinator b2/s128/t5 已有一次真实 decode-dbo smoke 成功；本地 SSH 返回 255 不能直接视为 workload 失败，必须以远端 rank logs 和 timing JSON 为准。
+- 跨机 1A7F coordinator b2/s128/t5、b2/s128/t5 repeat、b4/s128/t5 已连续完成；本地 SSH 返回 255 不能直接视为 workload 失败，必须以远端 rank logs 和 timing JSON 为准。
 - TBE JIT 冷编译仍是历史真实 decode 的重要风险，但当前证据显示本轮主要 blocker 是残留 rank 造成的 HCCL 状态污染。后续扩大 shape 或跨机 1A7F 前仍应先检查/清理 `src.main` 残留。
-- 跨机 1A7F coordinator 可以进入下一轮小配置复测，但不应直接扩大 full matrix；先用 b2/s128/t5 或更小 shape 验证跨机真实路径和日志/metrics。
+- 跨机 1A7F coordinator 已满足进入串行矩阵前的 smoke 条件；但 Host2 `/workspace` 仍只有约 6.3GB 可用空间，full matrix 前应先清理输出或改到空间更充足的目录。
 - DeepEP runtime 仍保持 deferred；当前主线是先恢复 HCCL/fallback EP7 真实路径。
