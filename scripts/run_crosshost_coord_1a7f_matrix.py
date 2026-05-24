@@ -199,6 +199,7 @@ def build_side_script(
 set -euo pipefail
 cd {quote(workdir)}
 mkdir -p {quote(out_dir)}
+: > {quote(out_dir)}/{side_out}
 echo "matrix_side_start side={side} tag={cfg.tag} ts=$(date -Is)" >> {quote(out_dir)}/{side_out}
 exec bash scripts/run_crosshost_coord_1a7f_smoke.sh \\
   {' '.join(args)} \\
@@ -355,6 +356,9 @@ def run_one(
     timing_line = grep_remote(host1, h1_rank, r"Generation timing:")
     if timing_line:
         tpot = parse_tpot(timing_line)
+    if status == "OK" and not tpot:
+        status = "FAIL_MISSING_TIMING"
+        detail = "side rc markers observed but Host1 decode_tpot was not found"
 
     host2_free_after = host2_free_gb(host2)
     print(f"{cfg.tag}: {status} tpot={tpot} free_gb_after={host2_free_after:.1f} {detail}", flush=True)
