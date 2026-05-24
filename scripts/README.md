@@ -21,6 +21,7 @@ NPU/HCCL 脚本已合入 `main`：
 | `run_tbe_cache_warmup_npu.sh` | Ascend TBE / `kernel_meta` 预编译脚本，带 rank/log/cache 轮询；超时返回 124 并清理本次残留 rank。 |
 | `run_npu_coordinator_single_host.sh` | 单机 coordinator smoke：先起 gRPC coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，也可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
 | `run_crosshost_coord_1a7f_smoke.sh` | 跨机 1A7F coordinator 小配置 smoke 的单侧启动器：Host2 先起 FFN ranks，Host1 再起 coordinator + attention rank。 |
+| `run_crosshost_coord_1a7f_matrix.py` | 跨机 1A7F coordinator decode-dbo 矩阵 orchestrator：本地控制 Host1/Host2 容器内 detached side 脚本，逐配置分配端口、轮询日志、记录 Host2 空间和 summary。 |
 
 ## 报告与验证
 
