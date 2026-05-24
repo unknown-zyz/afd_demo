@@ -29,6 +29,15 @@ def test_ep15_round_robin_matches_expected_prefix():
     assert assignments[14] == [14, 29, 44, 59, 74, 89, 104, 119]
 
 
+def test_explicit_assignment_uses_coordinator_mapping():
+    expert_to_rank = [0, 1, 1, 2, 0, 2]
+    assignments = ExpertShardPlan.all_assignments(
+        6, 3, "explicit", expert_to_rank=expert_to_rank
+    )
+
+    assert assignments == [[0, 4], [1, 2], [3, 5]]
+
+
 def test_invalid_shard_plan_rejected():
     with pytest.raises(ValueError):
         ExpertShardPlan(128, 0, 0)
@@ -36,3 +45,11 @@ def test_invalid_shard_plan_rejected():
         ExpertShardPlan(128, 4, 4)
     with pytest.raises(ValueError):
         ExpertShardPlan(128, 4, 0, "bad")
+    with pytest.raises(ValueError):
+        ExpertShardPlan(4, 2, 0, "explicit")
+    with pytest.raises(ValueError):
+        ExpertShardPlan(4, 2, 0, "explicit", [0, 1])
+    with pytest.raises(ValueError):
+        ExpertShardPlan(4, 2, 0, "explicit", [0, 1, 2, 0])
+    with pytest.raises(ValueError):
+        ExpertShardPlan(4, 2, 0, "round_robin", [0, 1, 0, 1])

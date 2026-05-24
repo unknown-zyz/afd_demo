@@ -104,7 +104,13 @@ class DistributedContext:
             if config.backend == "nccl":
                 device_id = torch.device(f"cuda:{config.local_rank}")
         
-        # Initialize process group
+        # Initialize process group.
+        # Bumped collective timeout from the default 30 min to 2 h to survive
+        # first-time TBE/JIT compile on Qwen3-30B cross-host EP7. Override via
+        # AFD_DIST_TIMEOUT_SEC env (in seconds).
+        import os as _os
+        from datetime import timedelta as _timedelta
+        _timeout_sec = int(_os.environ.get("AFD_DIST_TIMEOUT_SEC", "7200"))
         if not dist.is_initialized():
             dist.init_process_group(
                 backend=config.backend,
@@ -112,6 +118,7 @@ class DistributedContext:
                 world_size=config.world_size,
                 rank=config.rank,
                 device_id=device_id,
+                timeout=_timedelta(seconds=_timeout_sec),
             )
         
         # Create directional NCCL process groups lazily (only when DBO is used).
@@ -122,9 +129,10 @@ class DistributedContext:
         if self.ffn_ep_enabled:
             # new_group must be called by all world ranks in the same order.
             logger.info("Creating FFN EP groups: ranks=%s", self.ffn_ranks)
-            self._ffn_ep_group = dist.new_group(ranks=self.ffn_ranks)
-            self._ffn_ep_dispatch_group = dist.new_group(ranks=self.ffn_ranks)
-            self._ffn_ep_reduce_group = dist.new_group(ranks=self.ffn_ranks)
+            _ep_timeout = _timedelta(seconds=_timeout_sec)
+            self._ffn_ep_group = dist.new_group(ranks=self.ffn_ranks, timeout=_ep_timeout)
+            self._ffn_ep_dispatch_group = dist.new_group(ranks=self.ffn_ranks, timeout=_ep_timeout)
+            self._ffn_ep_reduce_group = dist.new_group(ranks=self.ffn_ranks, timeout=_ep_timeout)
         
         self._initialized = True
         logger.info(
@@ -288,8 +296,11 @@ class DistributedContext:
           - f2a_group: FFN isend → ATT irecv (FFN-to-Attention direction)
         """
         logger.info("Creating directional NCCL groups (a2f, f2a)...")
-        self._a2f_group = dist.new_group(ranks=self._comm_ranks)
-        self._f2a_group = dist.new_group(ranks=self._comm_ranks)
+        import os as _os
+        from datetime import timedelta as _timedelta
+        _to = _timedelta(seconds=int(_os.environ.get("AFD_DIST_TIMEOUT_SEC", "7200")))
+        self._a2f_group = dist.new_group(ranks=self._comm_ranks, timeout=_to)
+        self._f2a_group = dist.new_group(ranks=self._comm_ranks, timeout=_to)
         # Warm up the new groups to avoid cold-start latency
         if self.rank in self._comm_ranks:
             from .warmup import warmup_p2p

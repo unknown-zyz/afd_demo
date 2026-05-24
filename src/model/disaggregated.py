@@ -6,6 +6,8 @@ coordinating between attention and FFN workers across nodes.
 """
 
 import logging
+import socket
+import statistics
 import time
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -22,6 +24,29 @@ from ..utils import device as devmod
 from ..utils.sampling import sample_next_token, StoppingCriteria
 
 logger = logging.getLogger(__name__)
+
+
+def _tbt_stats(step_times_ms: List[float]) -> Dict[str, Optional[float]]:
+    """Compute TBT mean / p50 / p99 from a list of per-decode-step latencies (ms).
+
+    Returns None for each field when no samples are available. With a single
+    sample, p50 = p99 = mean = that sample. p99 uses linear interpolation
+    between the two surrounding ordered samples (same convention as numpy).
+    """
+    if not step_times_ms:
+        return {"tbt_mean_ms": None, "tbt_p50_ms": None, "tbt_p99_ms": None}
+    sorted_times = sorted(step_times_ms)
+    n = len(sorted_times)
+    mean_v = statistics.fmean(sorted_times)
+    p50_v = statistics.median(sorted_times)
+    if n == 1:
+        p99_v = sorted_times[0]
+    else:
+        k = (n - 1) * 0.99
+        f = int(k)
+        c = min(f + 1, n - 1)
+        p99_v = sorted_times[f] + (sorted_times[c] - sorted_times[f]) * (k - f) if f != c else sorted_times[f]
+    return {"tbt_mean_ms": mean_v, "tbt_p50_ms": p50_v, "tbt_p99_ms": p99_v}
 
 
 class DisaggregatedQwenModel(nn.Module):
@@ -72,6 +97,184 @@ class DisaggregatedQwenModel(nn.Module):
         # Communicator
         self.communicator: Optional[AFDCommunicator] = None
         self._last_generation_metrics: Dict[str, Any] = {}
+        self.routing_backend: str = "static"
+        self.coord_addr: Optional[str] = None
+        self.coord_client = None
+        self.routing_table: Optional[Dict[str, Any]] = None
+        self.routing_table_version: Optional[int] = None
+        self.routing_update_mode: str = "oneshot"
+        self.routing_poll_interval_steps: int = 16
+        self.routing_rpc_timeout_s: float = 0.05
+        self.routing_poll_count: int = 0
+        self.routing_poll_ms: float = 0.0
+
+    def _ensure_supported_coordinator_topology(self) -> None:
+        attn_world = len(self.ctx.attn_ranks)
+        ffn_world = len(self.ctx.ffn_ranks)
+        supported = attn_world == 1 and (
+            ffn_world == 1
+            or (self.ctx.ffn_ep_enabled and self.ctx.ffn_ep_size == ffn_world)
+        )
+        if not supported:
+            raise NotImplementedError(
+                "Real-path coordinator mode currently supports 1A1F and 1A{N}F with "
+                "FFN EP size equal to FFN world size. Use --routing-backend static for "
+                "other topologies."
+            )
+
+    def _register_with_coordinator(self) -> None:
+        if self.coord_client is None:
+            return
+        role = "attn" if self.ctx.is_attention_node else "ffn"
+        world_size = len(self.ctx.attn_ranks) if role == "attn" else len(self.ctx.ffn_ranks)
+        num_experts = int(getattr(self.config, "num_experts", 0) or 0)
+        local_experts: List[int] = []
+        if role == "ffn" and num_experts > 0:
+            explicit_mapping = self.coordinator_expert_to_rank
+            if self.ctx.ffn_ep_enabled and explicit_mapping is not None:
+                local_experts = [
+                    eid for eid, owner_rank in enumerate(explicit_mapping)
+                    if owner_rank == self.ctx.ffn_ep_rank
+                ]
+            elif self.ctx.ffn_ep_enabled:
+                local_experts = [
+                    eid for eid in range(num_experts)
+                    if eid % self.ctx.ffn_ep_size == self.ctx.ffn_ep_rank
+                ]
+            else:
+                local_experts = list(range(num_experts))
+        ack = self.coord_client.register_worker(
+            {
+                "role": role,
+                "rank": self.ctx.rank,
+                "host": socket.gethostname(),
+                "device_id": self.ctx.local_rank,
+                "world_size": world_size,
+                "local_experts": local_experts,
+            }
+        )
+        if not ack.get("success"):
+            raise RuntimeError(
+                f"Coordinator registration failed for {role} rank {self.ctx.rank}: {ack.get('msg', 'unknown error')}"
+            )
+        logger.info(
+            "Coordinator registered: role=%s rank=%s table_version=%s",
+            role,
+            self.ctx.rank,
+            ack.get("initial_table_version"),
+        )
+
+    def _validate_routing_table(self, table: Dict[str, Any]) -> None:
+        expert_to_rank = table.get("expert_to_rank") or []
+        num_experts = int(getattr(self.config, "num_experts", 0) or 0)
+        if num_experts <= 0:
+            return
+        if len(expert_to_rank) != num_experts:
+            raise ValueError(
+                f"Routing table expert_to_rank len {len(expert_to_rank)} != num_experts {num_experts}"
+            )
+        max_rank = self.ctx.ffn_ep_size if self.ctx.ffn_ep_enabled else len(self.ctx.ffn_ranks)
+        invalid = [int(rank) for rank in expert_to_rank if int(rank) < 0 or int(rank) >= max_rank]
+        if invalid:
+            raise ValueError(
+                f"Routing table rank values must be in [0, {max_rank}); got {invalid[:5]}"
+            )
+
+    def _routing_ownership_changed(self, table: Dict[str, Any]) -> bool:
+        if self.routing_table is None:
+            return False
+        return list(table.get("expert_to_rank") or []) != list(self.routing_table.get("expert_to_rank") or [])
+
+    def _on_routing_table(self, table: Dict[str, Any]) -> None:
+        self._validate_routing_table(table)
+        self.routing_table = dict(table)
+        self.routing_table_version = table.get("version")
+        logger.info(
+            "Routing table update: version=%s mode=%s",
+            self.routing_table_version,
+            table.get("mode"),
+        )
+
+    def refresh_routing_table(self, timeout_s: Optional[float] = None) -> None:
+        if self.coord_client is None:
+            return
+        table = self.coord_client.get_routing_table(timeout_s=timeout_s)
+        if table is None:
+            raise RuntimeError(f"Coordinator {self.coord_addr} returned no routing table")
+        self._on_routing_table(table)
+
+    def maybe_poll_routing_table(self, step: int) -> None:
+        """Poll coordinator at decode safe points when explicitly enabled."""
+        if self.coord_client is None or self.routing_update_mode != "poll":
+            return
+        if self.routing_poll_interval_steps <= 0:
+            return
+        if step % self.routing_poll_interval_steps != 0:
+            return
+        start = time.perf_counter()
+        table = self.coord_client.get_routing_table(timeout_s=self.routing_rpc_timeout_s)
+        self.routing_poll_ms += (time.perf_counter() - start) * 1000
+        self.routing_poll_count += 1
+        if table is None:
+            logger.debug("Routing poll skipped: coordinator returned no table")
+            return
+        if table.get("version") == self.routing_table_version:
+            return
+        if self.ctx.ffn_ep_enabled and self._routing_ownership_changed(table):
+            logger.warning(
+                "Routing table v%s changes expert ownership during EP decode; "
+                "keeping v%s because live expert migration is not implemented",
+                table.get("version"),
+                self.routing_table_version,
+            )
+            return
+        self._on_routing_table(table)
+
+    def setup_routing_backend(
+        self,
+        routing_backend: str = "static",
+        coord_addr: Optional[str] = None,
+        routing_update_mode: str = "oneshot",
+        routing_poll_interval_steps: int = 16,
+        routing_rpc_timeout_s: float = 0.05,
+    ) -> None:
+        self.routing_backend = routing_backend
+        self.coord_addr = coord_addr
+        self.routing_update_mode = routing_update_mode
+        self.routing_poll_interval_steps = routing_poll_interval_steps
+        self.routing_rpc_timeout_s = routing_rpc_timeout_s
+        if routing_backend == "static":
+            return
+        if not coord_addr:
+            raise ValueError("--coord-addr is required when --routing-backend=coordinator")
+        if routing_update_mode not in {"oneshot", "poll"}:
+            raise ValueError(f"Unsupported routing update mode: {routing_update_mode}")
+
+        self._ensure_supported_coordinator_topology()
+
+        from ..coordinator_arch.coordinator_client import CoordinatorClient
+
+        self.coord_client = CoordinatorClient(coord_addr)
+        self.refresh_routing_table()
+        logger.info(
+            "Coordinator routing table fetched: addr=%s version=%s update_mode=%s poll_interval_steps=%s",
+            coord_addr,
+            self.routing_table_version,
+            self.routing_update_mode,
+            self.routing_poll_interval_steps,
+        )
+
+    @property
+    def coordinator_expert_to_rank(self) -> Optional[List[int]]:
+        if self.routing_backend != "coordinator" or self.routing_table is None:
+            return None
+        expert_to_rank = self.routing_table.get("expert_to_rank")
+        return list(expert_to_rank) if expert_to_rank is not None else None
+
+    def close(self) -> None:
+        if self.coord_client is not None:
+            self.coord_client.close()
+            self.coord_client = None
     
     def load_weights(self, model_name: str) -> None:
         """
@@ -99,7 +302,16 @@ class DisaggregatedQwenModel(nn.Module):
         if self.ctx.is_attention_node:
             self.attention_worker = AttentionWorker(model, self.device, self.dtype)
         else:
-            self.ffn_worker = FFNWorker(model, self.device, self.dtype)
+            self.ffn_worker = FFNWorker(
+                model,
+                self.device,
+                self.dtype,
+                expert_to_rank=(
+                    self.coordinator_expert_to_rank
+                    if self.ctx.ffn_ep_enabled
+                    else None
+                ),
+            )
             self.supports_moe_timing = self.ffn_worker.supports_moe_timing
         
         # Free the full model and cleanup
@@ -199,6 +411,13 @@ class DisaggregatedQwenModel(nn.Module):
         else:
             # FFN node
             assert self.ffn_worker is not None
+
+            if self.ctx.is_ffn_expert_only and self.ctx.ffn_ep_enabled:
+                output = self.ffn_worker.forward_ffn_layer(
+                    layer_idx=layer_idx,
+                    hidden_states=hidden_states,
+                )
+                return output[0] if isinstance(output, tuple) else output
             
             # Receive pre-combined hidden states from attention node
             batch_size, seq_len, _ = hidden_states.shape
@@ -648,10 +867,12 @@ class DisaggregatedQwenModel(nn.Module):
 
         # Decode loop
         decode_steps = max(max_new_tokens - 1, 0)
+        decode_step_times_ms: List[float] = []
         devmod.synchronize()
         self.ctx.barrier()
         decode_start = time.perf_counter()
         for step in range(max_new_tokens - 1):
+            self.maybe_poll_routing_table(step)
             # Current position = KV cache length (accurate regardless of path)
             cur_pos = self.kv_cache.get_seq_length()
             position_ids = torch.full(
@@ -659,6 +880,7 @@ class DisaggregatedQwenModel(nn.Module):
                 device=self.device, dtype=torch.long
             )
             
+            step_start = time.perf_counter()
             if decode_scheduler is not None:
                 # Use Decode DBO
                 logits = decode_scheduler.forward_decode_dbo(
@@ -682,6 +904,8 @@ class DisaggregatedQwenModel(nn.Module):
             
             # Append to output
             generated_ids = torch.cat([generated_ids, next_token], dim=1)
+            devmod.synchronize()
+            decode_step_times_ms.append((time.perf_counter() - step_start) * 1000)
             
             # Check stopping (but don't break - need to sync with FFN node)
             if eos_token_id is not None and (next_token == eos_token_id).all():
@@ -692,11 +916,19 @@ class DisaggregatedQwenModel(nn.Module):
         self.ctx.barrier()
         decode_loop_ms = (time.perf_counter() - decode_start) * 1000
         decode_tpot_ms = decode_loop_ms / decode_steps if decode_steps > 0 else None
+        tbt = _tbt_stats(decode_step_times_ms)
         self._last_generation_metrics = {
             "prefill_ms": prefill_ms,
             "decode_loop_ms": decode_loop_ms,
             "decode_steps": decode_steps,
             "decode_tpot_ms": decode_tpot_ms,
+            "decode_step_times_ms": decode_step_times_ms,
+            "routing_backend": self.routing_backend,
+            "routing_table_version": self.routing_table_version,
+            "routing_update_mode": self.routing_update_mode,
+            "routing_poll_count": self.routing_poll_count,
+            "routing_poll_ms": self.routing_poll_ms,
+            **tbt,
         }
 
         # Log Decode DBO stats
@@ -709,6 +941,10 @@ class DisaggregatedQwenModel(nn.Module):
                 self._last_decode_timing.decode_loop_ms = decode_loop_ms
                 self._last_decode_timing.decode_steps = decode_steps
                 self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
+                self._last_decode_timing.tbt_mean_ms = tbt["tbt_mean_ms"]
+                self._last_decode_timing.tbt_p50_ms = tbt["tbt_p50_ms"]
+                self._last_decode_timing.tbt_p99_ms = tbt["tbt_p99_ms"]
+                self._last_decode_timing.decode_step_times_ms = list(decode_step_times_ms)
         
         return generated_ids
     
@@ -756,10 +992,12 @@ class DisaggregatedQwenModel(nn.Module):
         # Decode loop: max_new_tokens - 1 iterations
         # (first token is sampled after prefill on attention node)
         decode_steps = max(max_new_tokens - 1, 0)
+        decode_step_times_ms: List[float] = []
         devmod.synchronize()
         self.ctx.barrier()
         decode_start = time.perf_counter()
         for step in range(max_new_tokens - 1):
+            self.maybe_poll_routing_table(step)
             # Create dummy token input
             dummy_token = torch.zeros(
                 batch_size, 1, dtype=torch.long, device=self.device
@@ -768,6 +1006,7 @@ class DisaggregatedQwenModel(nn.Module):
                 batch_size, 1, dtype=torch.long, device=self.device
             )
             
+            step_start = time.perf_counter()
             if decode_scheduler is not None:
                 # Use Decode DBO
                 decode_scheduler.forward_decode_dbo(
@@ -777,15 +1016,25 @@ class DisaggregatedQwenModel(nn.Module):
                 )
             else:
                 self.forward_decode(dummy_token)
+            devmod.synchronize()
+            decode_step_times_ms.append((time.perf_counter() - step_start) * 1000)
         devmod.synchronize()
         self.ctx.barrier()
         decode_loop_ms = (time.perf_counter() - decode_start) * 1000
         decode_tpot_ms = decode_loop_ms / decode_steps if decode_steps > 0 else None
+        tbt = _tbt_stats(decode_step_times_ms)
         self._last_generation_metrics = {
             "prefill_ms": prefill_ms,
             "decode_loop_ms": decode_loop_ms,
             "decode_steps": decode_steps,
             "decode_tpot_ms": decode_tpot_ms,
+            "decode_step_times_ms": decode_step_times_ms,
+            "routing_backend": self.routing_backend,
+            "routing_table_version": self.routing_table_version,
+            "routing_update_mode": self.routing_update_mode,
+            "routing_poll_count": self.routing_poll_count,
+            "routing_poll_ms": self.routing_poll_ms,
+            **tbt,
         }
 
         # Log Decode DBO stats for FFN node
@@ -797,6 +1046,10 @@ class DisaggregatedQwenModel(nn.Module):
                 self._last_decode_timing.decode_loop_ms = decode_loop_ms
                 self._last_decode_timing.decode_steps = decode_steps
                 self._last_decode_timing.decode_tpot_ms = decode_tpot_ms
+                self._last_decode_timing.tbt_mean_ms = tbt["tbt_mean_ms"]
+                self._last_decode_timing.tbt_p50_ms = tbt["tbt_p50_ms"]
+                self._last_decode_timing.tbt_p99_ms = tbt["tbt_p99_ms"]
+                self._last_decode_timing.decode_step_times_ms = list(decode_step_times_ms)
         
         # FFN node doesn't return meaningful output
         return input_ids
@@ -809,6 +1062,11 @@ class DisaggregatedQwenModel(nn.Module):
         dtype: torch.dtype = torch.bfloat16,
         max_seq_len: int = 2048,
         max_batch_size: int = 4,
+        routing_backend: str = "static",
+        coord_addr: Optional[str] = None,
+        routing_update_mode: str = "oneshot",
+        routing_poll_interval_steps: int = 16,
+        routing_rpc_timeout_s: float = 0.05,
     ) -> "DisaggregatedQwenModel":
         """
         Create a disaggregated model from pretrained weights.
@@ -828,14 +1086,24 @@ class DisaggregatedQwenModel(nn.Module):
         
         # Create model
         model = cls(config, device, dtype)
+
+        model.setup_routing_backend(
+            routing_backend=routing_backend,
+            coord_addr=coord_addr,
+            routing_update_mode=routing_update_mode,
+            routing_poll_interval_steps=routing_poll_interval_steps,
+            routing_rpc_timeout_s=routing_rpc_timeout_s,
+        )
         
         # Load weights
         model.load_weights(model_name)
+
+        if routing_backend == "coordinator":
+            model._register_with_coordinator()
         
         # Setup communicator
         model.setup_communicator(
             max_seq_len=max_seq_len,
             max_batch_size=max_batch_size,
         )
-        
         return model

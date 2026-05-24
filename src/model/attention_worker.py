@@ -18,6 +18,8 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
 
+from ..distributed import get_distributed_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,6 +187,7 @@ class AttentionWorker(nn.Module):
         self.config = model.config
         self.hidden_size = model.config.hidden_size
         self.num_layers = model.config.num_hidden_layers
+        self.ctx = get_distributed_context()
         self.role_devices = self._resolve_role_devices(device)
         
         # Extract and move components
@@ -240,6 +243,8 @@ class AttentionWorker(nn.Module):
         """Resolve all visible accelerator devices for role-internal layer sharding."""
         from ..utils import device as devmod
         if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
+            return [primary_device]
+        if self.ctx.ffn_ep_enabled:
             return [primary_device]
         count = devmod.device_count()
         if count <= 1:

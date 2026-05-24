@@ -179,6 +179,23 @@ def parse_args():
     parser.add_argument('--ep-expert-policy', type=str,
                         choices=['round_robin', 'contiguous'], default='round_robin',
                         help='Expert assignment policy for FFN EP.')
+    parser.add_argument('--routing-backend', type=str,
+                        choices=['static', 'coordinator'], default='static',
+                        help='Routing/control-plane backend for the real decode path. '
+                             "'static' keeps the current built-in topology; "
+                             "'coordinator' fetches routing metadata from the gRPC coordinator.")
+    parser.add_argument('--coord-addr', type=str, default='',
+                        help='Coordinator gRPC address when --routing-backend=coordinator '
+                             '(for example 127.0.0.1:50071).')
+    parser.add_argument('--routing-update-mode', type=str,
+                        choices=['oneshot', 'poll'], default='oneshot',
+                        help='Coordinator routing update mode. oneshot fetches once during '
+                             'initialization; poll fetches at decode safe points without '
+                             'starting background gRPC threads.')
+    parser.add_argument('--routing-poll-interval-steps', type=int, default=16,
+                        help='Decode-step interval for --routing-update-mode=poll.')
+    parser.add_argument('--routing-rpc-timeout-s', type=float, default=0.05,
+                        help='Per-RPC timeout for safe-point routing polls.')
 
     return parser.parse_args()
 
@@ -302,10 +319,16 @@ def run_inference_demo(args):
     model = DisaggregatedQwenModel.from_pretrained(
         args.model_name, device=device, dtype=dtype,
         max_seq_len=prefill_seq_len, max_batch_size=args.batch_size,
+        routing_backend=args.routing_backend, coord_addr=args.coord_addr or None,
+        routing_update_mode=args.routing_update_mode,
+        routing_poll_interval_steps=args.routing_poll_interval_steps,
+        routing_rpc_timeout_s=args.routing_rpc_timeout_s,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
-        f"router={model.has_router}, moe_timing={model.supports_moe_timing}"
+        f"router={model.has_router}, moe_timing={model.supports_moe_timing}, "
+        f"routing_backend={model.routing_backend}, routing_table_version={model.routing_table_version}, "
+        f"routing_update_mode={model.routing_update_mode}"
     )
     if args.verbose:
         print_memory_stats()
@@ -404,6 +427,9 @@ def run_inference_demo(args):
             os.makedirs("results/prefill_dbo", exist_ok=True)
             timing_data.prefill_seq_len = prefill_seq_len
             timing_data.actual_prompt_len = input_ids.shape[1]
+            timing_data.routing_backend = model.routing_backend
+            timing_data.routing_table_version = model.routing_table_version
+            timing_data.routing_update_mode = model.routing_update_mode
             role_name = timing_role_name(ctx)
             # Build timing file name with configuration info
             if args.timing_suffix:
@@ -427,6 +453,9 @@ def run_inference_demo(args):
             "prefill_seq_len": prefill_seq_len,
             "actual_prompt_len": input_ids.shape[1],
             "max_new_tokens": args.max_new_tokens,
+            "routing_backend": model.routing_backend,
+            "routing_table_version": model.routing_table_version,
+            "routing_update_mode": model.routing_update_mode,
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -457,6 +486,7 @@ def run_inference_demo(args):
             except NameError:
                 pass
 
+    model.close()
     ctx.barrier()
     ctx.cleanup()
 
@@ -484,10 +514,16 @@ def run_generation_demo(args):
     model = DisaggregatedQwenModel.from_pretrained(
         args.model_name, device=device, dtype=dtype,
         max_seq_len=max_total_len, max_batch_size=args.batch_size,
+        routing_backend=args.routing_backend, coord_addr=args.coord_addr or None,
+        routing_update_mode=args.routing_update_mode,
+        routing_poll_interval_steps=args.routing_poll_interval_steps,
+        routing_rpc_timeout_s=args.routing_rpc_timeout_s,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
-        f"router={model.has_router}, moe_timing={model.supports_moe_timing}"
+        f"router={model.has_router}, moe_timing={model.supports_moe_timing}, "
+        f"routing_backend={model.routing_backend}, routing_table_version={model.routing_table_version}, "
+        f"routing_update_mode={model.routing_update_mode}"
     )
     
     ctx.barrier()
@@ -585,7 +621,10 @@ def run_generation_demo(args):
             f"prefill={_fmt_ms(generation_metrics.get('prefill_ms'))}, "
             f"decode_loop={_fmt_ms(generation_metrics.get('decode_loop_ms'))}, "
             f"decode_steps={generation_metrics.get('decode_steps')}, "
-            f"decode_tpot={_fmt_ms(generation_metrics.get('decode_tpot_ms'))}"
+            f"decode_tpot={_fmt_ms(generation_metrics.get('decode_tpot_ms'))}, "
+            f"tbt_mean={_fmt_ms(generation_metrics.get('tbt_mean_ms'))}, "
+            f"tbt_p50={_fmt_ms(generation_metrics.get('tbt_p50_ms'))}, "
+            f"tbt_p99={_fmt_ms(generation_metrics.get('tbt_p99_ms'))}"
         )
     if args.timing and hasattr(model, '_last_decode_timing') and model._last_decode_timing is not None:
         os.makedirs("results/prefill_dbo", exist_ok=True)
@@ -599,6 +638,16 @@ def run_generation_demo(args):
         model._last_decode_timing.decode_loop_ms = generation_metrics.get("decode_loop_ms")
         model._last_decode_timing.decode_steps = generation_metrics.get("decode_steps")
         model._last_decode_timing.decode_tpot_ms = generation_metrics.get("decode_tpot_ms")
+        model._last_decode_timing.tbt_mean_ms = generation_metrics.get("tbt_mean_ms")
+        model._last_decode_timing.tbt_p50_ms = generation_metrics.get("tbt_p50_ms")
+        model._last_decode_timing.tbt_p99_ms = generation_metrics.get("tbt_p99_ms")
+        model._last_decode_timing.routing_backend = generation_metrics.get("routing_backend")
+        model._last_decode_timing.routing_table_version = generation_metrics.get("routing_table_version")
+        model._last_decode_timing.routing_update_mode = generation_metrics.get("routing_update_mode")
+        model._last_decode_timing.routing_poll_count = generation_metrics.get("routing_poll_count")
+        model._last_decode_timing.routing_poll_ms = generation_metrics.get("routing_poll_ms")
+        if generation_metrics.get("decode_step_times_ms"):
+            model._last_decode_timing.decode_step_times_ms = list(generation_metrics["decode_step_times_ms"])
         model._last_decode_timing.prefill_seq_len = prefill_seq_len
         model._last_decode_timing.actual_prompt_len = prompt_len
         model._last_decode_timing.save(timing_file)
@@ -615,11 +664,20 @@ def run_generation_demo(args):
             "decode_loop_ms": generation_metrics.get("decode_loop_ms"),
             "decode_steps": generation_metrics.get("decode_steps"),
             "decode_tpot_ms": generation_metrics.get("decode_tpot_ms"),
+            "tbt_mean_ms": generation_metrics.get("tbt_mean_ms"),
+            "tbt_p50_ms": generation_metrics.get("tbt_p50_ms"),
+            "tbt_p99_ms": generation_metrics.get("tbt_p99_ms"),
+            "decode_step_times_ms": generation_metrics.get("decode_step_times_ms"),
             "batch_size": args.batch_size,
             "prefill_seq_len": prefill_seq_len,
             "actual_prompt_len": prompt_len,
             "max_new_tokens": args.max_new_tokens,
             "tokens_per_sec": (num_generated / gen_time) if ctx.is_attention_node and num_generated else 0,
+            "routing_backend": model.routing_backend,
+            "routing_table_version": model.routing_table_version,
+            "routing_update_mode": generation_metrics.get("routing_update_mode"),
+            "routing_poll_count": generation_metrics.get("routing_poll_count"),
+            "routing_poll_ms": generation_metrics.get("routing_poll_ms"),
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -644,12 +702,15 @@ def run_generation_demo(args):
             except NameError:
                 pass
 
+    model.close()
     ctx.barrier()
     ctx.cleanup()
 
 
 def main():
     args = parse_args()
+    if args.routing_backend == "coordinator" and not args.coord_addr:
+        raise ValueError("--coord-addr is required when --routing-backend=coordinator")
     # Force greedy decoding when correctness check is requested for deterministic
     # serial-vs-DBO token comparison.
     if args.correctness_check and not args.greedy:

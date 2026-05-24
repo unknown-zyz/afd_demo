@@ -110,6 +110,15 @@ class PipelineTiming:
     decode_loop_ms: float | None = None
     decode_steps: int | None = None
     decode_tpot_ms: float | None = None
+    tbt_mean_ms: float | None = None
+    tbt_p50_ms: float | None = None
+    tbt_p99_ms: float | None = None
+    decode_step_times_ms: List[float] = field(default_factory=list)
+    routing_backend: str | None = None
+    routing_table_version: int | None = None
+    routing_update_mode: str | None = None
+    routing_poll_count: int | None = None
+    routing_poll_ms: float | None = None
     timed_decode_step: int | None = None
     timed_decode_step_base: str | None = None
     timed_decode_step_note: str | None = None
@@ -128,6 +137,8 @@ class PipelineTiming:
     total_ep_dispatch_wait_ms: float = 0.0
     total_ep_reduce_wait_ms: float = 0.0
     total_ep_overlap_hidden_ms: float = 0.0
+    total_ep_dispatch_bytes: int = 0
+    total_ep_reduce_bytes: int = 0
     
     def add_event(self, event: TimingEvent):
         self.events.append(event)
@@ -143,10 +154,12 @@ class PipelineTiming:
             self.total_moe_shared_or_dense_ms += event.duration_ms
         elif event.event_type == EventType.EP_DISPATCH.value:
             self.total_ep_dispatch_ms += event.duration_ms
+            self.total_ep_dispatch_bytes += int(event.tensor_bytes or 0)
         elif event.event_type == EventType.EP_LOCAL_EXPERTS.value:
             self.total_ep_local_experts_ms += event.duration_ms
         elif event.event_type == EventType.EP_REDUCE.value:
             self.total_ep_reduce_ms += event.duration_ms
+            self.total_ep_reduce_bytes += int(event.tensor_bytes or 0)
         elif event.event_type == EventType.EP_DISPATCH_WAIT.value:
             self.total_ep_dispatch_wait_ms += event.duration_ms
         elif event.event_type == EventType.EP_REDUCE_WAIT.value:
@@ -183,6 +196,8 @@ class PipelineTiming:
             "total_ep_dispatch_wait_ms": self.total_ep_dispatch_wait_ms,
             "total_ep_reduce_wait_ms": self.total_ep_reduce_wait_ms,
             "total_ep_overlap_hidden_ms": self.total_ep_overlap_hidden_ms,
+            "total_ep_dispatch_bytes": self.total_ep_dispatch_bytes,
+            "total_ep_reduce_bytes": self.total_ep_reduce_bytes,
             "compute_ratio": self.compute_ratio,
             "events": [e.to_dict() for e in self.events],
         }
@@ -198,6 +213,24 @@ class PipelineTiming:
             data["decode_steps"] = self.decode_steps
         if self.decode_tpot_ms is not None:
             data["decode_tpot_ms"] = self.decode_tpot_ms
+        if self.tbt_mean_ms is not None:
+            data["tbt_mean_ms"] = self.tbt_mean_ms
+        if self.tbt_p50_ms is not None:
+            data["tbt_p50_ms"] = self.tbt_p50_ms
+        if self.tbt_p99_ms is not None:
+            data["tbt_p99_ms"] = self.tbt_p99_ms
+        if self.decode_step_times_ms:
+            data["decode_step_times_ms"] = list(self.decode_step_times_ms)
+        if self.routing_backend is not None:
+            data["routing_backend"] = self.routing_backend
+        if self.routing_table_version is not None:
+            data["routing_table_version"] = self.routing_table_version
+        if self.routing_update_mode is not None:
+            data["routing_update_mode"] = self.routing_update_mode
+        if self.routing_poll_count is not None:
+            data["routing_poll_count"] = self.routing_poll_count
+        if self.routing_poll_ms is not None:
+            data["routing_poll_ms"] = self.routing_poll_ms
         if self.timed_decode_step is not None:
             data["timed_decode_step"] = self.timed_decode_step
         if self.timed_decode_step_base is not None:
@@ -228,12 +261,26 @@ class PipelineTiming:
                 f"shared/dense={self.total_moe_shared_or_dense_ms:.2f}ms"
             )
         if self.total_ep_dispatch_ms > 0 or self.total_ep_local_experts_ms > 0:
+            dispatch_gib = self.total_ep_dispatch_bytes / (1024 ** 3)
+            reduce_gib = self.total_ep_reduce_bytes / (1024 ** 3)
+            dispatch_gib_s = (
+                dispatch_gib / (self.total_ep_dispatch_ms / 1000.0)
+                if self.total_ep_dispatch_ms > 0 and self.total_ep_dispatch_bytes > 0
+                else 0.0
+            )
+            reduce_gib_s = (
+                reduce_gib / (self.total_ep_reduce_ms / 1000.0)
+                if self.total_ep_reduce_ms > 0 and self.total_ep_reduce_bytes > 0
+                else 0.0
+            )
             lines.append(
                 f"EP: dispatch={self.total_ep_dispatch_ms:.2f}ms, "
                 f"local_experts={self.total_ep_local_experts_ms:.2f}ms, "
                 f"reduce={self.total_ep_reduce_ms:.2f}ms, "
                 f"reduce_wait={self.total_ep_reduce_wait_ms:.2f}ms, "
-                f"hidden={self.total_ep_overlap_hidden_ms:.2f}ms"
+                f"hidden={self.total_ep_overlap_hidden_ms:.2f}ms, "
+                f"dispatch_bytes={dispatch_gib:.3f}GiB ({dispatch_gib_s:.3f}GiB/s), "
+                f"reduce_bytes={reduce_gib:.3f}GiB ({reduce_gib_s:.3f}GiB/s)"
             )
         return "\n".join(lines)
 

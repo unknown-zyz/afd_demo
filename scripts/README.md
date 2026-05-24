@@ -16,8 +16,12 @@ NPU/HCCL 脚本已合入 `main`：
 | 脚本 | 用途 |
 |---|---|
 | `run_npu.sh` | Ascend 910C 单配置运行。当前验证拓扑显式使用 `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`。 |
-| `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`。 |
+| `run_experiment_matrix_npu.sh` | Ascend 910C 矩阵扫描，写入 `results_npu/experiment_matrix_summary.csv`；支持 `--routing-backend coordinator` 自动拉起单机 coordinator。 |
 | `run_warmup_ablation_npu.sh` | Ascend 910C warmup ablation：P2P warmup 与 prefill warmup 的 2x2 开关实验。 |
+| `run_tbe_cache_warmup_npu.sh` | Ascend TBE / `kernel_meta` 预编译脚本，带 rank/log/cache 轮询；超时返回 124 并清理本次残留 rank。 |
+| `run_npu_coordinator_single_host.sh` | 单机 coordinator smoke：先起 gRPC coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，也可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
+| `run_crosshost_coord_1a7f_smoke.sh` | 跨机 1A7F coordinator 小配置 smoke 的单侧启动器：Host2 先起 FFN ranks，Host1 再起 coordinator + attention rank。 |
+| `run_crosshost_coord_1a7f_matrix.py` | 跨机 1A7F coordinator decode-dbo 矩阵 orchestrator：本地控制 Host1/Host2 容器内 detached side 脚本，逐配置分配端口、轮询日志、记录 Host2 空间和 summary。 |
 
 ## 报告与验证
 
@@ -26,10 +30,35 @@ NPU/HCCL 脚本已合入 `main`：
 | `gen_experiment_report.py` | 从 timing JSON 生成单次运行 Markdown 报告；prefill/decode 对比读取 serial cache。 |
 | `visualize_dbo_pipeline.py` | 从一组 timing JSON 生成 pipeline Gantt 图。 |
 | `plot_all_pipelines.py` | 扫描结果目录，为所有有效 DBO 行生成 pipeline 图。 |
+| `aggregate_singlehost_coord_ep7.py` | 聚合单机 EP7 coordinator vs static decode-dbo 结果，生成对比 CSV、heatmap、seq=512 折线图和带源数据路径的 Markdown。 |
+| `report_ep_bandwidth.py` | 从 FFN timing JSON 提取 EP dispatch/reduce payload 与有效 GiB/s，便于观察网络带宽利用率。 |
+| `report_decode_mfu.py` | 从 attention timing JSON + model config 估算 decode achieved TFLOPS / MFU；适合跨机 1A7F 结果补充“计算利用率”口径。 |
 | `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
 | `bench_comm_transfer.py` | 两 rank 通信 microbenchmark，用独立 P2P 测试校准 DBO completion 图。 |
 | `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |
-| `capture_serial_prefill.sh` | 旧 GPU-only 辅助脚本；新流程优先使用 `capture_serial_split.py`。 |
+
+## 跨机调试
+
+| 脚本 | 用途 |
+|---|---|
+| `cross_host_hccl_smoke.py` | 双机 2-rank HCCL all_reduce / send-recv 冒烟。 |
+| `repro_hccl_ep7_ej0003.py` | 单机 8-rank EP7 HCCL 最小复现：只初始化 default group / FFN EP groups / barriers，不加载 Qwen，不触发 TBE，用于定位 Host2 `EJ0003`。 |
+| `cross_host_fallback_comm_smoke.py` | 驱动 `FallbackMoECommunicator.dispatch/combine` 的真实类级 smoke。 |
+| `cross_host_fallback_rt_bench.py` | 用两次 `all_to_all_single` 模拟 dispatch+combine 的 round-trip latency。 |
+| `cross_host_deepep_smoke.py` | DeepEP buffer 构造 smoke。 |
+| `cross_host_deepep_rt_bench.py` | DeepEP normal mode dispatch+combine round-trip。 |
+| `cross_host_deepep_lowlatency_rt_bench.py` | DeepEP low_latency mode dispatch+combine round-trip。 |
+| `run_node.sh` | 手动拉起 Attention / FFN 节点，适合多机逐步调试。 |
+
+## 历史专题分析脚本（保留归档）
+
+以下脚本主要服务于已完成轮次或专题数据分析，当前主流程通常不需要直接调用，但为了复现历史结论仍保留：
+
+- `aggregate_full_matrix_v2.py`
+- `aggregate_mb4_v2.py`
+- `aggregate_mb4_vs_mb2.py`
+- `r8_throughput_and_compute.py`
+- `analyze_decode_l0_warmup.py`
 
 报告口径：
 
@@ -70,7 +99,7 @@ NPU/HCCL 脚本已合入 `main`：
 
 ## NPU 示例
 
-以下命令需要在 `npu` 分支和已准备好的 910C 容器 / worktree 内运行。
+以下命令需要在已准备好的 910C 容器 / worktree 内运行。
 
 ```bash
 # 串行基线
@@ -122,7 +151,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
   --warmup 5 --iters 50 --blocking \
   --output results/comm_bench/gpu_comm.json
 
-# NPU / HCCL（在 afd-npu-test 容器和 npu 分支内）
+# NPU / HCCL（在 910C 容器 / worktree 内）
 ASCEND_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
   scripts/bench_comm_transfer.py \
   --backend npu --sizes-mib 0.004,0.031,1,16,32 \

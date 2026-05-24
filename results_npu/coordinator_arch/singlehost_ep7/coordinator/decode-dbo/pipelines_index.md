@@ -1,0 +1,98 @@
+# Pipeline figures — decode-dbo
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b128_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b16_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b256_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b2_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b32_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b4_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b64_s512_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s128_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s128_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s128_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s256_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s256_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s256_t20.png)
+
+## `decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s512_t20`
+
+![decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s512_t20](pipeline_decode-dbo_npu_ep7_broadcast_reduce_overlap_b8_s512_t20.png)
+

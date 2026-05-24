@@ -1,0 +1,56 @@
+syntax = "proto3";
+package coordinator;
+
+// =============================================================================
+// Coordinator gRPC service for dynamic MoE expert routing.
+// See doc/12-coordinator-arch.md §4 for design rationale.
+// =============================================================================
+
+message WorkerInfo {
+  string role = 1;                  // "attn" | "ffn"
+  int32 rank = 2;                   // global rank within role group
+  string host = 3;                  // hostname or IP
+  int32 device_id = 4;              // local NPU index
+  int32 world_size = 5;             // total ranks in this role
+  repeated int32 local_experts = 6; // FFN only; ignored for attn
+  string deepep_endpoint = 7;       // hostname:port (reference, not used by data plane)
+}
+
+message WorkerMetrics {
+  string role = 1;
+  int32 rank = 2;
+  double queue_len_avg = 3;         // FFN-side queue depth average over window
+  double dispatch_rate_tps = 4;     // tokens/sec recent
+  double cache_miss_rate = 5;       // optional, defaults to 0
+  int64 timestamp_us = 6;
+  // Per-expert load (FFN only). Length should equal len(local_experts).
+  repeated double per_expert_load = 7;
+}
+
+message RoutingTable {
+  int64 version = 1;                // monotonic
+  repeated int32 expert_to_rank = 2;// len = num_experts; values in [0, ffn_world)
+  string mode = 3;                  // "normal" | "low_latency"
+  int64 valid_from_us = 4;          // wall-clock; ranks SHOULD only apply after this
+}
+
+message RegisterAck {
+  int64 initial_table_version = 1;
+  string assigned_group = 2;
+  bool accepted = 3;
+  string msg = 4;
+}
+
+message Empty {}
+
+message Ack {
+  bool ok = 1;
+  string msg = 2;
+}
+
+service Coordinator {
+  rpc RegisterWorker(WorkerInfo) returns (RegisterAck);
+  rpc GetRoutingTable(Empty) returns (RoutingTable);
+  rpc SubscribeRoutingTable(Empty) returns (stream RoutingTable);
+  rpc UpdateMetrics(WorkerMetrics) returns (Ack);
+}

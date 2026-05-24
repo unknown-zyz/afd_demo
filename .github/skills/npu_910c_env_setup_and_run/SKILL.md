@@ -29,10 +29,13 @@
 | 跳板 SSH | 先登 Host1，然后 `sudo ssh -i /root/ssh_key/KeyPair-f1dd.pem root@192.168.0.192` |
 | 主机名 | `liteserver-910c-2-00001.novalocal` (aarch64) |
 | 用户 | `root`（通过 sudo，无密码 key） |
+| **宿主工作目录** | **`/root/schedTeam/zhangyz/`**（与 Host1 `/home/schedTeam/zhangyz` 对称） |
+| **Qwen3 权重** | **`/root/schedTeam/zhangyz/Qwen3-30B-A3B`（57G，2026-05-20 确认就位）** |
 | 硬件 | 8×Ascend910（16 chips，目前几乎空闲，HBM ~3 GB/65 GB） |
 | 既有容器（非本项目） | `GL-offload` / `odd` / `aiserver-agent`（vllm-ascend，torch_npu 2.9.0，**未挂 Qwen3-30B**） |
-| afd-npu-test 等价容器 | **尚未创建**（需要用户后续手工准备） |
-| 模型权重 | **Host2 上不存在 Qwen3-30B-A3B**，无 NFS 共享，需 scp/rsync 跨机传输（~60 GB） |
+| afd-npu-test 等价容器 | **`afd-npu-test-h2` 已就绪**（2026-05-20 创建，image `deepep-ascend-bench-dev:latest`，privileged + host net，挂 16 颗 davinci + 模型 ro + `/root/schedTeam/zhangyz/workspace`，torch_npu 2.6.0、grpc 1.80.0、deep_ep 1.0.0 已装） |
+| 容器工作目录 | `/workspace`（仓库 clone 到 `/workspace/afd_demo_repo`） |
+| 模型路径（容器内） | `/models/Qwen3-30B-A3B` |
 | CANN 路径 | 容器内 `/usr/local/Ascend/`（继承自 vllm-ascend 镜像） |
 
 ## 红线
@@ -74,14 +77,48 @@
 
 ## 标准连接（Host1）
 
+> **新 contributor 必读**：DeepEP-Ascend 实验前**必须** source 自定义 OPP vendor 环境，
+> 否则 `aclnnDispatchLayout` 等自定义 op 找不到（详见 `results_npu/coordinator_arch/d3_lowlatency/README.md`）。
+> 标准的连接命令应包含两条 source：
+> ```bash
+> source /usr/local/Ascend/ascend-toolkit/set_env.sh
+> source /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/bin/set_env.bash
+> ```
+> 若 `vendors/hwcomputing/` 缺失，需先跑安装命令（见下方"DeepEP 自定义 OPP 安装"小节）。
+
 ```bash
 ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229 \
   "docker exec afd-npu-test bash -lc '
      source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null
+     source /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/bin/set_env.bash 2>/dev/null
      cd /workspace/afd_demo
      git status --short --branch
   '"
 ```
+
+### DeepEP 自定义 OPP 安装（首次配新容器或重装 CANN 后必跑）
+
+**Host1**（有 SGLang-Kernel-NPU 源码）：
+
+```bash
+bash /workspace/sglang-kernel-npu/csrc/deepep/ops/build_out/custom_opp_ubuntu_aarch64.run \
+     --quiet --install-path=/usr/local/Ascend/cann-8.5.0/opp
+```
+
+**Host2**（无源码 — 从 site-packages cp vendor 目录）：
+
+```bash
+DEEPEP_DIR=/usr/local/python3.11.14/lib/python3.11/site-packages/deep_ep/vendors/hwcomputing
+VENDORS=/usr/local/Ascend/cann-8.5.0/opp/vendors
+mkdir -p "$VENDORS" && cp -a "$DEEPEP_DIR" "$VENDORS/"
+cat > "$VENDORS/hwcomputing/bin/set_env.bash" <<'EOF'
+#!/bin/bash
+export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing:${ASCEND_CUSTOM_OPP_PATH}
+export LD_LIBRARY_PATH=/usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/op_api/lib/:${LD_LIBRARY_PATH}
+EOF
+```
+
+验证：`nm -D /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/op_api/lib/libcust_opapi.so | grep aclnnDispatchLayout` 应输出 `T aclnnDispatchLayout`。
 
 如需同步最新分支：
 
@@ -189,3 +226,50 @@ ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229 \
 - 若单侧 OOM 导致 peer 挂住，只能按 PID `kill <PID>`。
 - CANN 8.5 必须使用 torch_npu >= 2.6.0；不要切回 2.5.1。
 - 全部 chip 都被其他租户占满 → 切 Host2 决策树第 2 步；若 Host2 未就绪则报告阻塞。
+
+## 跨机 HCCL 配方（2026-05-21 验证）
+
+跨机 (Host1 ↔ Host2) HCCL 必须满足：
+
+| 变量 | 值/规则 |
+|---|---|
+| `MASTER_ADDR` | `192.168.0.125`（Host1 的 192.168 网卡 IP） |
+| `MASTER_PORT` | **每个新阶段换 fresh 端口**（如 29782, 29783, ...）。重用易触发 EJ0003 `bind IP/port already` |
+| `HCCL_IF_BASE_PORT` | 同样 **fresh**，并与 `MASTER_PORT` 至少差 10（如 29792, 29793, ...） |
+| `HCCL_IF_IP` | 每个 rank 设为 **自己** 那台机器的 192.168 网卡 IP（H1=192.168.0.125, H2=192.168.0.192） |
+| `HCCL_CONNECT_TIMEOUT` | **`600`**。注意 HCCL 拒绝 `60`（区间 120–7200） |
+| `HCCL_EXEC_TIMEOUT` | **`600`**。同上 |
+| `ASCEND_VISIBLE_DEVICES` | 单卡按 LOCAL_RANK，多 rank 写 NPU id 列表 |
+| `RANK` / `WORLD_SIZE` / `LOCAL_RANK` | 标准 torchrun 风格 |
+
+**重要陷阱**：HCCL 后端的 `dist.new_group()` 会额外占用一个 bind 端口，
+若与 `HCCL_IF_BASE_PORT` 冲突则报 EJ0003。多数 2-rank/4-rank 场景下可以
+直接复用 `dist.group.WORLD` 作为 ep_group。
+
+**已验证的可工作端口序列**：
+- P1 fallback comm smoke 2-rank：29782/29792 → PASS（mean 1407µs）
+- P2 fallback comm smoke 4-rank：29783/29793 → PASS（mean 2005µs）
+
+**进程清理**：必须用 `kill <PID>` 显式杀死，`pkill`/`killall` 在本环境
+不可用。Container 不可重启（红线），所以每次失败后务必检查 stale 进程：
+```bash
+ps -ef | grep -E "cross_host|src.main" | grep -v grep
+```
+
+## 仓库同步（容器没有公网）
+
+两台容器的 `origin` 都指向本地 bundle：
+```
+H1 afd-npu-test:  /tmp/afd_npu.bundle
+H2 afd-npu-test-h2: 用 fetch /tmp/afd_npu.bundle <branch>:<branch>-bundle
+```
+本地 push 流程：
+```bash
+git push origin <branch>
+git bundle create /tmp/afd_npu.bundle --all
+scp -i ~/.ssh/id_rsa_second /tmp/afd_npu.bundle schedTeam@1.95.114.229:/tmp/
+ssh ... "docker cp /tmp/afd_npu.bundle afd-npu-test:/tmp/afd_npu.bundle && \
+  docker exec afd-npu-test git -C /workspace/afd_demo fetch origin && \
+  docker exec afd-npu-test git -C /workspace/afd_demo reset --hard origin/<branch>"
+# H2 类似，先 sudo scp 到 H2 宿主，再 docker cp
+```

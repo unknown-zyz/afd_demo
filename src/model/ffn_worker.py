@@ -11,7 +11,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -162,6 +162,7 @@ class FFNWorker(nn.Module):
         model: PreTrainedModel,
         device: torch.device,
         dtype: torch.dtype = torch.bfloat16,
+        expert_to_rank: Optional[Sequence[int]] = None,
     ):
         """
         Initialize FFN worker from a pretrained model.
@@ -177,9 +178,10 @@ class FFNWorker(nn.Module):
         self.config = model.config
         self.hidden_size = model.config.hidden_size
         self.num_layers = model.config.num_hidden_layers
-        self.role_devices = self._resolve_role_devices(device)
         self.ctx = get_distributed_context()
         self.use_ep = self.ctx.ffn_ep_enabled
+        self.role_devices = self._resolve_role_devices(device)
+        self.expert_to_rank = tuple(int(rank) for rank in expert_to_rank) if expert_to_rank is not None else None
         
         # Extract and move components
         logger.info("Extracting FFN components from model...")
@@ -200,11 +202,13 @@ class FFNWorker(nn.Module):
             layer_device = self.role_devices[layer_device_idx]
             if self.use_ep and hasattr(layer.mlp, "experts"):
                 experts = layer.mlp.experts
+                shard_policy = "explicit" if self.expert_to_rank is not None else self.ctx.config.ep_expert_policy
                 plan = ExpertShardPlan(
                     num_experts=int(experts.num_experts),
                     ep_size=self.ctx.ffn_ep_size,
                     ep_rank=self.ctx.ffn_ep_rank,
-                    policy=self.ctx.config.ep_expert_policy,
+                    policy=shard_policy,
+                    expert_to_rank=self.expert_to_rank,
                 )
                 sharded_experts = ShardedExperts(
                     experts,
@@ -243,17 +247,20 @@ class FFNWorker(nn.Module):
         self.supports_moe_timing = any(layer.is_sparse_moe for layer in self.ffn_layers)
 
         logger.info(
-            "FFNWorker initialized: layers=%d, devices=%s, moe_timing=%s, ep=%s",
+            "FFNWorker initialized: layers=%d, devices=%s, moe_timing=%s, ep=%s, expert_policy=%s",
             self.num_layers,
             [str(d) for d in self.role_devices],
             self.supports_moe_timing,
             self.use_ep,
+            "explicit" if self.expert_to_rank is not None else self.ctx.config.ep_expert_policy,
         )
 
     def _resolve_role_devices(self, primary_device: torch.device) -> list[torch.device]:
         """Resolve all visible accelerator devices for role-internal layer sharding."""
         from ..utils import device as devmod
         if primary_device.type not in ("cuda", "npu") or not devmod.is_available():
+            return [primary_device]
+        if self.use_ep:
             return [primary_device]
         count = devmod.device_count()
         if count <= 1:

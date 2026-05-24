@@ -1,7 +1,7 @@
 # 02. 使用与实验命令
 
-本文是当前实验命令手册，按 serial、prefill DBO、decode DBO / crosslayer、
-GPU matrix、NPU matrix 和后处理组织。
+本文是当前实验命令手册，覆盖 GPU / NPU 单机、矩阵、warmup ablation、
+跨机 smoke / fallback / DeepEP / 当前 P3 真实 decode 调试，以及常用后处理命令。
 
 ## 1. 环境准备
 
@@ -24,6 +24,24 @@ NPU 模型路径：
 ```bash
 export MODEL_NAME=/models/Qwen3-30B-A3B
 ```
+
+当前最常用脚本：
+
+| 脚本 | 场景 |
+|---|---|
+| `scripts/run_single.sh` | GPU 单次 serial / prefill DBO / decode DBO / crosslayer。 |
+| `scripts/run_experiment_matrix.sh` | GPU 矩阵实验。 |
+| `scripts/run_npu.sh` | 910C 单次实验；支持 1A1F、EP4、EP7、EP8、EP15。 |
+| `scripts/run_experiment_matrix_npu.sh` | 910C 矩阵实验；支持 `--routing-backend coordinator` 自动拉起单机 coordinator。 |
+| `scripts/run_warmup_ablation_npu.sh` | P2P warmup / prefill warmup 的 2×2 消融。 |
+| `scripts/run_tbe_cache_warmup_npu.sh` | 跨机前的 TBE / `kernel_meta` 预编译，带日志和 cache 轮询。 |
+| `scripts/run_npu_coordinator_single_host.sh` | 单机 coordinator smoke；自动先起 coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
+| `scripts/run_crosshost_coord_1a7f_smoke.sh` | 跨机 1A7F coordinator 小配置 smoke 的单侧启动器；用于 Host2 FFN ranks 与 Host1 coordinator/attention rank 分别启动。 |
+| `scripts/cross_host_*.py` | 双机 HCCL / fallback / DeepEP 通信冒烟与 RT bench。 |
+| `scripts/plot_all_pipelines.py` / `scripts/gen_experiment_report.py` | 图表与单次报告生成。 |
+| `scripts/aggregate_singlehost_coord_ep7.py` | 单机 EP7 coordinator vs static 聚合、画图与带源数据路径的 Markdown 摘要。 |
+| `scripts/report_ep_bandwidth.py` | 从 FFN timing JSON 提取 EP dispatch/reduce payload 与有效 GiB/s，观察网络带宽利用率。 |
+| `scripts/report_decode_mfu.py` | 从 attention timing JSON + model config 估算 decode achieved TFLOPS / MFU；适合跨机 1A7F 结果补充计算利用率口径。 |
 
 ## 2. GPU 单次入口
 
@@ -233,7 +251,7 @@ decode / serial generation 长序列结果中的 `s512/s1024/s2048` 可能只是
 
 ## 7. NPU 矩阵参数
 
-NPU matrix 需要在 910C 容器 / worktree 内运行，脚本位于 `npu` 分支。
+NPU matrix 需要在 910C 容器 / worktree 内运行。
 
 ```bash
 ./scripts/run_experiment_matrix_npu.sh [options]
@@ -248,6 +266,11 @@ NPU matrix 需要在 910C 容器 / worktree 内运行，脚本位于 `npu` 分�
 | `--visible-devs list` | `0..15` | `ASCEND_VISIBLE_DEVICES` 设备池。 |
 | `--attn-devs list` | 空 | Attention rank 的设备池覆盖。 |
 | `--ffn-devs list` | 空 | FFN rank 的设备池覆盖。 |
+| `--routing-backend static\|coordinator` | `static` | 真实 `src.main` 路径的 routing/control-plane backend；`coordinator` 会为每个 config 自动启动并回收本机 gRPC coordinator。 |
+| `--coord-bind host:port` | 自动本机端口 | coordinator 绑定地址；省略时每次运行选择一个 `127.0.0.1:<port>`，避免端口残留冲突。 |
+| `--routing-update-mode oneshot\|poll` | `oneshot` | coordinator routing 更新模式；matrix 对比默认使用 one-shot。 |
+| `--routing-poll-interval-steps N` | `16` | `poll` 模式下 decode step 轮询间隔。 |
+| `--routing-rpc-timeout-s SEC` | `0.05` | routing RPC 超时；失败时沿用 cached table。 |
 | `--no-cache` | false | 强制重跑 serial。 |
 | `--append` | false | 追加到已有 summary，而不是重写。 |
 | `--dry-run` | false | 只打印命令，不执行。 |
@@ -335,7 +358,369 @@ EP7 矩阵示例：
 该矩阵会在每个 seq 遇到 OOM 后停止更大 batch，并复用
 `results_npu/serial/cache/` 中的 serial baseline 计算 TPOT speedup。
 
-## 8. 后处理
+### 7.1.1 单机 EP7 coordinator 全矩阵
+
+当前 coordinator 已接入真实 `src.main` / Qwen3 decode-dbo 路径。单机 EP7 对比建议使用：
+
+```bash
+# coordinator EP7：跑本轮确认的 24 个 decode-dbo config
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --routing-backend coordinator \
+  --routing-update-mode oneshot \
+  --output-root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --modes decode-dbo \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --tokens 20
+
+# static 当前代码代表点校准；若相对 results_npu_ep7 漂移 >5%，再跑 static 全矩阵
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --output-root results_npu/coordinator_arch/singlehost_ep7/static_validation \
+  --modes decode-dbo \
+  --batches 8 \
+  --seqs 128 \
+  --tokens 20
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+./scripts/run_experiment_matrix_npu.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --output-root results_npu/coordinator_arch/singlehost_ep7/static_validation \
+  --append \
+  --modes decode-dbo \
+  --batches 32,128 \
+  --seqs 512 \
+  --tokens 20
+```
+
+static 全矩阵默认复用 `results_npu_ep7/` 作为 historical baseline；对比聚合：
+
+```bash
+python scripts/plot_all_pipelines.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator
+python scripts/analyze_decode_l0_warmup.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --write-no-l0-figs
+
+python scripts/aggregate_singlehost_coord_ep7.py \
+  --coord-root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --static-root results_npu_ep7 \
+  --current-static-root results_npu/coordinator_arch/singlehost_ep7/static_validation \
+  --out-dir results_npu/coordinator_arch/singlehost_ep7 \
+  --batches 2,4,8,16,32,64,128,256 \
+  --seqs 128,256,512 \
+  --validation-configs 8:128,32:512,128:512 \
+  --tokens 20
+
+python scripts/report_ep_bandwidth.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator
+
+python scripts/report_decode_mfu.py \
+  --root results_npu/coordinator_arch/singlehost_ep7/coordinator \
+  --model-name /models/Qwen3-30B-A3B \
+  --peak-tflops-per-device 800
+```
+
+### 7.2 NPU warmup 消融实验
+
+`scripts/run_warmup_ablation_npu.sh` 固定跑四种组合：
+
+1. `both_on`：P2P warmup + prefill warmup 都开
+2. `p2p_only`：只开 P2P warmup
+3. `prefill_only`：只开 prefill warmup
+4. `both_off`：都不开
+
+默认聚焦 decode L0 问题（`batches=4,16,64`、`seq=512`、`preset=npu-ep7`）：
+
+```bash
+bash scripts/run_warmup_ablation_npu.sh
+```
+
+自定义网格：
+
+```bash
+BATCHES=2,4,8,16,32,64 \
+SEQS=512 \
+TOKENS=20 \
+PRESET=npu-ep7 \
+FFN_EP_BACKEND=broadcast_reduce_overlap \
+WARMUP_ROUNDS=5 \
+bash scripts/run_warmup_ablation_npu.sh
+```
+
+结果输出到 `results_npu_ep7/warmup_ablation/`，汇总由
+`scripts/aggregate_warmup_ablation_npu.py` 自动生成。
+
+## 8. 跨机调试与当前 P3 真实 decode
+
+### 8.1 跨机脚本分工
+
+| 脚本 | 用途 |
+|---|---|
+| `scripts/cross_host_hccl_smoke.py` | 验证双机 HCCL 基础可用。 |
+| `scripts/cross_host_fallback_comm_smoke.py` | 验证 `FallbackMoECommunicator` 真实 dispatch/combine 路径。 |
+| `scripts/cross_host_fallback_rt_bench.py` | 测 fallback round-trip latency。 |
+| `scripts/repro_hccl_ep7_ej0003.py` | 单机 8-rank EP7 HCCL 最小复现：只测 default group / FFN EP groups / barriers，不加载 Qwen，不触发 TBE。 |
+| `scripts/cross_host_deepep_smoke.py` | 验证 DeepEP buffer 能否建起来。 |
+| `scripts/cross_host_deepep_rt_bench.py` | DeepEP normal mode RT。 |
+| `scripts/cross_host_deepep_lowlatency_rt_bench.py` | DeepEP low_latency RT。 |
+
+当前推荐排查顺序：
+
+1. 先跑 `cross_host_hccl_smoke.py`
+2. 若 Host2 本地 EP7 报 `EJ0003`，先跑 `repro_hccl_ep7_ej0003.py`
+3. 再跑 `cross_host_fallback_rt_bench.py`
+4. 再看 `cross_host_deepep_*.py`
+5. 最后再尝试 P3 真实 1A7F decode
+
+Host2 本地 EP7 / HCCL `EJ0003` 最小复现：
+
+```bash
+cd /workspace/afd_demo_repo_exp_1a7f
+[ -f venv/bin/activate ] && source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+
+# 只测 default process group + world barrier
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+MASTER_ADDR=127.0.0.1 MASTER_PORT=35001 HCCL_IF_BASE_PORT=36001 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/repro_hccl_ep7_ej0003.py \
+  --spawn-local --world-size 8 --master-port 35001 --skip-ep-groups
+
+# 模拟真实 EP7 路径：创建 ep / dispatch / reduce 三个 FFN subgroups
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+MASTER_ADDR=127.0.0.1 MASTER_PORT=35041 HCCL_IF_BASE_PORT=36041 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/repro_hccl_ep7_ej0003.py \
+  --spawn-local --world-size 8 --master-port 35041 --groups all
+```
+
+更完整的 Host1/Host2 对照矩阵与判读规则见
+[`17-hccl-ej0003-and-tbe-jit-root-cause.md`](17-hccl-ej0003-and-tbe-jit-root-cause.md)。
+
+### 8.2 双机 HCCL / fallback / DeepEP 命令参考
+
+以下命令都假设在各自主机的容器内执行，且 Host1 控制 IP 为 `192.168.0.125`、Host2 控制 IP 为 `192.168.0.192`。
+
+HCCL smoke：
+
+```bash
+# Host2
+cd /workspace/afd_demo_repo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+RANK=1 WORLD_SIZE=2 LOCAL_RANK=0 ASCEND_VISIBLE_DEVICES=0 \
+MASTER_ADDR=192.168.0.125 MASTER_PORT=29701 \
+HCCL_IF_BASE_PORT=29711 HCCL_IF_IP=192.168.0.192 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/cross_host_hccl_smoke.py
+
+# Host1
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+RANK=0 WORLD_SIZE=2 LOCAL_RANK=0 ASCEND_VISIBLE_DEVICES=0 \
+MASTER_ADDR=192.168.0.125 MASTER_PORT=29701 \
+HCCL_IF_BASE_PORT=29711 HCCL_IF_IP=192.168.0.125 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/cross_host_hccl_smoke.py
+```
+
+Fallback RT：
+
+```bash
+# Host2
+cd /workspace/afd_demo_repo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+RANK=1 WORLD_SIZE=2 LOCAL_RANK=0 ASCEND_VISIBLE_DEVICES=0 \
+MASTER_ADDR=192.168.0.125 MASTER_PORT=29721 \
+HCCL_IF_BASE_PORT=29731 HCCL_IF_IP=192.168.0.192 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/cross_host_fallback_rt_bench.py --iters 50 --warmup 10 --num-tokens 64 --hidden 4096
+
+# Host1
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+RANK=0 WORLD_SIZE=2 LOCAL_RANK=0 ASCEND_VISIBLE_DEVICES=0 \
+MASTER_ADDR=192.168.0.125 MASTER_PORT=29721 \
+HCCL_IF_BASE_PORT=29731 HCCL_IF_IP=192.168.0.125 \
+HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
+python3 scripts/cross_host_fallback_rt_bench.py --iters 50 --warmup 10 --num-tokens 64 --hidden 4096
+```
+
+DeepEP normal / low_latency 的命令模板与 `doc/15-cross-host-communication-diagnosis.md`
+和 `doc/13-deepep-install-test-error-guide.md` 保持一致；如果只是验证当前生产可行路径，优先跑 fallback。
+
+### 8.2.1 单机 coordinator smoke（真实 decode/prefill 路径）
+
+当前 `coordinator_arch` 已经通过 `src.main` 打通真实 Qwen3 路径的 coordinator 模式。
+脚本会先起 gRPC coordinator，再走真实 Qwen3 `decode-dbo` / `prefill` 路径。
+
+当前状态：
+
+- **1A1F** 已在 Host1 单机实测通过。
+- **1A7F / EP7** 已在 Host1 单机完成小配置 smoke：coordinator `expert_to_rank` 会作为 explicit expert ownership 初始化真实 EP shard。
+- 默认是 `--routing-update-mode oneshot`，不启动后台 gRPC 订阅线程。
+- 如需动态路由实验，用 `--routing-update-mode poll`；poll 只在 decode safe point 触发，失败沿用 cached table。
+
+```bash
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+ASCEND_VISIBLE_DEVICES=0,1 \
+bash scripts/run_npu_coordinator_single_host.sh \
+  --batch 2 --seq 128 --tokens 5 \
+  --model-name /models/Qwen3-30B-A3B \
+  --timing --timing-suffix coordinator_b2_s128_t5
+```
+
+1A7F / EP7 单机 smoke 模板：
+
+```bash
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+ASCEND_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+bash scripts/run_npu_coordinator_single_host.sh \
+  --preset npu-ep7 \
+  --ffn-ep-backend broadcast_reduce_overlap \
+  --batch 2 --seq 128 --tokens 5 \
+  --model-name /models/Qwen3-30B-A3B \
+  --routing-update-mode oneshot \
+  --timing --timing-suffix coordinator_ep7_b2_s128_t5
+```
+
+### 8.3 Host1 / Host2 单机预编译（TBE warmup）
+
+P3 当前真正的阻塞点是首次冷编译，而不是 HCCL bootstrap。推荐先在两台机器本地把代表性 prefill shape 编出来，再跑跨机。
+
+注意：`scripts/run_npu.sh` 会把每个 rank 的输出写到 `results/logs/npu_..._r*.log`，
+所以 Host2 EP7 冷编译时直接执行 `run_npu.sh` 会看起来“前台没反应”。使用下面的
+wrapper 可以持续看到 rank 数、`kernel_meta/` 大小和日志尾部；超时会返回 `124`
+并清理本次 suffix 对应的残留 `python -m src.main` rank。
+
+Host1（本地 1A1F 预编译 attention 路径为主）：
+
+```bash
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+bash scripts/run_tbe_cache_warmup_npu.sh \
+  --profile host1-attn \
+  --batch 2 --seq 128 --tokens 5 \
+  --model-name /models/Qwen3-30B-A3B \
+  --timeout-sec 7200 --poll-sec 60
+```
+
+Host2（本地 1A7F / EP7 预编译 FFN + EP 路径）：
+
+```bash
+cd /workspace/afd_demo_repo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+bash scripts/run_tbe_cache_warmup_npu.sh \
+  --profile host2-ep7 \
+  --batch 2 --seq 128 --tokens 5 \
+  --model-name /models/Qwen3-30B-A3B \
+  --timeout-sec 7200 --poll-sec 60
+```
+
+观察点：
+
+- `kernel_meta/` 目录明显增大
+- 日志不再长期停在 `Running 1 prefill warmup round(s) to absorb JIT compile cost`
+- 如果返回 `exit=124`，表示仍在冷编译阶段超时；确认 `active_src_main` 清零后再复跑或增大 `--timeout-sec`
+
+### 8.4 当前 P3 真实 decode 复现命令（1A7F，fallback）
+
+下面命令用于复现当前“已过 HCCL bootstrap，但卡在首次 prefill warmup / TBE JIT”的现象。两边都在容器内执行。
+
+Host2 先起 7 个 FFN ranks：
+
+```bash
+cd /workspace/afd_demo_repo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+mkdir -p results_npu/coordinator_arch/p3_real_xhost
+
+export MASTER_ADDR=192.168.0.125
+export MASTER_PORT=29795
+export HCCL_IF_BASE_PORT=30400
+export HCCL_IF_IP=192.168.0.192
+export HCCL_CONNECT_TIMEOUT=3600
+export HCCL_EXEC_TIMEOUT=3600
+export HCCL_BUFFSIZE=200
+export AFD_DIST_TIMEOUT_SEC=7200
+
+for R in 1 2 3 4 5 6 7; do
+  LRANK=$((R - 1))
+  ASCEND_VISIBLE_DEVICES=$LRANK ASCEND_RT_VISIBLE_DEVICES=$LRANK \
+  nohup timeout 3600 python3 -u -m src.main \
+    --backend npu --role ffn --world-size 8 --rank $R --local-rank 0 \
+    --attn-node-rank 0 --ffn-node-rank 1 \
+    --attn-size 1 --ffn-size 7 --ffn-tp-size 1 --ffn-ep-size 7 \
+    --ffn-ep-backend broadcast_reduce_overlap --ffn-coordinator-rank 1 \
+    --ep-expert-policy round_robin \
+    --batch-size 2 --prefill-seq-len 128 --max-new-tokens 5 \
+    --num-micro-batches 2 --timing \
+    --timing-suffix xhost_real_b2_s128_t5_v6 \
+    --master-addr $MASTER_ADDR --master-port $MASTER_PORT \
+    --model-name /models/Qwen3-30B-A3B \
+    --no-dbo --no-generate \
+    > results_npu/coordinator_arch/p3_real_xhost/h2_rank${R}_xhost_real_b2_s128_t5_v6.log 2>&1 &
+done
+```
+
+Host1 再起 attention rank：
+
+```bash
+cd /workspace/afd_demo
+source venv/bin/activate
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+mkdir -p results_npu/coordinator_arch/p3_real_xhost
+
+export MASTER_ADDR=192.168.0.125
+export MASTER_PORT=29795
+export HCCL_IF_BASE_PORT=30300
+export HCCL_IF_IP=192.168.0.125
+export HCCL_CONNECT_TIMEOUT=3600
+export HCCL_EXEC_TIMEOUT=3600
+export HCCL_BUFFSIZE=200
+export AFD_DIST_TIMEOUT_SEC=7200
+export ASCEND_VISIBLE_DEVICES=0
+export ASCEND_RT_VISIBLE_DEVICES=0
+
+nohup timeout 3600 python3 -u -m src.main \
+  --backend npu --role attention --world-size 8 --rank 0 --local-rank 0 \
+  --attn-node-rank 0 --ffn-node-rank 1 \
+  --attn-size 1 --ffn-size 7 --ffn-tp-size 1 --ffn-ep-size 7 \
+  --ffn-ep-backend broadcast_reduce_overlap --ffn-coordinator-rank 1 \
+  --ep-expert-policy round_robin \
+  --batch-size 2 --prefill-seq-len 128 --max-new-tokens 5 \
+  --num-micro-batches 2 --timing \
+  --timing-suffix xhost_real_b2_s128_t5_v6 \
+  --master-addr $MASTER_ADDR --master-port $MASTER_PORT \
+  --model-name /models/Qwen3-30B-A3B \
+  --no-dbo --no-generate \
+  > results_npu/coordinator_arch/p3_real_xhost/h1_rank0_xhost_real_b2_s128_t5_v6.log 2>&1 &
+```
+
+当前预期现象：
+
+- 所有 rank 能越过 `Distributed initialized`
+- 日志会进入 `Running 1 prefill warmup round(s) to absorb JIT compile cost`
+- 冷编译场景下可能 60 分钟内仍无法完成第一轮 warmup
+
+若已提前完成 §8.3 的单机 warmup，再重复本节命令，通常更有机会快速越过首轮 prefill。
+
+## 9. 后处理
 
 ```bash
 # GPU
@@ -356,7 +741,7 @@ python scripts/audit_experiment_baselines.py --root results_npu --output-csv res
 | `baseline-missing` | cache 存在，但缺少 `prefill_ms` 或 `decode_tpot_ms`。 |
 | `serial-cache-invalid` | cache 无法解析。 |
 
-## 9. 通信 microbenchmark
+## 10. 通信 microbenchmark
 
 `scripts/bench_comm_transfer.py` 用两个 rank 独立测相同 payload 下的 P2P 通信：
 
@@ -394,7 +779,7 @@ ASCEND_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
 - prefill DBO payload 约为 `batch * seq * hidden * dtype_bytes`，随 `batch * seq` 增长；
 - 如果 DBO completion 明显大于 microbench completion，多出来的部分通常来自 pipeline 调度、对端 readiness 或 backend queueing，而不是纯数据搬运。
 
-## 10. 常见问题
+## 11. 常见问题
 
 | 问题 | 处理方式 |
 |---|---|

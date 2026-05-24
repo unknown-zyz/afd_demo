@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Analyze decode-dbo layer-0 warmup artifacts and optionally redraw without L0.
 
-The script scans results_npu_ep7/decode-dbo timing JSONs, compares layer-0
+The script scans decode-dbo timing JSONs under a result root, compares layer-0
 micro-batch-0 durations with later-layer medians, and writes a CSV/Markdown
-summary.  With --write-no-l0-figs it also regenerates decode pipeline figures
+summary. With --write-no-l0-figs it also regenerates decode pipeline figures
 starting from L1 into a sibling directory of pipeline_figs.
 """
 from __future__ import annotations
@@ -131,7 +131,7 @@ def write_csv(rows: list[dict], out: Path) -> None:
     print(f"Wrote {out}")
 
 
-def write_markdown(rows: list[dict], out: Path) -> None:
+def write_markdown(rows: list[dict], out: Path, scope: Path) -> None:
     rows_sorted = sorted(
         rows,
         key=lambda r: (float(r.get("max_l0_mb0_ratio") or 0), int(r.get("batch") or 0)),
@@ -140,7 +140,7 @@ def write_markdown(rows: list[dict], out: Path) -> None:
     lines = [
         "# Decode-DBO L0 warmup analysis",
         "",
-        "Scope: `results_npu_ep7/decode-dbo/timing_attention_*.json`.",
+        f"Scope: `{scope}/timing_attention_*.json`.",
         "",
         "Warmup interpretation:",
         "",
@@ -215,7 +215,7 @@ def main() -> int:
         print(f"No decode-dbo timing files found under {decode_dir}", file=sys.stderr)
         return 1
     write_csv(rows, root / "decode_dbo_l0_warmup_analysis.csv")
-    write_markdown(rows, root / "decode_dbo_l0_warmup_analysis.md")
+    write_markdown(rows, root / "decode_dbo_l0_warmup_analysis.md", decode_dir)
     if args.write_no_l0_figs:
         write_no_l0_figs(rows, root, root / "pipeline_figs_no_l0", args.num_layers)
     return 0

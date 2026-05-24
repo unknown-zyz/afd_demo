@@ -69,6 +69,9 @@ def build_rows():
             "serial_prefill_ms": d.get("prefill_ms"),
             "prefill_speedup": "",
             "total_time_ms": d.get("total_time_ms"),
+            "tbt_mean_ms": d.get("tbt_mean_ms"),
+            "tbt_p50_ms": d.get("tbt_p50_ms"),
+            "tbt_p99_ms": d.get("tbt_p99_ms"),
             "correctness_tokens": d.get("correctness_tokens") or "",
         })
 
@@ -93,6 +96,9 @@ def build_rows():
                 "prefill_ms": timing.get("prefill_ms"),
                 "serial_prefill_ms": ser.get("prefill_ms"),
                 "total_time_ms": timing.get("total_time_ms"),
+                "tbt_mean_ms": timing.get("tbt_mean_ms"),
+                "tbt_p50_ms": timing.get("tbt_p50_ms"),
+                "tbt_p99_ms": timing.get("tbt_p99_ms"),
                 "correctness_tokens": timing.get("correctness_tokens") or "",
             }
             # Decode TPOT speedup (decode-dbo / crosslayer)
@@ -120,6 +126,7 @@ def write_csv(rows):
         "mode", "batch", "seq", "tokens", "status",
         "tpot_ms", "serial_tpot_ms", "speedup",
         "prefill_ms", "serial_prefill_ms", "prefill_speedup",
+        "tbt_mean_ms", "tbt_p50_ms", "tbt_p99_ms",
         "total_time_ms", "correctness_tokens",
     ]
     if OUT_CSV.exists():
