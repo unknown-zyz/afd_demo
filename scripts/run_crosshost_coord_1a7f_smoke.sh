@@ -128,6 +128,11 @@ if [[ "$SIDE" == "host1" ]]; then
   COORD_PID=$!
   echo "coordinator_pid=$COORD_PID log=$COORD_LOG"
   sleep 3
+  if ! kill -0 "$COORD_PID" 2>/dev/null; then
+    echo "ERROR: coordinator exited before attention launch; log=$COORD_LOG" >&2
+    tail -n 80 "$COORD_LOG" || true
+    exit 1
+  fi
 
   export ASCEND_VISIBLE_DEVICES="${ASCEND_VISIBLE_DEVICES:-0}"
   export ASCEND_RT_VISIBLE_DEVICES="${ASCEND_RT_VISIBLE_DEVICES:-$ASCEND_VISIBLE_DEVICES}"
