@@ -23,6 +23,7 @@
 | 14 | [14-communication-modes.md](14-communication-modes.md) | Coordinator 通信方式、默认策略与切换方法。 |
 | 15 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) | Coordinator routing / 负载均衡现状、限制、实验顺序与后续计划。 |
 | 16 | [18-crosshost-coordinator-1a7f-architecture.md](18-crosshost-coordinator-1a7f-architecture.md) | 当前 cross-host 1A7F coordinator 架构、orchestrator、metrics flow 与失败分层。 |
+| 17 | [19-code-review-system-architecture.md](19-code-review-system-architecture.md) | 面向代码审查的系统架构、类交互、调用链、数据流和 Review 关注点。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。
@@ -42,6 +43,7 @@
 | 排查 DeepEP / fallback 数据面 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) |
 | 切换 Coordinator 通信方式 | [14-communication-modes.md](14-communication-modes.md) |
 | 理解 routing / 负载均衡当前到底做到哪一步 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) |
+| 快速 Review 代码结构、类交互和调用链 | [19-code-review-system-architecture.md](19-code-review-system-architecture.md) |
 | 判断 speedup 是否可信 | [07-npu-vs-gpu-experiment-analysis.md](07-npu-vs-gpu-experiment-analysis.md) |
 | 查看最新实验结论 | [08-gpu-npu-experiment-summary.md](08-gpu-npu-experiment-summary.md) |
 | 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |

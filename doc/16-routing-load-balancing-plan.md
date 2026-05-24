@@ -20,9 +20,66 @@
 
 ---
 
-## 2. 当前代码里 routing 是怎么接进去的
+## 2. Coordinator 当前设计与作用
 
-### 2.1 控制面已有的组件
+Coordinator 的定位是 **MoE routing 的控制面**，不是数据面。它不负责转发 token hidden states，也不参与 Attention→FFN 或 FFN→Attention 的张量通信；真实数据面仍由 `src/model/*`、`src/distributed/*` 和 EP/HCCL communicator 完成。
+
+它当前解决的是另一类问题：
+
+1. **统一管理 worker 与 routing metadata**
+   - FFN/Attention rank 可以向 Coordinator 注册自己的 role、rank、host、device、local experts。
+   - Coordinator 保存 worker registry，并通过 stale sweep 剔除长时间不上报的 worker。
+2. **把 expert placement 从“写死在启动参数里”变成“可由控制面发布”**
+   - static EP7 用 `round_robin` / `contiguous` 规则决定 expert 分片。
+   - coordinator 模式用 `expert_to_rank` 表描述每个 expert 的 owner rank。
+   - 真实 Qwen3 路径启动时通过 `CoordinatorClient.GetRoutingTable` 拉表，并把它转成 `ExpertShardPlan(policy="explicit")`。
+3. **为后续负载均衡提供 metrics 与 rebalance 入口**
+   - worker 可通过 `UpdateMetrics` 上报 queue、dispatch rate、per-expert load。
+   - `LoadAwareRouter` 可根据这些 metrics 计算新的 `expert_to_rank`。
+   - 当前真实路径还没把 metrics 喂满，但控制面接口和 skeleton worker 路径已经存在。
+4. **为跨机实验提供可审计的控制面边界**
+   - `oneshot`：初始化时取一次 routing table，适合当前稳定实验。
+   - `poll`：在 decode safe point 主线程拉表，避免后台 gRPC 线程干扰真实 NPU/HCCL runtime。
+
+```mermaid
+flowchart LR
+    subgraph DataPlane["数据面：真实推理 / HCCL / EP"]
+        Main["src.main"]
+        Model["DisaggregatedQwenModel"]
+        Attn["AttentionWorker"]
+        FFN["FFNWorker"]
+        EP["ExpertShardPlan / EP MoE"]
+        Comm["AFDCommunicator / HCCL"]
+        Main --> Model
+        Model --> Attn
+        Model --> FFN
+        FFN --> EP
+        Attn <--> Comm
+        FFN <--> Comm
+    end
+
+    subgraph ControlPlane["控制面：Coordinator"]
+        Server["CoordinatorServicer"]
+        Router["LoadAwareRouter"]
+        Client["CoordinatorClient"]
+        Server --> Router
+        Client <--> Server
+    end
+
+    Model -. "register / GetRoutingTable / safe-point poll" .-> Client
+    Client -. "expert_to_rank" .-> Model
+    Model -. "explicit ownership" .-> EP
+```
+
+依赖方向上，真实推理路径只依赖 `CoordinatorClient` 这个轻量入口；`CoordinatorServicer` 不反向依赖 `src/model`。这能避免控制面和真实模型形成循环依赖。当前需要特别避免的是把 `src/coordinator_arch/workers/*` skeleton worker 当成真实 Qwen3 worker：它们服务于控制面/通信骨架验证，不等价于 `src/model/attention_worker.py` 和 `src/model/ffn_worker.py` 的真实模型路径。
+
+[Review 关注点] Coordinator 当前是控制面，不是数据面。如果后续有人把 hidden state 传输逻辑塞进 Coordinator，会把控制面和性能关键路径耦合，破坏当前分层。
+
+---
+
+## 3. 当前代码里 routing 是怎么接进去的
+
+### 3.1 控制面已有的组件
 
 当前仓库里，Coordinator 控制面相关实现已经具备以下组件：
 
@@ -36,7 +93,7 @@
 
 也就是说，**“控制面能发表、业务路径能取表”** 这部分已经成立。
 
-### 2.2 真实 Qwen3 路径里 `expert_to_rank` 的当前语义
+### 3.2 真实 Qwen3 路径里 `expert_to_rank` 的当前语义
 
 当前真实路径里，`expert_to_rank` 最重要的用途不是“每个 token dispatch 时临时决定去哪台机器”，而是：
 
@@ -51,7 +108,7 @@
 
 这点非常关键，因为它直接决定了后续“动态负载均衡”不能只靠多拉几次表就成立。
 
-### 2.3 `poll` 为什么现在还不等于“动态负载均衡”
+### 3.3 `poll` 为什么现在还不等于“动态负载均衡”
 
 真实 decode 路径里的 safe-point poll 逻辑在 `src/model/disaggregated.py`：
 
@@ -70,9 +127,9 @@
 
 ---
 
-## 3. 当前 router 为什么还没有在真实路径里形成闭环
+## 4. 当前 router 为什么还没有在真实路径里形成闭环
 
-### 3.1 server/router 侧已有 rebalance 触发条件
+### 4.1 server/router 侧已有 rebalance 触发条件
 
 `CoordinatorServicer.UpdateMetrics()` 收到 worker metrics 后会尝试触发 `_maybe_rebalance()`，内部调用 `LoadAwareRouter.rebalance(...)`。
 
@@ -84,7 +141,7 @@ router 当前使用的输入主要是：
 
 如果负载不均衡超过阈值，就会给出一张新的 `expert_to_rank`。
 
-### 3.2 但真实 Qwen3 路径并没有把这些 metrics 真正喂满
+### 4.2 但真实 Qwen3 路径并没有把这些 metrics 真正喂满
 
 目前可见的 `coord.update_metrics(...)` 调用点主要在：
 
@@ -109,7 +166,7 @@ router 当前使用的输入主要是：
 
 ---
 
-## 4. 当前 one-shot 结果到底证明了什么
+## 5. 当前 one-shot 结果到底证明了什么
 
 截至目前，单机 1A7F / EP7 real decode 路径已经证明：
 
@@ -126,9 +183,9 @@ router 当前使用的输入主要是：
 
 ---
 
-## 5. 为什么第一阶段不把真实数据集作为主路径
+## 6. 为什么第一阶段不把真实数据集作为主路径
 
-### 5.1 因为当前还在验证“机制是否存在”
+### 6.1 因为当前还在验证“机制是否存在”
 
 在真实数据集上直接跑 routing 实验，看起来更“真实”，但对于当前阶段并不是最高效的选择。  
 原因是当前还有多个机制层问题没有 isolate：
@@ -145,7 +202,7 @@ router 当前使用的输入主要是：
 - 数据集负载太平；
 - 还是 compile / network 噪声盖掉了收益。
 
-### 5.2 synthetic skew / trace-replay 更适合第一阶段
+### 6.2 synthetic skew / trace-replay 更适合第一阶段
 
 第一阶段应该优先选择 **可控、可复现、可放大不均衡** 的 workload：
 
@@ -162,7 +219,7 @@ router 当前使用的输入主要是：
 
 ---
 
-## 6. 后续路线图
+## 7. 后续路线图
 
 ### Phase A — 文档与观测先行
 
@@ -198,6 +255,15 @@ router 当前使用的输入主要是：
 
 这是后续设计里最关键的分叉点。
 
+为什么会走到“expert ownership 在线迁移”这个问题：
+
+- 负载均衡想解决的是某些 expert / rank 过热，另一些 rank 空闲。
+- 但 MoE expert 不是纯路由标签，而是带权重的计算单元。
+- 当前 explicit EP 分片里，`expert_to_rank[e] = r` 表示 rank `r` **实际持有并执行** expert `e`。
+- 因此如果 router 想把热点 expert 17 从 rank3 挪到 rank5，仅仅把表改成 `expert_to_rank[17] = 5` 不够；rank5 必须先拿到 expert 17 的权重，并且所有相关 rank 必须在同一个版本边界后再开始把 token 发给 rank5。
+
+所以 expert 在线迁移不是额外复杂化，而是 **动态负载均衡要在不中断服务的情况下真正改变 expert placement 时必须具备的能力**。如果不做在线迁移，就只能选择更保守的 epoch-level / stop-the-world rebalance。
+
 #### 路线 C1：epoch-level / stop-the-world ownership rebalance
 
 思路：
@@ -222,7 +288,13 @@ router 当前使用的输入主要是：
 思路：
 
 - 允许运行中把 expert ownership 从 rank A 迁到 rank B；
-- 需要权重迁移、双写、barrier、版本一致性保障。
+- rank B 在切换前必须拥有目标 expert 的权重，可以是预加载、按需加载、从 rank A 复制，或从共享存储读取；
+- rank A / rank B / attention rank / coordinator 必须对 routing table version 达成一致；
+- 迁移期间需要 drain in-flight token，避免旧版本 token 发到 rank A、新版本 token 发到 rank B 时 reduce/combine 语义混乱；
+- 切换过程最好是两阶段提交：
+  1. prepare：目标 rank 加载权重并确认 ready；
+  2. commit：所有 rank 在 batch/request boundary 后切到新 version；
+- 失败时需要回滚到旧 ownership，而不是留下半迁移状态。
 
 优点：
 
@@ -233,6 +305,8 @@ router 当前使用的输入主要是：
 - 实现复杂度高；
 - 当前代码完全没有这层迁移基础设施；
 - 在跨机 1A7F + TBE cache 背景下，调试成本极高。
+
+[Review 关注点] 当前 `maybe_poll_routing_table()` 发现 EP ownership 变化时会拒绝切换，这是正确的保护。任何让 poll 直接接受 ownership change 的改动，都必须同时提供权重迁移、版本一致性和 in-flight token 处理方案。
 
 #### 路线 C3：保持 ownership 静态，仅优化 dispatch 级路由
 
@@ -250,9 +324,9 @@ router 当前使用的输入主要是：
 
 ---
 
-## 7. 实验计划
+## 8. 实验计划
 
-### 7.1 第一阶段：synthetic skew
+### 8.1 第一阶段：synthetic skew
 
 目标：证明 routing 机制“会动、没抖坏、方向正确”。
 
@@ -273,7 +347,7 @@ router 当前使用的输入主要是：
 - per-expert load 分布
 - TPOT / throughput / overlap-hidden
 
-### 7.2 第二阶段：trace-replay
+### 8.2 第二阶段：trace-replay
 
 目标：用更接近真实 workload 的节奏验证第一阶段观察到的趋势。
 
@@ -285,7 +359,7 @@ router 当前使用的输入主要是：
    - 到达时间 / batch 形成节奏
 2. 重放 trace，但不要求一开始就接入完整业务数据集。
 
-### 7.3 第三阶段：真实数据集 / 真实 trace 回放
+### 8.3 第三阶段：真实数据集 / 真实 trace 回放
 
 目标：做外部有效性验证，而不是机制 bring-up。
 
@@ -296,7 +370,7 @@ router 当前使用的输入主要是：
 
 ---
 
-## 8. 与跨机 1A7F 实验的关系
+## 9. 与跨机 1A7F 实验的关系
 
 routing 与跨机 1A7F 不是两条独立线。
 
@@ -315,7 +389,7 @@ routing 与跨机 1A7F 不是两条独立线。
 
 ---
 
-## 9. 当前建议
+## 10. 当前建议
 
 按优先级排序：
 
@@ -327,7 +401,7 @@ routing 与跨机 1A7F 不是两条独立线。
 
 ---
 
-## 10. 关联文档
+## 11. 关联文档
 
 - [12-coordinator-arch.md](12-coordinator-arch.md)：Coordinator 总体设计与控制/数据面背景
 - [14-communication-modes.md](14-communication-modes.md)：Fallback / DeepEP 通信方式说明
