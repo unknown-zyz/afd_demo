@@ -22,6 +22,7 @@
 | 13 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) | DeepEP 安装、测试、报错与 Fallback 路径说明。 |
 | 14 | [14-communication-modes.md](14-communication-modes.md) | Coordinator 通信方式、默认策略与切换方法。 |
 | 15 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) | Coordinator routing / 负载均衡现状、限制、实验顺序与后续计划。 |
+| 16 | [18-crosshost-coordinator-1a7f-architecture.md](18-crosshost-coordinator-1a7f-architecture.md) | 当前 cross-host 1A7F coordinator 架构、orchestrator、metrics flow 与失败分层。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。
@@ -46,6 +47,7 @@
 | 理解 NPU EP4/EP7 的探索过程 | [01-architecture.md](01-architecture.md) |
 | 判断哪些实验分支可以删除 | [branch_consolidation.md](branch_consolidation.md) |
 | 查负结果实验结论 | [experiment_archive.md](experiment_archive.md) |
+| 理解当前跨机 1A7F coordinator 架构和 full matrix 结果 | [18-crosshost-coordinator-1a7f-architecture.md](18-crosshost-coordinator-1a7f-architecture.md) |
 
 ## 当前实验结论摘要
 
