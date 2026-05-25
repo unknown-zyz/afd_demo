@@ -5,7 +5,7 @@ Handles splitting batches into micro-batches and managing their state.
 """
 
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -48,6 +48,7 @@ class MicroBatch:
     
     # Position embeddings (computed once, reused)
     position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    layer_input_cache: Optional[Any] = None
     
     # Timing info (for profiling)
     start_time: Optional[float] = None

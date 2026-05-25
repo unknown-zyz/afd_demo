@@ -18,11 +18,11 @@ from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass, field
 
 import torch
-import torch.cuda
 import torch.distributed as dist
 
 from .micro_batch import MicroBatch, MicroBatchManager, MicroBatchState
 from ..distributed import get_distributed_context
+from ..utils import device as devmod
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
 
 logger = logging.getLogger(__name__)
@@ -113,10 +113,10 @@ class AsyncPipelineScheduler:
             device=model.device,
         )
         
-        # CUDA streams for overlap
-        if use_cuda_streams and torch.cuda.is_available():
-            self.compute_stream = torch.cuda.Stream()
-            self.comm_stream = torch.cuda.Stream()
+        # Accelerator streams for overlap (CUDA or NPU via device abstraction).
+        if use_cuda_streams and devmod.is_available():
+            self.compute_stream = devmod.Stream()
+            self.comm_stream = devmod.Stream()
         else:
             self.compute_stream = None
             self.comm_stream = None
@@ -196,6 +196,11 @@ class AsyncPipelineScheduler:
             mb.hidden_states,
             mb.position_ids,
         )
+        mb.layer_input_cache = self.model.attention_worker.prepare_layer_input_cache(
+            attention_mask=mb.attention_mask,
+            position_ids=mb.position_ids,
+            position_embeddings=mb.position_embeddings,
+        )
     
     def _prepare_ffn_mb(self, mb: MicroBatch) -> None:
         """Prepare micro-batch placeholder for FFN node."""
@@ -274,6 +279,7 @@ class AsyncPipelineScheduler:
         # Finalize timing
         if self.enable_timing and self._timing_tracker:
             self._timing_data = self._timing_tracker.finish()
+            self._timing_data.attention_optimizations = self.model.attention_optimization_metadata()
         
         return result
     
@@ -314,7 +320,7 @@ class AsyncPipelineScheduler:
         for mb_idx, mb in enumerate(micro_batches):
             # Stream sync for accurate timing (only sync compute stream, not NCCL)
             if tracker:
-                torch.cuda.current_stream().synchronize()
+                devmod.current_stream_synchronize()
             compute_start = time.perf_counter()
             
             attn_output, residual = self.model.attention_worker.forward_attention_layer(
@@ -323,12 +329,13 @@ class AsyncPipelineScheduler:
                 attention_mask=mb.attention_mask,
                 position_ids=mb.position_ids,
                 position_embeddings=mb.position_embeddings,
+                layer_input_cache=mb.layer_input_cache,
             )
             # Pre-add residual on attention side to halve A2F data (1×H instead of 2×H)
             packed = (attn_output + residual).contiguous()
             
             if tracker:
-                torch.cuda.current_stream().synchronize()
+                devmod.current_stream_synchronize()
             compute_end = time.perf_counter()
             self.stats.compute_time += compute_end - compute_start
             
@@ -391,7 +398,7 @@ class AsyncPipelineScheduler:
                 
                 # Immediately compute this MB's current layer attention
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    devmod.current_stream_synchronize()
                 compute_start = time.perf_counter()
                 
                 attn_output, residual = self.model.attention_worker.forward_attention_layer(
@@ -400,11 +407,12 @@ class AsyncPipelineScheduler:
                     attention_mask=mb.attention_mask,
                     position_ids=mb.position_ids,
                     position_embeddings=mb.position_embeddings,
+                    layer_input_cache=mb.layer_input_cache,
                 )
                 packed = (attn_output + residual).contiguous()
                 
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    devmod.current_stream_synchronize()
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
                 
@@ -484,7 +492,7 @@ class AsyncPipelineScheduler:
                     return_timing=bool(tracker and self.model.supports_moe_timing),
                 )
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    devmod.current_stream_synchronize()
                     tracker.record_event(EventType.FFN_COMPUTE, layer_idx, mb_idx, compute_start, time.perf_counter())
                 if isinstance(ffn_result, tuple):
                     del ffn_result
@@ -551,7 +559,7 @@ class AsyncPipelineScheduler:
                 
                 # Stream sync for accurate timing (only sync compute stream, not NCCL)
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    devmod.current_stream_synchronize()
                 
                 # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
@@ -567,7 +575,7 @@ class AsyncPipelineScheduler:
                 output = output.contiguous().clone()
                 output_list.append(output)
                 if tracker:
-                    torch.cuda.current_stream().synchronize()
+                    devmod.current_stream_synchronize()
                 compute_end = time.perf_counter()
                 self.stats.compute_time += compute_end - compute_start
                 
@@ -671,13 +679,14 @@ class AsyncPipelineScheduler:
                 
                 # Compute attention
                 if self.compute_stream:
-                    with torch.cuda.stream(self.compute_stream):
+                    with devmod.stream_context(self.compute_stream):
                         attn_output, residual = self.model.attention_worker.forward_attention_layer(
                             layer_idx=layer_idx,
                             hidden_states=mb.hidden_states,
                             attention_mask=mb.attention_mask,
                             position_ids=mb.position_ids,
                             position_embeddings=mb.position_embeddings,
+                            layer_input_cache=mb.layer_input_cache,
                         )
                         packed = (attn_output + residual).contiguous()
                     self.compute_stream.synchronize()
@@ -688,6 +697,7 @@ class AsyncPipelineScheduler:
                         attention_mask=mb.attention_mask,
                         position_ids=mb.position_ids,
                         position_embeddings=mb.position_embeddings,
+                        layer_input_cache=mb.layer_input_cache,
                     )
                     packed = (attn_output + residual).contiguous()
                 
@@ -787,7 +797,7 @@ class AsyncPipelineScheduler:
                 compute_start = time.perf_counter()
                 
                 if self.compute_stream:
-                    with torch.cuda.stream(self.compute_stream):
+                    with devmod.stream_context(self.compute_stream):
                         ffn_result = self.model.ffn_worker.forward_ffn_layer(
                             layer_idx=layer_idx,
                             hidden_states=hidden_states_in,

@@ -83,6 +83,7 @@ class SimplePipelineScheduler:
                 attention_mask=mb.attention_mask,
                 position_ids=mb.position_ids if hasattr(mb, 'position_ids') else None,
                 position_embeddings=mb.position_embeddings if hasattr(mb, 'position_embeddings') else None,
+                layer_input_cache=mb.layer_input_cache,
             )
             tracker.mark_end(EventType.ATTN_COMPUTE, layer_idx, mb_idx)
 
@@ -197,6 +198,11 @@ class SimplePipelineScheduler:
                     mb.hidden_states,
                     mb.position_ids,
                 )
+                mb.layer_input_cache = self.model.attention_worker.prepare_layer_input_cache(
+                    attention_mask=mb.attention_mask,
+                    position_ids=mb.position_ids,
+                    position_embeddings=mb.position_embeddings,
+                )
         else:
             # FFN node - create placeholder hidden states with ACTUAL sizes from attention node
             for mb in micro_batches:
@@ -233,11 +239,13 @@ class SimplePipelineScheduler:
                         attention_mask=mb.attention_mask,
                         position_ids=mb.position_ids if self.ctx.is_attention_node else None,
                         position_embeddings=mb.position_embeddings if self.ctx.is_attention_node else None,
+                        layer_input_cache=mb.layer_input_cache if self.ctx.is_attention_node else None,
                     )
 
         # Finalize timing
         if tracker is not None:
             self._timing_data = tracker.finish()
+            self._timing_data.attention_optimizations = self.model.attention_optimization_metadata()
         
         # Generate logits (attention node)
         if self.ctx.is_attention_node and self.model.attention_worker:

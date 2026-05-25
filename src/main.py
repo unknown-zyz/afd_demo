@@ -20,6 +20,7 @@ from transformers.utils import logging as hf_logging
 
 from .distributed import init_distributed, get_distributed_context, DistributedConfig
 from .model import DisaggregatedQwenModel
+from .model.attention_worker import AttentionOptimizationConfig
 from .pipeline import SimplePipelineScheduler, AsyncPipelineScheduler
 from .utils import device as devmod
 from .utils.profiler import get_profiler, print_memory_stats
@@ -126,6 +127,28 @@ def parse_args():
                         default="enqueue",
                         help="Communication timing for send events: enqueue records isend return "
                              "overhead; completion records effective Work completion latency.")
+
+    # Attention optimization A/B controls. Positive and stable optimizations should
+    # become defaults rather than long-term user-facing switches.
+    parser.add_argument("--attn-kernel", type=str,
+                        choices=["hf", "npu-official", "flash-attn-npu"],
+                        default=os.environ.get("AFD_ATTN_KERNEL", "hf"),
+                        help="Attention kernel backend for benchmarking. hf is the current default.")
+    parser.add_argument("--attn-precopy-layer-inputs", action="store_true",
+                        default=os.environ.get("AFD_ATTN_PRECOPY_LAYER_INPUTS", "0") == "1",
+                        help="Precopy mask/position/RoPE tensors to each Attention layer device.")
+    parser.add_argument("--attn-tp-size", type=int,
+                        default=int(os.environ.get("AFD_ATTN_TP_SIZE", "1")),
+                        help="Attention tensor-parallel degree (currently a planning/metadata field).")
+    parser.add_argument("--attn-fused-rmsnorm", action="store_true",
+                        default=os.environ.get("AFD_ATTN_FUSED_RMSNORM", "0") == "1",
+                        help="Enable NPU fused RMSNorm when implemented and available.")
+    parser.add_argument("--attn-fused-rope", action="store_true",
+                        default=os.environ.get("AFD_ATTN_FUSED_ROPE", "0") == "1",
+                        help="Enable NPU fused RoPE when implemented and available.")
+    parser.add_argument("--attn-stream-overlap", action="store_true",
+                        default=os.environ.get("AFD_ATTN_STREAM_OVERLAP", "0") == "1",
+                        help="Use backend stream abstraction for Attention/communication overlap experiments.")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -295,6 +318,17 @@ def build_distributed_config(args) -> DistributedConfig:
     )
 
 
+def build_attention_optimization_config(args) -> AttentionOptimizationConfig:
+    return AttentionOptimizationConfig(
+        attn_kernel=args.attn_kernel,
+        precopy_layer_inputs=args.attn_precopy_layer_inputs,
+        attn_tp_size=args.attn_tp_size,
+        fused_rmsnorm=args.attn_fused_rmsnorm,
+        fused_rope=args.attn_fused_rope,
+        stream_overlap=args.attn_stream_overlap,
+    )
+
+
 def run_inference_demo(args):
     """Run the main inference demo."""
     logger = setup_logging(args.verbose)
@@ -307,6 +341,7 @@ def run_inference_demo(args):
     
     device = ctx.device
     dtype = get_dtype(args.dtype)
+    attention_optimization_config = build_attention_optimization_config(args)
     
     # Log initialization (concise)
     logger.info(f"[{ctx.role.upper()}] rank={ctx.rank}, device={device}, dtype={dtype}")
@@ -323,6 +358,7 @@ def run_inference_demo(args):
         routing_update_mode=args.routing_update_mode,
         routing_poll_interval_steps=args.routing_poll_interval_steps,
         routing_rpc_timeout_s=args.routing_rpc_timeout_s,
+        attention_optimization_config=attention_optimization_config,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
@@ -430,6 +466,7 @@ def run_inference_demo(args):
             timing_data.routing_backend = model.routing_backend
             timing_data.routing_table_version = model.routing_table_version
             timing_data.routing_update_mode = model.routing_update_mode
+            timing_data.attention_optimizations = model.attention_optimization_metadata()
             role_name = timing_role_name(ctx)
             # Build timing file name with configuration info
             if args.timing_suffix:
@@ -456,6 +493,7 @@ def run_inference_demo(args):
             "routing_backend": model.routing_backend,
             "routing_table_version": model.routing_table_version,
             "routing_update_mode": model.routing_update_mode,
+            "attention_optimizations": model.attention_optimization_metadata(),
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -503,6 +541,7 @@ def run_generation_demo(args):
     
     device = ctx.device
     dtype = get_dtype(args.dtype)
+    attention_optimization_config = build_attention_optimization_config(args)
     
     logger.info(f"[{ctx.role.upper()}] rank={ctx.rank}, device={device}, dtype={dtype}")
     logger.info(f"Generation mode: max_new_tokens={args.max_new_tokens}, temp={args.temperature}")
@@ -518,6 +557,7 @@ def run_generation_demo(args):
         routing_update_mode=args.routing_update_mode,
         routing_poll_interval_steps=args.routing_poll_interval_steps,
         routing_rpc_timeout_s=args.routing_rpc_timeout_s,
+        attention_optimization_config=attention_optimization_config,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
@@ -646,6 +686,7 @@ def run_generation_demo(args):
         model._last_decode_timing.routing_update_mode = generation_metrics.get("routing_update_mode")
         model._last_decode_timing.routing_poll_count = generation_metrics.get("routing_poll_count")
         model._last_decode_timing.routing_poll_ms = generation_metrics.get("routing_poll_ms")
+        model._last_decode_timing.attention_optimizations = model.attention_optimization_metadata()
         if generation_metrics.get("decode_step_times_ms"):
             model._last_decode_timing.decode_step_times_ms = list(generation_metrics["decode_step_times_ms"])
         model._last_decode_timing.prefill_seq_len = prefill_seq_len
@@ -678,6 +719,7 @@ def run_generation_demo(args):
             "routing_update_mode": generation_metrics.get("routing_update_mode"),
             "routing_poll_count": generation_metrics.get("routing_poll_count"),
             "routing_poll_ms": generation_metrics.get("routing_poll_ms"),
+            "attention_optimizations": model.attention_optimization_metadata(),
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -711,6 +753,8 @@ def main():
     args = parse_args()
     if args.routing_backend == "coordinator" and not args.coord_addr:
         raise ValueError("--coord-addr is required when --routing-backend=coordinator")
+    if args.attn_tp_size < 1:
+        raise ValueError("--attn-tp-size must be >= 1")
     # Force greedy decoding when correctness check is requested for deterministic
     # serial-vs-DBO token comparison.
     if args.correctness_check and not args.greedy:

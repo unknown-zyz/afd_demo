@@ -377,6 +377,7 @@ class DecodeDBOScheduler:
             self._timing_data.timed_decode_step_note = (
                 "step 0 skipped to avoid warmup/cold-start timing"
             )
+            self._timing_data.attention_optimizations = self.model.attention_optimization_metadata()
 
         self.stats.total_time = time.perf_counter() - start_time
         self.stats.num_layers = self.model.num_layers
@@ -433,6 +434,21 @@ class DecodeDBOScheduler:
         cur_pos = kv_cache.get_seq_length()
         total_len = cur_pos + 1
         attention_mask = self.model._make_causal_mask(batch_size, 1, total_len)
+        mb_layer_input_caches = []
+        for mb_idx, mb_size in enumerate(mb_sizes):
+            start = mb_offsets[mb_idx]
+            end = start + mb_size
+            mb_pos_emb = None
+            if position_embeddings is not None:
+                cos, sin = position_embeddings
+                mb_pos_emb = (cos[start:end], sin[start:end])
+            mb_layer_input_caches.append(
+                self.model.attention_worker.prepare_layer_input_cache(
+                    attention_mask=attention_mask[start:end],
+                    position_ids=position_ids[start:end],
+                    position_embeddings=mb_pos_emb,
+                )
+            )
 
         # ── Layer 0: warmup — compute and send all MBs ──
         # FIFO invariant: both a2f_group and f2a_group see operations in
@@ -477,6 +493,7 @@ class DecodeDBOScheduler:
                 position_embeddings=mb_pos_emb,
                 use_cache=True,
                 past_key_value=kv_cache,
+                layer_input_cache=mb_layer_input_caches[mb_idx],
             )
 
             mb_updated_keys.append(cache_layer.keys)
@@ -584,6 +601,7 @@ class DecodeDBOScheduler:
                     position_embeddings=mb_pos_emb,
                     use_cache=True,
                     past_key_value=kv_cache,
+                    layer_input_cache=mb_layer_input_caches[mb_idx],
                 )
 
                 mb_updated_keys.append(cache_layer.keys)
