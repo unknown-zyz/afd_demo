@@ -17,6 +17,7 @@
 #
 # Usage:
 #   ./scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 [--tokens N] [other run_single flags]
+#   Add --msprof [--msprof-output PATH] to collect CANN/NPU profiles.
 #   Add --no-timing for profiling-overhead runs.
 #
 # This script spawns one torchrun-style process per role on the local node
@@ -39,6 +40,10 @@ BATCH=8
 SEQ=128
 NUM_MICRO_BATCHES=2
 RESERVED_NPUS="${AFD_RESERVED_NPUS:-}"
+MSPROF=false
+MSPROF_OUTPUT="${MSPROF_OUTPUT:-results/msprof}"
+MSPROF_OP=false
+MSPROF_ANALYZE=false
 EXTRA_ARGS=()
 TIMING_ARGS=(--timing)
 
@@ -67,6 +72,10 @@ while [[ $# -gt 0 ]]; do
         --seq)          SEQ="$2";    shift 2 ;;
         --num-micro-batches) NUM_MICRO_BATCHES="$2"; shift 2 ;;
         --reserved-npus) RESERVED_NPUS="$2"; shift 2 ;;
+        --msprof)      MSPROF=true; shift ;;
+        --msprof-output) MSPROF_OUTPUT="$2"; shift 2 ;;
+        --msprof-op)   MSPROF=true; MSPROF_OP=true; shift ;;
+        --msprof-analyze) MSPROF_ANALYZE=true; shift ;;
         --no-timing)    TIMING_ARGS=(); shift ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
@@ -171,6 +180,13 @@ if [ -z "$ATTN_DEVICES" ] && [ -z "$FFN_DEVICES" ] && [ "$ATTN_SIZE" -eq 1 ] && 
     fi
 fi
 echo "visible_devices=$ASCEND_VISIBLE_DEVICES  reserved_npus=${AFD_RESERVED_NPUS:-<none>}  attn_devices=${ATTN_DEVICES:-<global>}  ffn_devices=${FFN_DEVICES:-<global>}"
+if [ "$MSPROF" = true ]; then
+    if ! command -v msprof >/dev/null 2>&1; then
+        echo "ERROR: --msprof requested but msprof is not on PATH" >&2
+        exit 1
+    fi
+    echo "msprof=enabled  op_mode=$MSPROF_OP  output=$MSPROF_OUTPUT"
+fi
 export HCCL_BUFFSIZE="${HCCL_BUFFSIZE:-200}"           # MB
 export HCCL_CONNECT_TIMEOUT="${HCCL_CONNECT_TIMEOUT:-600}"
 export HCCL_EXEC_TIMEOUT="${HCCL_EXEC_TIMEOUT:-1800}"
@@ -245,12 +261,15 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             # global visible device pool without loading weights on every chip.
             LOCAL_RANK=$R
         fi
-        RANK=$RANK LOCAL_RANK=$LOCAL_RANK WORLD_SIZE=$WORLD_SIZE \
-        ATTN_SIZE=$ATTN_SIZE FFN_SIZE=$FFN_SIZE FFN_EP_SIZE=$FFN_EP_SIZE \
-        FFN_COORDINATOR_RANK=$ATTN_SIZE FFN_EP_BACKEND=$FFN_EP_BACKEND EP_EXPERT_POLICY=$EP_EXPERT_POLICY \
-        AFD_RESERVED_NPUS="${AFD_RESERVED_NPUS:-}" AFD_ACTIVE_NPUS="${AFD_ACTIVE_NPUS:-$ASCEND_VISIBLE_DEVICES}" \
-        MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT \
-        python -u -m src.main \
+        export RANK LOCAL_RANK WORLD_SIZE
+        export ATTN_SIZE FFN_SIZE FFN_EP_SIZE
+        export FFN_COORDINATOR_RANK="$ATTN_SIZE"
+        export FFN_EP_BACKEND EP_EXPERT_POLICY
+        export AFD_RESERVED_NPUS="${AFD_RESERVED_NPUS:-}"
+        export AFD_ACTIVE_NPUS="${AFD_ACTIVE_NPUS:-$ASCEND_VISIBLE_DEVICES}"
+        export MASTER_ADDR MASTER_PORT
+
+        PY_CMD=(python -u -m src.main \
             --backend npu \
             --role "$ROLE" \
             --world-size "$WORLD_SIZE" \
@@ -265,7 +284,6 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             --ffn-ep-backend "$FFN_EP_BACKEND" \
             --ffn-coordinator-rank "$ATTN_SIZE" \
             --ep-expert-policy "$EP_EXPERT_POLICY" \
-            --reserved-npus "${AFD_RESERVED_NPUS:-}" \
             --batch-size "$BATCH" \
             --prefill-seq-len "$SEQ" \
             --max-new-tokens "$TOKENS" \
@@ -274,8 +292,31 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             --timing-suffix "$SUFFIX" \
             --master-addr "$MASTER_ADDR" \
             --master-port "$MASTER_PORT" \
-            "${EXTRA_ARGS[@]}" \
-            > "$RUN_LOG" 2>&1
+            "${EXTRA_ARGS[@]}")
+        if [ -n "${AFD_RESERVED_NPUS:-}" ]; then
+            PY_CMD+=(--reserved-npus "$AFD_RESERVED_NPUS")
+        fi
+        if [ "$MSPROF" = true ]; then
+            RANK_MSPROF_OUTPUT="$MSPROF_OUTPUT/$SUFFIX/rank${RANK}"
+            mkdir -p "$RANK_MSPROF_OUTPUT"
+            APP_CMD=$(printf " %q" "${PY_CMD[@]}")
+            APP_CMD=${APP_CMD:1}
+            MSPROF_CMD=(msprof)
+            if [ "$MSPROF_OP" = true ]; then
+                MSPROF_CMD+=(op)
+            else
+                MSPROF_CMD+=(--hccl=on --runtime-api=on --task-time=on --sys-hardware-mem=on --sys-io-profiling=on)
+            fi
+            MSPROF_CMD+=(--output="$RANK_MSPROF_OUTPUT" --application="$APP_CMD")
+            msprof_rc=0
+            "${MSPROF_CMD[@]}" > "$RUN_LOG" 2>&1 || msprof_rc=$?
+            if grep -q "specified program cannot exit normally" "$RUN_LOG"; then
+                exit 1
+            fi
+            exit "$msprof_rc"
+        else
+            "${PY_CMD[@]}" > "$RUN_LOG" 2>&1
+        fi
     ) &
     PIDS+=($!)
 done
@@ -286,5 +327,18 @@ for pid in "${PIDS[@]}"; do
     if ! wait "$pid"; then rc=1; fi
 done
 
+if [ "$MSPROF" = true ] && [ "$MSPROF_ANALYZE" = true ]; then
+    for profile_dir in "$MSPROF_OUTPUT/$SUFFIX"/rank*; do
+        [ -d "$profile_dir" ] || continue
+        if ! msprof --analyze=on --rule=communication,communication_matrix --output="$profile_dir" > "$profile_dir/msprof-analyze.log" 2>&1; then
+            echo "ERROR: msprof analyze failed for $profile_dir" >&2
+            rc=1
+        fi
+    done
+fi
+
 echo "Exit=$rc; logs in results/logs/npu_${SUFFIX}_r*.log"
+if [ "$MSPROF" = true ]; then
+    echo "msprof output: $MSPROF_OUTPUT/$SUFFIX"
+fi
 exit $rc
