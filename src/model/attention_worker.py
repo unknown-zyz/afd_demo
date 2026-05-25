@@ -14,7 +14,7 @@ import inspect
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Any, Union
+from typing import Optional, Tuple, List, Any, Union, Callable
 
 import torch
 import torch.nn as nn
@@ -100,6 +100,7 @@ class AttentionLayer(nn.Module):
         layer_idx: int,
         layer_device: torch.device,
         output_device: torch.device,
+        optimization_config: Optional[AttentionOptimizationConfig] = None,
     ):
         super().__init__()
         self.input_layernorm = input_layernorm
@@ -108,6 +109,7 @@ class AttentionLayer(nn.Module):
         self.layer_idx = layer_idx
         self.layer_device = layer_device
         self.output_device = output_device
+        self.optimization_config = optimization_config or AttentionOptimizationConfig()
         self._forward_params = set(inspect.signature(self.self_attn.forward).parameters.keys())
         self._uses_position_embeddings = "position_embeddings" in self._forward_params
         self._uses_past_key_values = "past_key_values" in self._forward_params
@@ -179,6 +181,23 @@ class AttentionLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
+        if self.optimization_config.attn_kernel == "npu-official":
+            attn_output, present_key_value = self._forward_npu_official_attention(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_embeddings=position_embeddings,
+                past_key_value=past_key_value,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+            )
+            if attn_output.device != self.output_device:
+                attn_output = attn_output.to(self.output_device, non_blocking=True)
+            if residual.device != self.output_device:
+                residual = residual.to(self.output_device, non_blocking=True)
+            if use_cache:
+                return attn_output, residual, present_key_value
+            return attn_output, residual
+
         attn_kwargs = {
             "hidden_states": hidden_states,
             "attention_mask": attention_mask,
@@ -235,6 +254,134 @@ class AttentionLayer(nn.Module):
             return attn_output, residual, present_key_value
         return attn_output, residual
 
+    def _forward_npu_official_attention(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
+        past_key_value: Optional[Any],
+        use_cache: bool,
+        output_attentions: bool,
+    ) -> Tuple[torch.Tensor, Optional[Any]]:
+        if output_attentions:
+            raise NotImplementedError("npu-official attention does not return attention weights.")
+        if position_embeddings is None:
+            raise ValueError("npu-official attention requires precomputed position_embeddings.")
+        if self.layer_device.type != "npu":
+            raise RuntimeError("npu-official attention requires an NPU layer device.")
+
+        flash_prefill, flash_decode = self._load_npu_attention_ops()
+        apply_rotary_pos_emb = self._load_apply_rotary_pos_emb()
+        batch_size, seq_len, _ = hidden_states.shape
+        head_dim = int(getattr(self.self_attn, "head_dim"))
+        num_heads = self._num_attention_heads(head_dim)
+        num_key_value_heads = self._num_key_value_heads(head_dim)
+        scaling = float(getattr(self.self_attn, "scaling", 1.0 / math.sqrt(head_dim)))
+        hidden_shape = (batch_size, seq_len, -1, head_dim)
+
+        query_states = self.self_attn.q_proj(hidden_states).view(hidden_shape)
+        key_states = self.self_attn.k_proj(hidden_states).view(hidden_shape)
+        value_states = self.self_attn.v_proj(hidden_states).view(hidden_shape)
+        if hasattr(self.self_attn, "q_norm"):
+            query_states = self.self_attn.q_norm(query_states)
+        if hasattr(self.self_attn, "k_norm"):
+            key_states = self.self_attn.k_norm(key_states)
+
+        query_states = query_states.transpose(1, 2).contiguous()
+        key_states = key_states.transpose(1, 2).contiguous()
+        value_states = value_states.transpose(1, 2).contiguous()
+        cos, sin = position_embeddings
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        query_states = query_states.contiguous()
+        key_states = key_states.contiguous()
+
+        if past_key_value is not None:
+            key_states, value_states = past_key_value.update(
+                key_states,
+                value_states,
+                self.layer_idx,
+            )
+            key_states = key_states.contiguous()
+            value_states = value_states.contiguous()
+
+        npu_mask = self._to_npu_attention_mask(attention_mask)
+        if seq_len == 1 and past_key_value is not None:
+            attn_output = flash_decode(
+                query_states,
+                key_states,
+                value_states,
+                atten_mask=npu_mask,
+                num_heads=num_heads,
+                input_layout="BNSD",
+                scale_value=scaling,
+                num_key_value_heads=num_key_value_heads,
+            )
+        else:
+            attn_output = flash_prefill(
+                query_states,
+                key_states,
+                value_states,
+                atten_mask=npu_mask,
+                num_heads=num_heads,
+                input_layout="BNSD",
+                scale_value=scaling,
+                num_key_value_heads=num_key_value_heads,
+            )
+
+        attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, -1).contiguous()
+        attn_output = self.self_attn.o_proj(attn_output)
+        return attn_output, past_key_value if use_cache else None
+
+    def _load_npu_attention_ops(self) -> Tuple[Callable[..., torch.Tensor], Callable[..., torch.Tensor]]:
+        try:
+            import torch_npu  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError("npu-official attention requires torch_npu.") from exc
+        prefill = getattr(torch_npu, "npu_flash_attention", None)
+        if prefill is None:
+            prefill = getattr(torch_npu, "npu_prompt_flash_attention", None)
+        decode = getattr(torch_npu, "npu_incre_flash_attention", None)
+        if prefill is None or decode is None:
+            raise RuntimeError(
+                "npu-official attention requires torch_npu npu_prompt_flash_attention/"
+                "npu_flash_attention and npu_incre_flash_attention."
+            )
+        return prefill, decode
+
+    def _load_apply_rotary_pos_emb(self) -> Callable[..., Tuple[torch.Tensor, torch.Tensor]]:
+        try:
+            from transformers.models.qwen3_moe.modeling_qwen3_moe import apply_rotary_pos_emb
+        except ImportError:
+            from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
+        return apply_rotary_pos_emb
+
+    def _num_attention_heads(self, head_dim: int) -> int:
+        value = getattr(self.self_attn, "num_heads", None)
+        if value is None:
+            value = getattr(getattr(self.self_attn, "config", None), "num_attention_heads", None)
+        if value is None:
+            value = self.self_attn.q_proj.out_features // head_dim
+        return int(value)
+
+    def _num_key_value_heads(self, head_dim: int) -> int:
+        value = getattr(self.self_attn, "num_key_value_heads", None)
+        if value is None:
+            value = getattr(getattr(self.self_attn, "config", None), "num_key_value_heads", None)
+        if value is None:
+            value = self.self_attn.k_proj.out_features // head_dim
+        return int(value)
+
+    def _to_npu_attention_mask(self, attention_mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        if attention_mask is None:
+            return None
+        if attention_mask.dtype == torch.bool:
+            mask = attention_mask
+        else:
+            mask = attention_mask < 0
+        if not bool(mask.any()):
+            return None
+        return mask.contiguous()
+
 
 class AttentionWorker(nn.Module):
     """
@@ -271,10 +418,10 @@ class AttentionWorker(nn.Module):
         self.optimization_config = optimization_config or AttentionOptimizationConfig.from_env()
         if self.optimization_config.attn_kernel not in {"hf", "npu-official", "flash-attn-npu"}:
             raise ValueError(f"Unsupported attention kernel: {self.optimization_config.attn_kernel}")
-        if self.optimization_config.attn_kernel != "hf":
+        if self.optimization_config.attn_kernel == "flash-attn-npu":
             raise NotImplementedError(
                 f"Attention kernel {self.optimization_config.attn_kernel!r} is not wired yet. "
-                "Use --attn-kernel hf while the NPU kernel adapter is implemented."
+                "Use --attn-kernel hf or --attn-kernel npu-official."
             )
         if self.optimization_config.attn_tp_size < 1:
             raise ValueError("--attn-tp-size must be >= 1")
@@ -316,6 +463,7 @@ class AttentionWorker(nn.Module):
                 layer_idx=idx,
                 layer_device=layer_device,
                 output_device=device,
+                optimization_config=self.optimization_config,
             )
             self.attention_layers.append(attn_layer)
         

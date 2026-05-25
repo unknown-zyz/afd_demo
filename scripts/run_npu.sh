@@ -179,6 +179,7 @@ if [ -z "$ATTN_DEVICES" ] && [ -z "$FFN_DEVICES" ] && [ "$ATTN_SIZE" -eq 1 ] && 
         FFN_DEVICES=$(IFS=','; echo "${VISIBLE_DEV_ARR[*]:$split_idx}")
     fi
 fi
+export AFD_ACTIVE_NPUS="${AFD_ACTIVE_NPUS:-$ASCEND_VISIBLE_DEVICES}"
 echo "visible_devices=$ASCEND_VISIBLE_DEVICES  reserved_npus=${AFD_RESERVED_NPUS:-<none>}  attn_devices=${ATTN_DEVICES:-<global>}  ffn_devices=${FFN_DEVICES:-<global>}"
 if [ "$MSPROF" = true ]; then
     if ! command -v msprof >/dev/null 2>&1; then
