@@ -179,7 +179,7 @@ class AttentionLayer(nn.Module):
                     )
 
         residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states = self._apply_input_layernorm(hidden_states)
 
         if self.optimization_config.attn_kernel == "npu-official":
             attn_output, present_key_value = self._forward_npu_official_attention(
@@ -254,6 +254,63 @@ class AttentionLayer(nn.Module):
             return attn_output, residual, present_key_value
         return attn_output, residual
 
+    def _apply_input_layernorm(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if not self.optimization_config.fused_rmsnorm:
+            return self.input_layernorm(hidden_states)
+        if self.layer_device.type != "npu":
+            raise RuntimeError("--attn-fused-rmsnorm requires an NPU layer device.")
+        weight = getattr(self.input_layernorm, "weight", None)
+        if weight is None:
+            raise RuntimeError("Fused RMSNorm requires an input_layernorm.weight tensor.")
+        eps = getattr(
+            self.input_layernorm,
+            "variance_epsilon",
+            getattr(self.input_layernorm, "eps", 1e-6),
+        )
+        try:
+            import torch_npu  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError("--attn-fused-rmsnorm requires torch_npu.") from exc
+        rms_norm = getattr(torch_npu, "npu_fused_rms_norm", None)
+        if rms_norm is None:
+            rms_norm = getattr(torch_npu, "npu_rms_norm", None)
+        if rms_norm is None:
+            raise RuntimeError("torch_npu does not provide npu_fused_rms_norm or npu_rms_norm.")
+        return rms_norm(hidden_states, weight, float(eps))[0]
+
+    def _apply_npu_rotary_mul(
+        self,
+        states: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.layer_device.type != "npu":
+            raise RuntimeError("--attn-fused-rope requires an NPU layer device.")
+        try:
+            import torch_npu  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError("--attn-fused-rope requires torch_npu.") from exc
+        rotary_mul = getattr(torch_npu, "npu_rotary_mul", None)
+        if rotary_mul is None:
+            raise RuntimeError("torch_npu does not provide npu_rotary_mul.")
+
+        cos = self._reshape_rope_trig(cos, states)
+        sin = self._reshape_rope_trig(sin, states)
+        return rotary_mul(states, cos, sin, "half")
+
+    def _reshape_rope_trig(self, trig: torch.Tensor, states: torch.Tensor) -> torch.Tensor:
+        if trig.device != states.device:
+            trig = trig.to(states.device, non_blocking=True)
+        if trig.dtype != states.dtype:
+            trig = trig.to(states.dtype)
+        if trig.dim() == 2:
+            trig = trig.unsqueeze(0).unsqueeze(0)
+        elif trig.dim() == 3:
+            trig = trig.unsqueeze(1)
+        elif trig.dim() != 4:
+            raise RuntimeError(f"Unsupported RoPE trig rank for npu_rotary_mul: {trig.dim()}")
+        return trig.contiguous()
+
     def _forward_npu_official_attention(
         self,
         hidden_states: torch.Tensor,
@@ -291,7 +348,11 @@ class AttentionLayer(nn.Module):
         key_states = key_states.transpose(1, 2).contiguous()
         value_states = value_states.transpose(1, 2).contiguous()
         cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        if self.optimization_config.fused_rope:
+            query_states = self._apply_npu_rotary_mul(query_states, cos, sin)
+            key_states = self._apply_npu_rotary_mul(key_states, cos, sin)
+        else:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
         query_states = query_states.contiguous()
         key_states = key_states.contiguous()
 
