@@ -902,6 +902,7 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                use_stream_overlap=self.attention_optimization_config.stream_overlap,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
 
@@ -1029,6 +1030,7 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                use_stream_overlap=self.attention_optimization_config.stream_overlap,
             )
         
         # Decode loop: max_new_tokens - 1 iterations

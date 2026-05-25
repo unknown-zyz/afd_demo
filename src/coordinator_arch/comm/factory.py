@@ -41,12 +41,37 @@ class CommunicatorProtocol(Protocol):
         """Dispatch tokens to expert ranks."""
         ...
 
+    def dispatch_async(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> dict:
+        """Enqueue token dispatch and return a waitable handle."""
+        ...
+
+    def wait_dispatch(self, dispatch_handle: dict) -> dict:
+        """Wait for async dispatch completion and return the dispatch handle."""
+        ...
+
     def combine(
         self,
         ffn_outputs: torch.Tensor,
         dispatch_handle: dict,
     ) -> torch.Tensor:
         """Combine expert outputs back to original token order."""
+        ...
+
+    def combine_async(
+        self,
+        ffn_outputs: torch.Tensor,
+        dispatch_handle: dict,
+    ) -> dict:
+        """Enqueue output combine and return a waitable handle."""
+        ...
+
+    def wait_combine(self, combine_handle: dict) -> torch.Tensor:
+        """Wait for async combine completion and return combined outputs."""
         ...
 
     @property

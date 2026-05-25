@@ -122,15 +122,25 @@ class FallbackMoECommunicator:
                 - original_shape: Original shape tuple (N, K, H)
                 - topk_weights: Original topk_weights for combine phase
         """
+        return self.wait_dispatch(
+            self.dispatch_async(hidden_states, topk_indices, topk_weights)
+        )
+
+    def dispatch_async(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> Dict:
+        """Enqueue token dispatch and return a waitable handle."""
         if self.expert_to_rank is None:
             raise RuntimeError(
                 "update_routing_table must be called before dispatch"
             )
-        
+
         N, H = hidden_states.shape
         K = topk_indices.shape[1]
-        
-        # Handle K=0 edge case (no experts selected)
+
         if K == 0:
             return {
                 "recv_hidden": torch.zeros(0, H, device=self.device),
@@ -140,8 +150,10 @@ class FallbackMoECommunicator:
                 "send_perm": torch.zeros(0, dtype=torch.long, device=self.device),
                 "original_shape": (N, K, H),
                 "topk_weights": topk_weights,
+                "_complete": True,
+                "_comm_impl": "fallback",
             }
-        
+
         # Flatten (N, K) pairs and look up destination ranks
         # For each token n and expert choice k, determine dest_rank
         topk_indices_flat = topk_indices.reshape(-1)  # [N*K]
@@ -189,12 +201,13 @@ class FallbackMoECommunicator:
             total_recv, H, dtype=hidden_states.dtype, device=self.device
         )
         
-        dist.all_to_all_single(
+        hidden_work = dist.all_to_all_single(
             recv_hidden,
             send_hidden,
             output_split_sizes=recv_counts,
             input_split_sizes=send_counts,
             group=self.ep_group,
+            async_op=True,
         )
         
         # Step 3: All-to-all weights
@@ -202,18 +215,15 @@ class FallbackMoECommunicator:
             total_recv, dtype=topk_weights.dtype, device=self.device
         )
         
-        dist.all_to_all_single(
+        weights_work = dist.all_to_all_single(
             recv_weights,
             send_weights,
             output_split_sizes=recv_counts,
             input_split_sizes=send_counts,
             group=self.ep_group,
+            async_op=True,
         )
-        
-        logger.debug(
-            f"Dispatch complete: sent {NK} tokens, received {total_recv} tokens"
-        )
-        
+
         return {
             "recv_hidden": recv_hidden,
             "recv_weights": recv_weights,
@@ -222,7 +232,28 @@ class FallbackMoECommunicator:
             "send_perm": send_perm,
             "original_shape": (N, K, H),
             "topk_weights": topk_weights,
+            "_works": [hidden_work, weights_work],
+            "_send_hidden": send_hidden,
+            "_send_weights": send_weights,
+            "_send_counts_tensor": send_counts_tensor,
+            "_recv_counts_tensor": recv_counts_tensor,
+            "_complete": False,
+            "_comm_impl": "fallback",
         }
+
+    def wait_dispatch(self, dispatch_handle: Dict) -> Dict:
+        """Wait for async dispatch completion."""
+        if not dispatch_handle.get("_complete", False):
+            for work in dispatch_handle.get("_works", []):
+                work.wait()
+            dispatch_handle["_complete"] = True
+            N, K, _H = dispatch_handle["original_shape"]
+            logger.debug(
+                "Dispatch complete: sent %s tokens, received %s tokens",
+                N * K,
+                sum(dispatch_handle["recv_counts"]),
+            )
+        return dispatch_handle
     
     def combine(
         self,
@@ -239,31 +270,63 @@ class FallbackMoECommunicator:
         Returns:
             Combined token embeddings [N, H]
         """
+        dispatch_handle = self.wait_dispatch(dispatch_handle)
+        combine_handle = self.combine_async(ffn_outputs, dispatch_handle)
+        return self.wait_combine(combine_handle)
+
+    def combine_async(
+        self,
+        ffn_outputs: torch.Tensor,
+        dispatch_handle: Dict,
+    ) -> Dict:
+        """Enqueue output combine and return a waitable handle."""
+        dispatch_handle = self.wait_dispatch(dispatch_handle)
         N, K, H = dispatch_handle["original_shape"]
         send_counts = dispatch_handle["send_counts"]
         recv_counts = dispatch_handle["recv_counts"]
-        send_perm = dispatch_handle["send_perm"]
-        topk_weights = dispatch_handle["topk_weights"]
-        
-        # Handle K=0 edge case
+
         if K == 0:
-            return torch.zeros(N, H, device=self.device, dtype=ffn_outputs.dtype)
-        
+            return {
+                "combined": torch.zeros(N, H, device=self.device, dtype=ffn_outputs.dtype),
+                "_complete": True,
+                "_comm_impl": "fallback",
+            }
+
         NK = N * K
-        
-        # Step 1: Reverse all-to-all to get back [N*K, H] in send_perm order
         gathered_hidden = torch.empty(
             NK, H, dtype=ffn_outputs.dtype, device=self.device
         )
-        
-        dist.all_to_all_single(
+
+        work = dist.all_to_all_single(
             gathered_hidden,
             ffn_outputs,
             output_split_sizes=send_counts,
             input_split_sizes=recv_counts,
             group=self.ep_group,
+            async_op=True,
         )
-        
+
+        return {
+            "gathered_hidden": gathered_hidden,
+            "ffn_outputs": ffn_outputs,
+            "dispatch_handle": dispatch_handle,
+            "_work": work,
+            "_complete": False,
+            "_comm_impl": "fallback",
+        }
+
+    def wait_combine(self, combine_handle: Dict) -> torch.Tensor:
+        """Wait for async combine completion and return combined outputs."""
+        if combine_handle.get("_complete", False):
+            return combine_handle["combined"]
+
+        combine_handle["_work"].wait()
+        dispatch_handle = combine_handle["dispatch_handle"]
+        N, K, H = dispatch_handle["original_shape"]
+        send_perm = dispatch_handle["send_perm"]
+        topk_weights = dispatch_handle["topk_weights"]
+        gathered_hidden = combine_handle["gathered_hidden"]
+
         # Step 2: Apply inverse permutation to restore (n, k) order
         inverse_perm = torch.argsort(send_perm)
         hidden_restored = gathered_hidden[inverse_perm]  # [N*K, H]
@@ -275,9 +338,10 @@ class FallbackMoECommunicator:
         topk_weights_expanded = topk_weights.unsqueeze(-1)  # [N, K, 1]
         weighted = hidden_reshaped * topk_weights_expanded  # [N, K, H]
         output = weighted.sum(dim=1)  # [N, H]
-        
+
+        combine_handle["combined"] = output
+        combine_handle["_complete"] = True
         logger.debug(f"Combine complete: output shape {output.shape}")
-        
         return output
     
     @property

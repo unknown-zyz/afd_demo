@@ -353,6 +353,37 @@ class MoECommunicator:
 
         return combined
 
+    def dispatch_async(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> Dict:
+        """Compatibility async dispatch handle for the DeepEP wrapper."""
+        handle = self.dispatch(hidden_states, topk_indices, topk_weights)
+        handle["_complete"] = True
+        return handle
+
+    def wait_dispatch(self, dispatch_handle: Dict) -> Dict:
+        """DeepEP dispatch returns a ready handle through the current wrapper."""
+        return dispatch_handle
+
+    def combine_async(
+        self,
+        ffn_outputs: torch.Tensor,
+        dispatch_handle: Dict,
+    ) -> Dict:
+        """Compatibility async combine handle for the DeepEP wrapper."""
+        return {
+            "combined": self.combine(ffn_outputs, dispatch_handle),
+            "_complete": True,
+            "_comm_impl": "deepep",
+        }
+
+    def wait_combine(self, combine_handle: Dict) -> torch.Tensor:
+        """Return the combined tensor from a compatibility async handle."""
+        return combine_handle["combined"]
+
     @property
     def deepep_available(self) -> bool:
         """Check if DeepEP-Ascend is available."""

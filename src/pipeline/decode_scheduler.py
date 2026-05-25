@@ -19,6 +19,7 @@ import torch
 import torch.distributed as dist
 
 from ..distributed import get_distributed_context
+from ..utils import device as devmod
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ class DecodeDBOScheduler:
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         use_crosslayer: bool = False,
+        use_stream_overlap: bool = False,
     ):
         self.model = model
         self.ctx = get_distributed_context()
@@ -100,6 +102,8 @@ class DecodeDBOScheduler:
         self.comm_timing_mode = comm_timing_mode
         self.stats = DecodeDBOStats()
         self._timing_data: Optional[PipelineTiming] = None
+        self.use_stream_overlap = use_stream_overlap
+        self.compute_stream = devmod.Stream() if use_stream_overlap and devmod.is_available() else None
         # Track timing on 0-based step 1: skip step 0 warmup/cold-start effects.
         self._timing_step = 1
         self._current_step = 0
@@ -116,7 +120,8 @@ class DecodeDBOScheduler:
         _ = self.ctx.a2f_group
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}, "
-            f"use_crosslayer={use_crosslayer}, comm_timing={comm_timing_mode}"
+            f"use_crosslayer={use_crosslayer}, stream_overlap={use_stream_overlap}, "
+            f"comm_timing={comm_timing_mode}"
         )
 
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
@@ -130,6 +135,15 @@ class DecodeDBOScheduler:
         base = batch_size // num_mb
         remainder = batch_size % num_mb
         return [base + (1 if i < remainder else 0) for i in range(num_mb)]
+
+    def _compute_on_stream(self, fn):
+        """Run accelerator compute on the optional compute stream."""
+        if self.compute_stream is None:
+            return fn()
+        with devmod.stream_context(self.compute_stream):
+            result = fn()
+        self.compute_stream.synchronize()
+        return result
 
     def _use_ep_overlap(self, num_mb: int) -> bool:
         return (
@@ -485,15 +499,20 @@ class DecodeDBOScheduler:
                 cos, sin = position_embeddings
                 mb_pos_emb = (cos[start:end], sin[start:end])
 
-            attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
-                layer_idx=layer_idx,
-                hidden_states=mb_hidden,
-                attention_mask=mb_mask,
-                position_ids=mb_pos_ids,
-                position_embeddings=mb_pos_emb,
-                use_cache=True,
-                past_key_value=kv_cache,
-                layer_input_cache=mb_layer_input_caches[mb_idx],
+            attn_output, residual, _ = self._compute_on_stream(
+                lambda layer_idx=layer_idx, mb_hidden=mb_hidden, mb_mask=mb_mask,
+                       mb_pos_ids=mb_pos_ids, mb_pos_emb=mb_pos_emb, mb_idx=mb_idx: (
+                    self.model.attention_worker.forward_attention_layer(
+                        layer_idx=layer_idx,
+                        hidden_states=mb_hidden,
+                        attention_mask=mb_mask,
+                        position_ids=mb_pos_ids,
+                        position_embeddings=mb_pos_emb,
+                        use_cache=True,
+                        past_key_value=kv_cache,
+                        layer_input_cache=mb_layer_input_caches[mb_idx],
+                    )
+                )
             )
 
             mb_updated_keys.append(cache_layer.keys)
@@ -593,15 +612,20 @@ class DecodeDBOScheduler:
                     cos, sin = position_embeddings
                     mb_pos_emb = (cos[start:end], sin[start:end])
 
-                attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=mb_hidden,
-                    attention_mask=mb_mask,
-                    position_ids=mb_pos_ids,
-                    position_embeddings=mb_pos_emb,
-                    use_cache=True,
-                    past_key_value=kv_cache,
-                    layer_input_cache=mb_layer_input_caches[mb_idx],
+                attn_output, residual, _ = self._compute_on_stream(
+                    lambda layer_idx=layer_idx, mb_hidden=mb_hidden, mb_mask=mb_mask,
+                           mb_pos_ids=mb_pos_ids, mb_pos_emb=mb_pos_emb, mb_idx=mb_idx: (
+                        self.model.attention_worker.forward_attention_layer(
+                            layer_idx=layer_idx,
+                            hidden_states=mb_hidden,
+                            attention_mask=mb_mask,
+                            position_ids=mb_pos_ids,
+                            position_embeddings=mb_pos_emb,
+                            use_cache=True,
+                            past_key_value=kv_cache,
+                            layer_input_cache=mb_layer_input_caches[mb_idx],
+                        )
+                    )
                 )
 
                 mb_updated_keys.append(cache_layer.keys)
@@ -733,10 +757,14 @@ class DecodeDBOScheduler:
                 if tracker:
                     tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
-                ffn_result = self.model.ffn_worker.forward_ffn_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=a2f_recv_tensors[mb_idx],
-                    return_timing=bool(tracker and self.model.supports_moe_timing),
+                ffn_result = self._compute_on_stream(
+                    lambda layer_idx=layer_idx, hidden_states=a2f_recv_tensors[mb_idx]: (
+                        self.model.ffn_worker.forward_ffn_layer(
+                            layer_idx=layer_idx,
+                            hidden_states=hidden_states,
+                            return_timing=bool(tracker and self.model.supports_moe_timing),
+                        )
+                    )
                 )
                 if isinstance(ffn_result, tuple):
                     output, stage_timing = ffn_result

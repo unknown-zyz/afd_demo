@@ -153,6 +153,17 @@ class AsyncPipelineScheduler:
         tensor = torch.empty(shape, dtype=self.model.dtype, device=self.model.device)
         handle = dist.irecv(tensor, src=self.ctx.peer_rank, tag=tag)
         return handle, tensor
+
+    def _compute_on_stream(self, fn):
+        """Run accelerator compute on the optional compute stream."""
+        if self.compute_stream is None:
+            return fn()
+        with devmod.stream_context(self.compute_stream):
+            result = fn()
+        # The following communication op consumes this tensor on the default/HCCL
+        # stream, so make the producer stream complete before enqueueing send.
+        self.compute_stream.synchronize()
+        return result
     
     def _wait_all_sends(self):
         """Wait for all pending sends to complete."""
@@ -323,13 +334,15 @@ class AsyncPipelineScheduler:
                 devmod.current_stream_synchronize()
             compute_start = time.perf_counter()
             
-            attn_output, residual = self.model.attention_worker.forward_attention_layer(
-                layer_idx=0,
-                hidden_states=mb.hidden_states,
-                attention_mask=mb.attention_mask,
-                position_ids=mb.position_ids,
-                position_embeddings=mb.position_embeddings,
-                layer_input_cache=mb.layer_input_cache,
+            attn_output, residual = self._compute_on_stream(
+                lambda mb=mb: self.model.attention_worker.forward_attention_layer(
+                    layer_idx=0,
+                    hidden_states=mb.hidden_states,
+                    attention_mask=mb.attention_mask,
+                    position_ids=mb.position_ids,
+                    position_embeddings=mb.position_embeddings,
+                    layer_input_cache=mb.layer_input_cache,
+                )
             )
             # Pre-add residual on attention side to halve A2F data (1×H instead of 2×H)
             packed = (attn_output + residual).contiguous()
@@ -401,13 +414,15 @@ class AsyncPipelineScheduler:
                     devmod.current_stream_synchronize()
                 compute_start = time.perf_counter()
                 
-                attn_output, residual = self.model.attention_worker.forward_attention_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=mb.hidden_states,
-                    attention_mask=mb.attention_mask,
-                    position_ids=mb.position_ids,
-                    position_embeddings=mb.position_embeddings,
-                    layer_input_cache=mb.layer_input_cache,
+                attn_output, residual = self._compute_on_stream(
+                    lambda mb=mb, layer_idx=layer_idx: self.model.attention_worker.forward_attention_layer(
+                        layer_idx=layer_idx,
+                        hidden_states=mb.hidden_states,
+                        attention_mask=mb.attention_mask,
+                        position_ids=mb.position_ids,
+                        position_embeddings=mb.position_embeddings,
+                        layer_input_cache=mb.layer_input_cache,
+                    )
                 )
                 packed = (attn_output + residual).contiguous()
                 
@@ -563,10 +578,14 @@ class AsyncPipelineScheduler:
                 
                 # Compute FFN (input is pre-combined: attn_output + residual)
                 compute_start = time.perf_counter()
-                ffn_result = self.model.ffn_worker.forward_ffn_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=hidden_states_in,
-                    return_timing=bool(tracker and self.model.supports_moe_timing),
+                ffn_result = self._compute_on_stream(
+                    lambda layer_idx=layer_idx, hidden_states_in=hidden_states_in: (
+                        self.model.ffn_worker.forward_ffn_layer(
+                            layer_idx=layer_idx,
+                            hidden_states=hidden_states_in,
+                            return_timing=bool(tracker and self.model.supports_moe_timing),
+                        )
+                    )
                 )
                 if isinstance(ffn_result, tuple):
                     output, stage_timing = ffn_result

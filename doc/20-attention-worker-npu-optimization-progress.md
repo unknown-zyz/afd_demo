@@ -25,8 +25,9 @@ Current conclusion:
 | RMSNorm/RoPE fusion | Implemented | Uses `torch_npu.npu_rms_norm` or `npu_fused_rms_norm` if present, and `torch_npu.npu_rotary_mul`. |
 | msprof workflow | Implemented | `run_npu.sh`/matrix support msprof collection and analysis flags. |
 | Reserved NPU pool | Implemented | `--reserved-npus` removes devices from active launch pool and records metadata. |
-| Attention TP | Not implemented | Deferred until kernel/fusion path shows end-to-end benefit. |
-| NPU stream overlap / async MoE communicator | Not implemented | Deferred behind TPOT-positive attention path. |
+| NPU stream overlap | Implemented for static A/F paths | `--attn-stream-overlap` now controls accelerator compute streams in prefill and decode DBO schedulers; MB3/MB4 NPU smokes passed. |
+| Async MoE communicator protocol | Implemented at communicator API level | Fallback all-to-all payloads use `async_op=True` handles with tensor lifetime retention; coordinator skeleton now calls async dispatch/combine. |
+| Attention TP | Not implemented | Requires multi-attention-rank execution semantics and Q/K/V/O weight partitioning; blocked until a safe TP topology is designed. |
 
 ## Single-layer benchmark
 
@@ -120,6 +121,61 @@ Artifacts in Host1 worktree:
 
 The single-layer decode-core improvement does not yet transfer cleanly to the real decode-DBO TPOT metric. Multi-node large-batch decode-DBO should wait until the full AttentionLayer path or scheduler integration shows TPOT-positive behavior on Host1.
 
+## Stream-overlap and MB3/MB4 validation
+
+`--attn-stream-overlap` is now wired into both prefill `AsyncPipelineScheduler` and decode `DecodeDBOScheduler`. When enabled on CUDA/NPU backends, scheduler compute sections run on an accelerator compute stream while communication remains asynchronous through the existing distributed send/recv handles.
+
+Host1 NPU smoke commands used the 2-rank topology with `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`:
+
+```bash
+ASCEND_VISIBLE_DEVICES=0,1 MASTER_PORT=29841 HCCL_IF_BASE_PORT=29901 \
+  bash scripts/run_npu.sh --batch 3 --seq 32 --tokens 4 \
+    --no-generate --attn-stream-overlap --num-micro-batches 3 \
+    --model-name /models/Qwen3-30B-A3B
+
+ASCEND_VISIBLE_DEVICES=2,3 MASTER_PORT=29842 HCCL_IF_BASE_PORT=29922 \
+  bash scripts/run_npu.sh --batch 3 --seq 32 --tokens 4 \
+    --attn-stream-overlap --num-micro-batches 3 \
+    --model-name /models/Qwen3-30B-A3B
+
+ASCEND_VISIBLE_DEVICES=4,5 MASTER_PORT=29843 HCCL_IF_BASE_PORT=29943 \
+  bash scripts/run_npu.sh --batch 4 --seq 32 --tokens 4 \
+    --no-generate --attn-stream-overlap --num-micro-batches 4 \
+    --model-name /models/Qwen3-30B-A3B
+
+ASCEND_VISIBLE_DEVICES=6,7 MASTER_PORT=29844 HCCL_IF_BASE_PORT=29964 \
+  bash scripts/run_npu.sh --batch 4 --seq 32 --tokens 4 \
+    --attn-stream-overlap --num-micro-batches 4 \
+    --model-name /models/Qwen3-30B-A3B
+```
+
+All four runs exited 0. Timing metadata confirmed `attn_stream_overlap: true` and `num_micro_batches` of 3 or 4:
+
+| Case | num_micro_batches | total_time_ms | decode_tpot_ms |
+|---|---:|---:|---:|
+| prefill b3/s32/t4 | 3 | 660.0 | N/A |
+| decode b3/s32/t4 | 3 | 278.0 | 304.0 |
+| prefill b4/s32/t4 | 4 | 858.3 | N/A |
+| decode b4/s32/t4 | 4 | 387.4 | 405.6 |
+
+## Async MoE communicator protocol
+
+The coordinator communicator interface now includes:
+
+- `dispatch_async(...)`
+- `wait_dispatch(handle)`
+- `combine_async(...)`
+- `wait_combine(handle)`
+
+For `FallbackMoECommunicator`, dispatch still exchanges route counts synchronously because payload sizes depend on those counts. The hidden-state and weight payload all-to-alls are then enqueued with `async_op=True`, and the returned handle keeps send buffers, count tensors, receive buffers, and `dist.Work` objects alive until `wait_dispatch()`.
+
+`combine_async()` similarly enqueues the reverse all-to-all with `async_op=True`; `wait_combine()` waits and then performs inverse permutation plus top-k weighting. The DeepEP wrapper exposes the same methods as compatibility handles around its current synchronous wrapper calls. The coordinator skeleton worker now uses the async methods, so future real FFN serving can overlap dispatch of later microbatches with combine of earlier ones without changing the public communicator API.
+
+Validation:
+
+- Host1 container compile check for `src/coordinator_arch/comm/*`, coordinator attention worker, and communicator tests passed.
+- Host1 mocked-collective smoke verified fallback `dispatch_async -> wait_dispatch -> combine_async -> wait_combine` returns the expected tensor and waits the payload work handles.
+
 ## Community flash-attention-npu assessment
 
 Source: `MinghuasLab/flash-attention-npu`.
@@ -147,6 +203,7 @@ Findings:
    - include output projection and KV-cache update in the decode microbenchmark,
    - add per-stage timing inside `AttentionLayer._forward_npu_official_attention`,
    - compare layout transposes, QKV projection cost, and scheduler timing.
-3. Run msprof op profiling on HF vs official+fusion for the b8/s128/t20 decode-DBO case.
-4. Only after Host1 end-to-end TPOT is positive, run cross-host large-batch decode-DBO with fresh `MASTER_PORT`/`HCCL_IF_BASE_PORT`.
-5. Keep community flash-attention-npu as a benchmark-only comparator unless a future shape matrix shows a clear advantage.
+3. Extend the stream-overlap path to EP async MoE communicator handles only after the static A/F stream path has a TPOT-positive configuration.
+4. Run msprof op profiling on HF vs official+fusion for the b8/s128/t20 decode-DBO case.
+5. Only after Host1 end-to-end TPOT is positive, run cross-host large-batch decode-DBO with fresh `MASTER_PORT`/`HCCL_IF_BASE_PORT`.
+6. Keep community flash-attention-npu as a benchmark-only comparator unless a future shape matrix shows a clear advantage.

@@ -424,7 +424,8 @@ def run_inference_demo(args):
     if use_dbo:
         scheduler = AsyncPipelineScheduler(
             model=model, num_micro_batches=args.num_micro_batches,
-            use_cuda_streams=True, enable_timing=args.timing,
+            use_cuda_streams=attention_optimization_config.stream_overlap,
+            enable_timing=args.timing,
             timing_mode=args.timing_mode,
             comm_timing_mode=args.comm_timing_mode,
         )
