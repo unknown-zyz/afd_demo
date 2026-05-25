@@ -38,6 +38,7 @@ TOKENS=5
 BATCH=8
 SEQ=128
 NUM_MICRO_BATCHES=2
+RESERVED_NPUS="${AFD_RESERVED_NPUS:-}"
 EXTRA_ARGS=()
 TIMING_ARGS=(--timing)
 
@@ -65,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
         --num-micro-batches) NUM_MICRO_BATCHES="$2"; shift 2 ;;
+        --reserved-npus) RESERVED_NPUS="$2"; shift 2 ;;
         --no-timing)    TIMING_ARGS=(); shift ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
@@ -91,10 +93,74 @@ echo "world_size=$WORLD_SIZE  batch=$BATCH  seq=$SEQ  tokens=$TOKENS  num_micro_
 # For the validated 2-rank NPU topology, split ASCEND_VISIBLE_DEVICES in half by
 # default. Other topologies keep the legacy fallback unless ATTN_DEVICES/FFN_DEVICES
 # are explicitly provided.
-DEFAULT_DEVS=$(seq -s, 0 $((WORLD_SIZE-1)))
+if [ -n "$RESERVED_NPUS" ] && [[ "$RESERVED_NPUS" =~ ^[0-9]+$ ]]; then
+    TOTAL_NPUS="${AFD_TOTAL_NPUS:-16}"
+    DEFAULT_DEVS=$(seq -s, 0 $((TOTAL_NPUS-1)))
+else
+    DEFAULT_DEVS=$(seq -s, 0 $((WORLD_SIZE-1)))
+fi
 export ASCEND_VISIBLE_DEVICES="${ASCEND_VISIBLE_DEVICES:-$DEFAULT_DEVS}"
 ATTN_DEVICES="${ATTN_DEVICES:-}"
 FFN_DEVICES="${FFN_DEVICES:-}"
+
+join_by_comma() {
+    local IFS=,
+    echo "$*"
+}
+
+contains_item() {
+    local needle="$1"; shift
+    local item
+    for item in "$@"; do
+        [ "$item" = "$needle" ] && return 0
+    done
+    return 1
+}
+
+if [ -n "$RESERVED_NPUS" ]; then
+    IFS=',' read -ra VISIBLE_FOR_RESERVE <<< "$ASCEND_VISIBLE_DEVICES"
+    RESERVED_LIST=()
+    if [[ "$RESERVED_NPUS" =~ ^[0-9]+$ ]]; then
+        reserve_count="$RESERVED_NPUS"
+        if (( reserve_count > ${#VISIBLE_FOR_RESERVE[@]} )); then
+            echo "ERROR: --reserved-npus=$reserve_count exceeds visible device count ${#VISIBLE_FOR_RESERVE[@]}" >&2
+            exit 1
+        fi
+        start_idx=$(( ${#VISIBLE_FOR_RESERVE[@]} - reserve_count ))
+        RESERVED_LIST=("${VISIBLE_FOR_RESERVE[@]:$start_idx}")
+    else
+        IFS=',' read -ra RESERVED_LIST <<< "$RESERVED_NPUS"
+    fi
+    ACTIVE_LIST=()
+    for dev in "${VISIBLE_FOR_RESERVE[@]}"; do
+        if ! contains_item "$dev" "${RESERVED_LIST[@]}"; then
+            ACTIVE_LIST+=("$dev")
+        fi
+    done
+    if (( ${#ACTIVE_LIST[@]} < WORLD_SIZE )); then
+        echo "ERROR: active NPU count ${#ACTIVE_LIST[@]} after reservation is less than world_size=$WORLD_SIZE" >&2
+        exit 1
+    fi
+    ASCEND_VISIBLE_DEVICES=$(join_by_comma "${ACTIVE_LIST[@]}")
+    export ASCEND_VISIBLE_DEVICES
+    export AFD_RESERVED_NPUS
+    AFD_RESERVED_NPUS=$(join_by_comma "${RESERVED_LIST[@]}")
+    export AFD_ACTIVE_NPUS="$ASCEND_VISIBLE_DEVICES"
+fi
+
+if [ -n "$ATTN_DEVICES" ] || [ -n "$FFN_DEVICES" ]; then
+    IFS=',' read -ra RESERVED_CHECK <<< "${AFD_RESERVED_NPUS:-}"
+    IFS=',' read -ra ATTN_CHECK <<< "$ATTN_DEVICES"
+    IFS=',' read -ra FFN_CHECK <<< "$FFN_DEVICES"
+    for dev in "${RESERVED_CHECK[@]}"; do
+        [ -z "$dev" ] && continue
+        if contains_item "$dev" "${ATTN_CHECK[@]}" || contains_item "$dev" "${FFN_CHECK[@]}"; then
+            echo "ERROR: reserved NPU $dev is present in ATTN_DEVICES/FFN_DEVICES" >&2
+            exit 1
+        fi
+    done
+fi
+
 if [ -z "$ATTN_DEVICES" ] && [ -z "$FFN_DEVICES" ] && [ "$ATTN_SIZE" -eq 1 ] && [ "$FFN_SIZE" -eq 1 ]; then
     IFS=',' read -ra VISIBLE_DEV_ARR <<< "$ASCEND_VISIBLE_DEVICES"
     if [ "${#VISIBLE_DEV_ARR[@]}" -ge 2 ]; then
@@ -104,7 +170,7 @@ if [ -z "$ATTN_DEVICES" ] && [ -z "$FFN_DEVICES" ] && [ "$ATTN_SIZE" -eq 1 ] && 
         FFN_DEVICES=$(IFS=','; echo "${VISIBLE_DEV_ARR[*]:$split_idx}")
     fi
 fi
-echo "visible_devices=$ASCEND_VISIBLE_DEVICES  attn_devices=${ATTN_DEVICES:-<global>}  ffn_devices=${FFN_DEVICES:-<global>}"
+echo "visible_devices=$ASCEND_VISIBLE_DEVICES  reserved_npus=${AFD_RESERVED_NPUS:-<none>}  attn_devices=${ATTN_DEVICES:-<global>}  ffn_devices=${FFN_DEVICES:-<global>}"
 export HCCL_BUFFSIZE="${HCCL_BUFFSIZE:-200}"           # MB
 export HCCL_CONNECT_TIMEOUT="${HCCL_CONNECT_TIMEOUT:-600}"
 export HCCL_EXEC_TIMEOUT="${HCCL_EXEC_TIMEOUT:-1800}"
@@ -182,6 +248,7 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
         RANK=$RANK LOCAL_RANK=$LOCAL_RANK WORLD_SIZE=$WORLD_SIZE \
         ATTN_SIZE=$ATTN_SIZE FFN_SIZE=$FFN_SIZE FFN_EP_SIZE=$FFN_EP_SIZE \
         FFN_COORDINATOR_RANK=$ATTN_SIZE FFN_EP_BACKEND=$FFN_EP_BACKEND EP_EXPERT_POLICY=$EP_EXPERT_POLICY \
+        AFD_RESERVED_NPUS="${AFD_RESERVED_NPUS:-}" AFD_ACTIVE_NPUS="${AFD_ACTIVE_NPUS:-$ASCEND_VISIBLE_DEVICES}" \
         MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT \
         python -u -m src.main \
             --backend npu \
@@ -198,6 +265,7 @@ for (( R=0; R<WORLD_SIZE; R++ )); do
             --ffn-ep-backend "$FFN_EP_BACKEND" \
             --ffn-coordinator-rank "$ATTN_SIZE" \
             --ep-expert-policy "$EP_EXPERT_POLICY" \
+            --reserved-npus "${AFD_RESERVED_NPUS:-}" \
             --batch-size "$BATCH" \
             --prefill-seq-len "$SEQ" \
             --max-new-tokens "$TOKENS" \

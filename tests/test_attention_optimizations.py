@@ -1,6 +1,9 @@
+import os
+
 import torch
 import torch.nn as nn
 
+from src.distributed import DistributedConfig, DistributedContext
 from src.model.attention_worker import (
     AttentionLayer,
     AttentionLayerInputCache,
@@ -81,3 +84,24 @@ def test_attention_layer_input_cache_gets_by_device():
     cache = AttentionLayerInputCache({"cpu": inputs})
 
     assert cache.get(torch.device("cpu")) is inputs
+
+
+def test_distributed_context_reports_reserved_and_active_npus():
+    old_active = os.environ.get("AFD_ACTIVE_NPUS")
+    os.environ["AFD_ACTIVE_NPUS"] = "0,1"
+    try:
+        ctx = DistributedContext()
+        ctx.config = DistributedConfig(
+            rank=0,
+            world_size=1,
+            local_rank=0,
+            reserved_npus="2,3",
+        )
+
+        assert ctx.reserved_npus == [2, 3]
+        assert ctx.active_npus == [0, 1]
+    finally:
+        if old_active is None:
+            os.environ.pop("AFD_ACTIVE_NPUS", None)
+        else:
+            os.environ["AFD_ACTIVE_NPUS"] = old_active

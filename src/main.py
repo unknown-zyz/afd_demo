@@ -219,6 +219,10 @@ def parse_args():
                         help='Decode-step interval for --routing-update-mode=poll.')
     parser.add_argument('--routing-rpc-timeout-s', type=float, default=0.05,
                         help='Per-RPC timeout for safe-point routing polls.')
+    parser.add_argument('--reserved-npus', type=str, default=os.environ.get("AFD_RESERVED_NPUS", ""),
+                        help='Comma-separated physical NPU ids, or a count, reserved for EPLB '
+                             'expert replicas. Reserved NPUs are excluded by launch scripts '
+                             'from initial DP/TP/EP groups.')
 
     return parser.parse_args()
 
@@ -315,6 +319,7 @@ def build_distributed_config(args) -> DistributedConfig:
         ffn_coordinator_rank=args.ffn_coordinator_rank,
         ffn_ep_backend=args.ffn_ep_backend,
         ep_expert_policy=args.ep_expert_policy,
+        reserved_npus=args.reserved_npus,
     )
 
 

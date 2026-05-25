@@ -113,7 +113,10 @@ class DisaggregatedQwenModel(nn.Module):
         self.routing_poll_ms: float = 0.0
 
     def attention_optimization_metadata(self) -> Dict[str, Any]:
-        return self.attention_optimization_config.to_dict()
+        metadata = self.attention_optimization_config.to_dict()
+        metadata["reserved_npus"] = self.ctx.reserved_npus
+        metadata["active_npus"] = self.ctx.active_npus
+        return metadata
 
     def _ensure_supported_coordinator_topology(self) -> None:
         attn_world = len(self.ctx.attn_ranks)

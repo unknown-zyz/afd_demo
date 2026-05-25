@@ -18,6 +18,9 @@
 #   --tokens N      max_new_tokens for decode  (default: 20)
 #   --visible-devs list  ASCEND_VISIBLE_DEVICES
 #                        (default: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)
+#   --reserved-npus list|N
+#                        Reserve physical NPU ids, or reserve N devices from
+#                        the tail of --visible-devs, for EPLB replicas.
 #   --attn-devs list     Optional per-attention-rank visible devices
 #   --ffn-devs list      Optional per-FFN-rank visible devices
 #   --preset name        Optional run_npu.sh preset, e.g. npu-ep7
@@ -62,6 +65,7 @@ TOKENS=20
 ATTN_DEVS="${ATTN_DEVS:-}"
 FFN_DEVS="${FFN_DEVS:-}"
 VISIBLE_DEVS="${VISIBLE_DEVS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
+RESERVED_NPUS="${AFD_RESERVED_NPUS:-}"
 RUN_PRESET=""
 FFN_EP_BACKEND="broadcast_reduce_sync"
 EP_EXPERT_POLICY="round_robin"
@@ -108,6 +112,7 @@ while [ $# -gt 0 ]; do
         --attn-devs) ATTN_DEVS="$2"; shift 2;;
         --ffn-devs) FFN_DEVS="$2"; shift 2;;
         --visible-devs) VISIBLE_DEVS="$2"; shift 2;;
+        --reserved-npus) RESERVED_NPUS="$2"; shift 2;;
         --preset) RUN_PRESET="$2"; shift 2;;
         --ffn-ep-backend) FFN_EP_BACKEND="$2"; shift 2;;
         --ep-expert-policy) EP_EXPERT_POLICY="$2"; shift 2;;
@@ -285,6 +290,10 @@ run_one() {
     if [ -n "$PREFILL_WARMUP_ROUNDS" ]; then
         extra="$extra --prefill-warmup-rounds $PREFILL_WARMUP_ROUNDS"
     fi
+    local reserve_arg=""
+    if [ -n "$RESERVED_NPUS" ]; then
+        reserve_arg="--reserved-npus $RESERVED_NPUS"
+    fi
     local coord_bind_effective=""
     local coord_log=""
     if [ "$ROUTING_BACKEND" = "coordinator" ]; then
@@ -306,9 +315,9 @@ run_one() {
     echo "════════════════════════════════════════════════════════════"
     if [ "$DRY_RUN" = true ]; then
         if [ -n "$RUN_PRESET" ]; then
-            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --preset $RUN_PRESET --ffn-ep-backend $FFN_EP_BACKEND --ep-expert-policy $EP_EXPERT_POLICY --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
+            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --preset $RUN_PRESET --ffn-ep-backend $FFN_EP_BACKEND --ep-expert-policy $EP_EXPERT_POLICY $reserve_arg --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         else
-            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
+            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 $reserve_arg --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         fi
         return 0
     fi
@@ -347,8 +356,13 @@ run_one() {
     else
         run_args+=(--attn-size 1 --ffn-size 1 --ffn-tp-size 1)
     fi
+    local reserve_flags=()
+    if [ -n "$RESERVED_NPUS" ]; then
+        reserve_flags+=(--reserved-npus "$RESERVED_NPUS")
+    fi
     ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
         "${run_args[@]}" \
+        "${reserve_flags[@]}" \
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
         --num-micro-batches "$NUM_MICRO_BATCHES" \
         --model-name "$MODEL_NAME" \
