@@ -366,6 +366,11 @@ class AttentionLayer(nn.Module):
             value_states = value_states.contiguous()
 
         npu_mask = self._to_npu_attention_mask(attention_mask)
+        if npu_mask is None and seq_len > 1:
+            npu_mask = torch.triu(
+                torch.ones(seq_len, seq_len, dtype=torch.bool, device=query_states.device),
+                diagonal=1,
+            ).contiguous()
         if seq_len == 1 and past_key_value is not None:
             attn_output = flash_decode(
                 query_states,

@@ -1,0 +1,389 @@
+{
+  "model_name": "/models/Qwen3-30B-A3B",
+  "device": "npu:0",
+  "dtype": "torch.float16",
+  "layer_idx": 0,
+  "batch": 1,
+  "seq": 128,
+  "warmup": 5,
+  "iters": 20,
+  "repeats": 3,
+  "results": [
+    {
+      "case": "hf",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.7745968527160585,
+      "latency_samples_ms": [
+        0.8344853529706597,
+        0.753984646871686,
+        0.7745968527160585
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.07421875,
+        "reserved_mib": 92.0,
+        "peak_allocated_mib": 72.2021484375
+      },
+      "optimization": {
+        "attn_kernel": "hf",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      }
+    },
+    {
+      "case": "official",
+      "phase": "prefill_full_layer",
+      "latency_ms": 1.1146446457132697,
+      "latency_samples_ms": [
+        1.2130444520153105,
+        1.1146446457132697,
+        1.1111550964415073
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.57470703125,
+        "reserved_mib": 126.0,
+        "peak_allocated_mib": 75.3408203125
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 3.1103229503059993e-06,
+      "max_rel_diff": 9.179115295410156,
+      "mean_rel_diff": 0.004775623790919781
+    },
+    {
+      "case": "official_fused_rmsnorm",
+      "phase": "prefill_full_layer",
+      "latency_ms": 1.0074982419610023,
+      "latency_samples_ms": [
+        1.0193884023465216,
+        1.0064062546007335,
+        1.0074982419610023
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.57470703125,
+        "reserved_mib": 126.0,
+        "peak_allocated_mib": 75.84130859375
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.000244140625,
+      "mean_abs_diff": 4.718580385087989e-06,
+      "max_rel_diff": 14.781951904296875,
+      "mean_rel_diff": 0.007109354250133038
+    },
+    {
+      "case": "official_fused_rope",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.9994751890189946,
+      "latency_samples_ms": [
+        0.9962111944332719,
+        1.010566798504442,
+        0.9994751890189946
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.57470703125,
+        "reserved_mib": 126.0,
+        "peak_allocated_mib": 75.84130859375
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 3.3269520827161614e-06,
+      "max_rel_diff": 8.58306884765625,
+      "mean_rel_diff": 0.005135281011462212
+    },
+    {
+      "case": "official_fused_both",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.9359076502732933,
+      "latency_samples_ms": [
+        0.9359076502732933,
+        0.934558198787272,
+        0.9624573402106762
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.57470703125,
+        "reserved_mib": 126.0,
+        "peak_allocated_mib": 75.84130859375
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.000244140625,
+      "mean_abs_diff": 4.923262167721987e-06,
+      "max_rel_diff": 18.600000381469727,
+      "mean_rel_diff": 0.007666749879717827
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "decode_core",
+      "cache_len": 32,
+      "latency_ms": 0.05193945253267884,
+      "latency_samples_ms": [
+        0.05744744557887316,
+        0.05193945253267884,
+        0.051822897512465715
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 38.28466796875,
+        "reserved_mib": 126.0,
+        "peak_allocated_mib": 54.33642578125
+      }
+    },
+    {
+      "case": "official_ifa",
+      "phase": "decode_core",
+      "cache_len": 32,
+      "latency_ms": 0.03638179041445255,
+      "latency_samples_ms": [
+        0.03773930948227644,
+        0.03638179041445255,
+        0.03631529398262501
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 38.29296875,
+        "reserved_mib": 126.0,
+        "peak_allocated_mib": 54.7939453125
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "community_v2",
+      "phase": "decode_core",
+      "cache_len": 32,
+      "latency_ms": 4.773392656352371,
+      "latency_samples_ms": [
+        4.773392656352371,
+        4.958874697331339,
+        4.372374853119254
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 38.36474609375,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 106.3759765625
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "community_v3",
+      "phase": "decode_core",
+      "cache_len": 32,
+      "latency_ms": 4.8969596973620355,
+      "latency_samples_ms": [
+        4.803581396117806,
+        4.8969596973620355,
+        5.046007898636162
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 38.36474609375,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 106.38427734375
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "latency_ms": 0.039739301428198814,
+      "latency_samples_ms": [
+        0.039739301428198814,
+        0.03847285406664014,
+        0.04137380747124553
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 47.4404296875,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 64.703125
+      }
+    },
+    {
+      "case": "official_ifa",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "latency_ms": 0.04060985520482063,
+      "latency_samples_ms": [
+        0.04060985520482063,
+        0.04090284928679466,
+        0.04045430105179548
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 47.4404296875,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 64.16064453125
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "community_v2",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "latency_ms": 4.550690343603492,
+      "latency_samples_ms": [
+        4.781098198145628,
+        4.469848203007132,
+        4.550690343603492
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 47.17236328125,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 115.19189453125
+      },
+      "max_abs_diff": 4.76837158203125e-07,
+      "mean_abs_diff": 1.1641532182693481e-10,
+      "max_rel_diff": 0.0009718172950670123,
+      "mean_rel_diff": 2.372600818034698e-07
+    },
+    {
+      "case": "community_v3",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "latency_ms": 5.149856745265424,
+      "latency_samples_ms": [
+        4.80319089256227,
+        5.149856745265424,
+        5.201132700312883
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 47.17236328125,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 115.19189453125
+      },
+      "max_abs_diff": 4.76837158203125e-07,
+      "mean_abs_diff": 1.1641532182693481e-10,
+      "max_rel_diff": 0.0009718172950670123,
+      "mean_rel_diff": 2.372600818034698e-07
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "latency_ms": 0.04165284335613251,
+      "latency_samples_ms": [
+        0.04165284335613251,
+        0.03812729846686125,
+        0.05143439630046487
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 74.29296875,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 93.8056640625
+      }
+    },
+    {
+      "case": "official_ifa",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "latency_ms": 0.04209084436297417,
+      "latency_samples_ms": [
+        0.04209084436297417,
+        0.04106985870748758,
+        0.042996357660740614
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 74.29296875,
+        "reserved_mib": 190.0,
+        "peak_allocated_mib": 91.85693359375
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "community_v2",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "latency_ms": 4.436570906545967,
+      "latency_samples_ms": [
+        4.66006324859336,
+        4.436570906545967,
+        4.242207296192646
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 73.41357421875,
+        "reserved_mib": 192.0,
+        "peak_allocated_mib": 141.43310546875
+      },
+      "max_abs_diff": 1.9073486328125e-06,
+      "mean_abs_diff": 4.94765117764473e-10,
+      "max_rel_diff": 0.0005485463771037757,
+      "mean_rel_diff": 2.611452885048493e-07
+    },
+    {
+      "case": "community_v3",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "latency_ms": 4.862148407846689,
+      "latency_samples_ms": [
+        4.945995099842548,
+        4.862148407846689,
+        4.753574496135116
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 73.41357421875,
+        "reserved_mib": 192.0,
+        "peak_allocated_mib": 141.43310546875
+      },
+      "max_abs_diff": 1.9073486328125e-06,
+      "mean_abs_diff": 4.94765117764473e-10,
+      "max_rel_diff": 0.0005485463771037757,
+      "mean_rel_diff": 2.611452885048493e-07
+    }
+  ]
+}
