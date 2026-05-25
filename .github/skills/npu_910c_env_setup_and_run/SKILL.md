@@ -1,3 +1,12 @@
+---
+name: npu_910c
+description: >
+  Ascend 910C NPU remote testing workflow for this repository. Use for NPU-only
+  validation, benchmarks, Host1/Host2 resource checks, HCCL runs, and remote
+  experiment safety rules.
+allowed-tools: shell
+---
+
 # NPU-910C 远程实验 Skill
 
 > 本 skill 描述唯一允许的 NPU-910C 远程实验流程。不要使用 GPU 多机地址
