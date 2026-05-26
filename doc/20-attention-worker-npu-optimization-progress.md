@@ -9,7 +9,10 @@
 当前最新结论：
 
 - 旧的单层 benchmark 确实只测了第 0 层，不能单独代表 48 层平均。现在已补两组 NPU 数据：`batch=1..128, seq/cache=1..1024` 的 layer 0/23/47 形状矩阵，以及 48 层 representative aggregate。后续结论以 48 层 aggregate 为主。
-- 官方 NPU decode core（`torch_npu.npu_incre_flash_attention`）在 48 层 aggregate 上稳定快于 HF/SDPA：b1/cache1 为 `0.043ms vs 0.071ms`，b128/cache1024 为 `0.246ms vs 1.585ms`。
+- 新增补测明确了 benchmark 口径：`prefill_full_layer` 是完整 AttentionLayer 时间；旧 `decode_core` 只测 IFA/SDPA core，不等同于完整 decode Attention 侧时间。现在已补 `prefill_core` 和 `decode_full_layer` 两个 phase。
+- Prefill kernel-only 结果显示，小/中形状下 PFA core 本身也慢于 SDPA core：all-48 b1/s128 上 `official_pfa 0.195ms vs HF/SDPA 0.077ms`，因此 prefill 慢不能只归因于 full-layer 拆解开销。
+- Decode full-layer fusion 补测显示，raw official IFA full-layer 略慢于 HF，但 RMSNorm/RoPE fusion 可以把完整 decode AttentionLayer 拉到正收益：all-48 b1/cache128 上 `official+both 0.721ms vs HF 0.850ms`。
+- 官方 NPU decode core（`torch_npu.npu_incre_flash_attention`）在此前 48 层矩阵的大 batch/cache 上明显快于 HF/SDPA：b128/cache1024 为 `0.246ms vs 1.585ms`；但新增 b1/cache128 all-48 口径下 core 收益不明显，因此最终要按 shape 区间解读。
 - 官方 prefill 的 prompt FA 不是所有形状都快：小形状 b1/s128 仍慢于 HF；大形状下 `official + RMSNorm/RoPE fusion` 已经反超，例如 b128/s1024 为 `55.39ms vs HF 69.36ms`。
 - layer 输入预拷贝已经补了跨设备 A/B。对小形状减少重复 `.to()` 有明显收益；大形状收益较小但仍为正。
 - MB3/MB4 是 pipeline 按 batch 维切分，不是单层 Attention kernel 优化。b12/s128/t10 端到端对比显示 MB3/MB4 目前不应默认启用：prefill MB2 最快，decode TPOT 也是 MB2 最好。
@@ -42,6 +45,8 @@ Benchmark 脚本：`scripts/bench_attention_layer_npu.py`。
 - `--decode-cache-lens 1,16,32,64,128,256,512,1024`。
 - 输出 per-layer raw rows、48 层 aggregate、CSV、Markdown。
 - 表格字段已拆分为性能差异 `aggregate_speedup_vs_hf` / `aggregate_delta_ms_vs_hf` 和数值误差 `max_abs_diff` / `mean_abs_diff`，不再把“相比 HF 的差异”混写成一个含糊字段。
+- 新增 `--include-prefill-core`，单独测 SDPA core vs PFA core。
+- 新增 `--include-decode-full-layer`，单独测完整 decode AttentionLayer 的 fusion ablation。
 
 主要产物：
 
@@ -52,6 +57,10 @@ Benchmark 脚本：`scripts/bench_attention_layer_npu.py`。
 - `results_npu/attention_layer_bench/all48_representative_matrix.md`
 - `results_npu/attention_layer_bench/precopy_cross_device_layers_0_23_47.csv`
 - `results_npu/attention_layer_bench/precopy_cross_device_layers_0_23_47.md`
+- `results_npu/attention_layer_bench/scope_matrix_layers_0_23_47.csv`
+- `results_npu/attention_layer_bench/scope_matrix_layers_0_23_47.md`
+- `results_npu/attention_layer_bench/scope_all48_b1_s128_c128.csv`
+- `results_npu/attention_layer_bench/scope_all48_b1_s128_c128.md`
 
 实验环境：
 
@@ -81,6 +90,75 @@ ASCEND_VISIBLE_DEVICES=0 python scripts/bench_attention_layer_npu.py \
   --summary-csv results_npu/attention_layer_bench/all48_representative_matrix.csv \
   --summary-md results_npu/attention_layer_bench/all48_representative_matrix.md
 ```
+
+### 单层 benchmark 口径补测
+
+用户指出 prefill 和 decode 在真实推理时都应该代表 Attention 侧完整计算。代码核对后，原 benchmark 的两个主要 phase 口径确实不一致：
+
+| phase | 当前计时对象 | 包含 | 不包含 |
+|---|---|---|---|
+| `prefill_full_layer` | 完整 `AttentionLayer.forward()` | input RMSNorm、QKV、q/k norm、RoPE、PFA/SDPA、OProj、必要 device copy | FFN、A/F 通信 |
+| `decode_core` | 已准备好 q/k/v/cache 后的 core attention kernel | `scaled_dot_product_attention` 或 `npu_incre_flash_attention` | input RMSNorm、QKV、q/k norm、RoPE、真实 cache update、OProj |
+| `prefill_core` | 新增：已准备 q/k/v 后的 prefill core kernel | SDPA core 或 PFA core | input RMSNorm、QKV、RoPE、OProj |
+| `decode_full_layer` | 新增：完整 decode `AttentionLayer.forward()` | input RMSNorm、QKV、q/k norm、RoPE、cache update/read、IFA/SDPA、OProj | FFN、A/F 通信 |
+
+新增命令：
+
+```bash
+ASCEND_VISIBLE_DEVICES=0 python scripts/bench_attention_layer_npu.py \
+  --model-name /models/Qwen3-30B-A3B \
+  --device npu:0 \
+  --dtype bfloat16 \
+  --layer-idxs all \
+  --batches 1 \
+  --seqs 128 \
+  --decode-cache-lens 128 \
+  --warmup 1 \
+  --iters 5 \
+  --repeats 3 \
+  --include-prefill-core \
+  --include-decode-full-layer \
+  --no-print-json \
+  --output results_npu/attention_layer_bench/scope_all48_b1_s128_c128.json \
+  --summary-csv results_npu/attention_layer_bench/scope_all48_b1_s128_c128.csv \
+  --summary-md results_npu/attention_layer_bench/scope_all48_b1_s128_c128.md
+```
+
+#### all-48 b1/s128/cache128 新口径结果
+
+| phase | 路径 | 48 层中位延迟 | speedup vs HF | max abs diff | 结论 |
+|---|---|---:|---:|---:|---|
+| `prefill_core` | HF/SDPA | 0.077 ms | 1.00 | N/A | prefill core 基线 |
+| `prefill_core` | official PFA | 0.195 ms | 0.392 | 0 | PFA core 在该小形状下慢于 SDPA core |
+| `prefill_full_layer` | HF | 0.868 ms | 1.00 | N/A | full-layer 基线 |
+| `prefill_full_layer` | official + 两个 fusion | 0.990 ms | 0.877 | 2.78e-2 | full-layer 仍慢 |
+| `decode_core` | HF/SDPA | 0.047 ms | 1.00 | N/A | decode core 基线 |
+| `decode_core` | official IFA | 0.047 ms | 1.00 | 0 | b1/cache128 下 core 收益不明显 |
+| `decode_full_layer` | HF | 0.850 ms | 1.00 | N/A | decode full-layer 基线 |
+| `decode_full_layer` | official | 0.887 ms | 0.958 | 0 | raw official full-layer 略慢 |
+| `decode_full_layer` | official + RMSNorm fusion | 0.815 ms | 1.044 | 8.30e-3 | 小幅更快 |
+| `decode_full_layer` | official + RoPE fusion | 0.786 ms | 1.082 | 2.93e-3 | 更快 |
+| `decode_full_layer` | official + 两个 fusion | 0.721 ms | 1.179 | 7.81e-3 | 当前该形状最佳 |
+
+#### sampled layers 0/23/47 新口径结果
+
+| phase | Batch | Seq/cache | 路径 | 3 层中位延迟 | speedup vs HF | 结论 |
+|---|---:|---:|---|---:|---:|---|
+| `prefill_core` | 1 | seq 16 | official PFA | 0.171 ms | 0.563 | 慢于 SDPA core |
+| `prefill_core` | 1 | seq 128 | official PFA | 0.161 ms | 0.442 | 慢于 SDPA core |
+| `prefill_core` | 8 | seq 16 | official PFA | 0.207 ms | 0.519 | 慢于 SDPA core |
+| `prefill_core` | 8 | seq 128 | official PFA | 0.165 ms | 0.664 | 慢于 SDPA core |
+| `decode_full_layer` | 1 | cache 16 | official + 两个 fusion | 0.629 ms | 1.137 | 快于 HF full-layer |
+| `decode_full_layer` | 1 | cache 128 | official + 两个 fusion | 0.624 ms | 1.109 | 快于 HF full-layer |
+| `decode_full_layer` | 8 | cache 16 | official + 两个 fusion | 0.680 ms | 1.022 | 略快于 HF full-layer |
+| `decode_full_layer` | 8 | cache 128 | official + 两个 fusion | 0.687 ms | 1.115 | 快于 HF full-layer |
+
+解读：
+
+- Prefill 小/中形状下，PFA core 本身就慢于 SDPA core；full-layer 慢不只是 QKV/OProj/RoPE/layout 的问题。
+- 但旧矩阵显示大 batch / 长 seq 下 `official + fusion` full-layer 能反超，因此还需要补大形状 `prefill_core`，判断 PFA core 是否在大形状转正。
+- Decode 必须区分 core 与 full-layer。`decode_core` 只说明 IFA kernel；新增 `decode_full_layer` 显示 fusion 对完整 decode Attention 侧确实有正收益。
+- 端到端 TPOT 仍需单独看，因为它还包含 FFN、A/F 通信、pipeline bubble，不等同于单层 Attention 侧时间。
 
 ### 48 层 prefill full-layer 代表结果
 
@@ -181,6 +259,7 @@ ASCEND_VISIBLE_DEVICES=0 python scripts/bench_attention_layer_npu.py \
 为什么 prompt FA 在小 shape 比 HF 慢：
 
 - official 路径在项目内手动拆解 QKV、q/k norm、RoPE、transpose、mask、PFA、o_proj；HF 路径可能已经触发 PyTorch/torch_npu 的优化组合。
+- 新增 `prefill_core` 表明在 b1/b8、seq16/128 这些小/中形状下，PFA kernel core 本身也慢于 SDPA core；因此不能只把小 shape 慢归因于 full-layer 外围开销。
 - b1/s128 这类 shape 太小，PFA launch、layout 转换、mask 构造等固定开销占比高。
 - 当前 official prefill 需要显式 causal bool mask；mask 构造和格式转换会进入 trace。
 - BNSD layout、`.contiguous()`、transpose/cast 在小 shape 下占比高。
@@ -210,7 +289,8 @@ full profiler 产物在远端：
 结论：
 
 - prompt FA 小 shape 慢不是单一 PFA kernel 问题，而是 QKV/O projection、RoPE/RMSNorm、layout/cast/transpose、mask 等固定开销共同造成。
-- decode IFA 的 kernel 本身确实快，但端到端 decode-DBO TPOT 未转正，说明瓶颈可能在 full-layer decode、KV cache update、A/F 通信、FFN 或 pipeline 气泡，而不在 IFA core 单算子。
+- 新增 `prefill_core` 后可进一步确认：在 b1/b8、seq16/128 上 PFA core 本身也慢，需要补大形状 core 才能判断 PFA kernel 的适用区间。
+- decode IFA 的 kernel 本身在大 batch/cache 上确实快；新增 `decode_full_layer` 显示 fusion 能改善完整 decode Attention 侧，但端到端 decode-DBO TPOT 未转正，说明瓶颈可能继续在 FFN、A/F 通信或 pipeline 气泡。
 
 ## MB3 / MB4 切分位置与效果
 

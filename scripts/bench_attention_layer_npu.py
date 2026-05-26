@@ -847,6 +847,10 @@ def decode_core_bench(
         k_bsnd = k_cache.transpose(1, 2).contiguous()
         v_bsnd = v_cache.transpose(1, 2).contiguous()
         hf_bsnd = hf_out.transpose(1, 2).contiguous() if hf_out is not None else None
+        if not include_community:
+            clear_memory(device)
+            continue
+
         for name, fn in [("community_v2", community_v2), ("community_v3", community_v3)]:
             if fn is None:
                 results.append(
