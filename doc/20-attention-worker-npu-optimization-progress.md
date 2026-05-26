@@ -17,6 +17,7 @@
 - layer 输入预拷贝已经补了跨设备 A/B。对小形状减少重复 `.to()` 有明显收益；大形状收益较小但仍为正。
 - MB3/MB4 是 pipeline 按 batch 维切分，不是单层 Attention kernel 优化。b12/s128/t10 端到端对比显示 MB3/MB4 目前不应默认启用：prefill MB2 最快，decode TPOT 也是 MB2 最好。
 - 社区版 `MinghuasLab/flash-attention-npu` v2/v3 可构建运行，但 decode kvcache 在全形状 sampled matrix 中仍慢于官方 IFA，且不支持 RoPE 融合；继续只作为 benchmark 对照。
+- FFN 侧已初步探测昇腾官方 MoE distribute API：当前 torch_npu 2.6 暴露 base/v2 dispatch/combine，但 v2 缺少 `comm_alg` 参数导致 910C fullmesh 配置不可用；base 版要求 EP world size 为 8 的倍数且 hidden size 只能是 7168，与本项目 Qwen3 hidden size 2048 不直接匹配。
 
 ## 已实现内容
 
@@ -354,6 +355,64 @@ MB3/MB4 的切分实现不在 Attention kernel 内，而在 pipeline 调度层�
 - Host1 容器内对 `src/coordinator_arch/comm/*`、coordinator attention worker 和 communicator test 文件的 compile 检查已通过。
 - Host1 mocked-collective smoke 已验证 fallback `dispatch_async -> wait_dispatch -> combine_async -> wait_combine` 能返回预期 tensor，并且确实等待 payload work handles。
 
+## FFN EP 通信路径与官方 MoE distribute API 探测
+
+### 当前真实 decode 路径里的 EPFFNLayer 通信
+
+`src/model/ep_moe.py` 的 `EPFFNLayer` 是当前静态 A/F 真实 decode EP overlap 路径的一部分，接入条件是 `--ffn-ep-backend broadcast_reduce_overlap` 且 `num_micro_batches >= 2`。
+
+其通信语义如下：
+
+| 阶段 | 当前实现 | 说明 |
+|---|---|---|
+| dispatch | `dist.broadcast(fused_buf, src=ffn_coordinator_rank, group=ffn_ep_dispatch_group)` | coordinator 将 `hidden_2d + selected_experts + routing_weights` 打包为 `uint8` 后广播给所有 EP ranks。 |
+| local compute | `ShardedExperts.forward_local()` | 每个 rank 只计算本 rank 拥有的 experts，但输入仍是完整 hidden/routing。 |
+| combine/reduce | `dist.reduce(partial, dst=ffn_coordinator_rank, op=SUM, group=ffn_ep_reduce_group)` | 每个 rank 返回 dense partial `[tokens, hidden]`，coordinator 聚合后加 residual。 |
+
+因此当前真实 NPU EP overlap 不是 token-aware sparse dispatch/combine，而是 full hidden broadcast + dense reduce。
+
+### coordinator 的 FallbackMoECommunicator 是否在真实 decode path
+
+`src/coordinator_arch/comm/fallback_a2a.py` 的 `FallbackMoECommunicator` 是 coordinator 架构的默认 communicator：
+
+- dispatch/combine 使用 `torch.distributed.all_to_all_single`。
+- 语义是 token-aware all-to-all dispatch/combine。
+- skeleton attention worker 已经调用 async dispatch/combine API。
+
+但它当前没有替换 `src.main` 静态 decode path 的 FFN 计算。`src/model/disaggregated.py` 里的 coordinator bridge 主要用于 routing table / expert ownership validation；真实 Qwen FFN compute 仍在 `src/model/ffn_worker.py` 和 `src/model/ep_moe.py`。
+
+### 昇腾官方 MoE distribute API 探测
+
+新增探测脚本：
+
+```bash
+python scripts/probe_moe_distribute_npu.py --mode schema
+```
+
+Host1 `afd-npu-test` 上的 torch_npu 2.6.0 暴露了以下 API：
+
+| API | 是否存在 | 当前 schema 关键点 |
+|---|---|---|
+| `npu_moe_distribute_dispatch` | 存在 | 需要 `group_ep`、`ep_world_size`、`ep_rank_id`、`moe_expert_num`；返回 7 个 tensor。 |
+| `npu_moe_distribute_combine` | 存在 | 需要 `expand_x`、`expert_ids`、`expand_idx`、`ep_send_counts`、`expert_scales`、`group_ep` 等。 |
+| `npu_moe_distribute_dispatch_v2` | 存在 | 当前 Python schema 没有公开 `comm_alg` 参数。 |
+| `npu_moe_distribute_combine_v2` | 存在 | 当前 Python schema 没有公开 `comm_alg` 参数。 |
+
+2-rank / 8-rank smoke 结果：
+
+| 配置 | 结果 | 含义 |
+|---|---|---|
+| v2, EP=2, H=64 | 失败：`Attr commAlg is invalid ... only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0` | 910C/A3 需要 `comm_alg`，但当前 torch_npu 2.6 schema 不接受 `comm_alg` keyword。 |
+| base, EP=2, H=64 | 失败：`epWorldSize should be divisible by 8` | base 版不支持 2-rank EP，对当前小 EP smoke 不适配。 |
+| base, EP=8, H=64 | 失败：`xShape dims1(H) only supports 7168, but got 64` | base 版 hidden size 有强约束。 |
+| base, EP=8, H=7168 | dispatch/combine smoke 通过，identity combine diff 为 0 | 说明 hcomm 获取方式和 base API 基本可用，但 shape 不是本项目 Qwen3 hidden size。 |
+
+关键结论：
+
+- 本项目 Qwen3-30B-A3B 的 `hidden_size=2048`，而当前 base dispatch 在 910C 上报错只支持 H=7168；不能直接替换 `EPFFNLayer` 的 Qwen3 FFN 通信。
+- v2 看起来更接近通用接口，但当前 torch_npu 2.6 暴露的 Python schema 缺少 `comm_alg`，导致 910C 下无法选择 `fullmesh_v1/fullmesh_v2`，smoke 失败。
+- 因此当前阶段不应把官方 MoE distribute 直接接入真实 decode path；下一步应先确认是否有更新 torch_npu/op-plugin 版本或底层 custom op 能暴露 `comm_alg`，否则只能继续优化当前 broadcast/reduce 或 coordinator fallback all-to-all。
+
 ## 下一步计划
 
 1. 不把 official prefill 单独设为默认；只有 `official + RMSNorm/RoPE fusion` 在大 batch/长 seq 下表现为正收益。
@@ -362,3 +421,4 @@ MB3/MB4 的切分实现不在 Attention kernel 内，而在 pipeline 调度层�
 4. MB2 继续作为默认 microbatch 数；MB3/MB4 保留为实验开关，不默认启用。
 5. 只有 Host1 单机端到端 decode TPOT 转正后，才继续跑跨机大 batch decode-DBO，并使用 fresh `MASTER_PORT` / `HCCL_IF_BASE_PORT`。
 6. 社区版 `flash-attention-npu` 继续保留为 benchmark-only comparator，除非后续证明其在目标部署形状中优于官方 IFA。
+7. FFN 侧先不要默认接官方 MoE distribute；优先确认可用 API 版本，或继续设计当前 `EPFFNLayer` broadcast/reduce 与 coordinator all-to-all 的可落地优化。
