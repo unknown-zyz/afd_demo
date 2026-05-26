@@ -1,0 +1,111 @@
+{
+  "backend": "npu_moe_distribute",
+  "world_size": 8,
+  "dtype": "bfloat16",
+  "warmup": 1,
+  "iters": 1,
+  "repeats": 1,
+  "rows": [
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 0,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423843, Device:0, RankID:0) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423843] 2026-05-26-14:46:06.929.795 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 1,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423844, Device:1, RankID:1) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423844] 2026-05-26-14:46:06.825.779 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 2,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423845, Device:2, RankID:2) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423845] 2026-05-26-14:46:06.920.305 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 3,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423846, Device:3, RankID:3) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423846] 2026-05-26-14:46:06.896.985 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 4,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423847, Device:4, RankID:4) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423847] 2026-05-26-14:46:06.656.375 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 5,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423848, Device:5, RankID:5) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423848] 2026-05-26-14:46:06.865.255 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 6,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423849, Device:6, RankID:6) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423849] 2026-05-26-14:46:06.749.348 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    },
+    {
+      "backend": "npu_moe_distribute_v2",
+      "rank": 7,
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002\n[ERROR] 2026-05-26-14:46:06 (PID:423850, Device:7, RankID:7) ERR00100 PTA call acl api failed.\nEZ9999: Inner Error!\nEZ9999[PID: 423850] 2026-05-26-14:46:06.861.455 (EZ9999):  Attr commAlg is invalid, current only support fullmesh_v1 and fullmesh_v2, but got commAlg = 0.[FUNC:GetAttrAndSetTilingData][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:554]\n        TraceBack (most recent call last):\n       Get attr and set tiling data failed.[FUNC:MoeDistributeDispatchA3TilingFuncImpl][FILE:moe_distribute_dispatch_v2_tiling.cpp][LINE:1036]\n       MoeDistributeDispatchV2 do tiling failed, ret is -1.\n       Check NnopbaseExecutorDoTiling(executor) failed\n       Check NnopbaseExecutorTilingAndUpdateBinInfo(executor) failed\n       Check NnopbaseExecutorMatchCache(executor) failed\n       Check NnopbaseRunForWorkspace(*executor, workspaceSize) failed\n"
+    }
+  ],
+  "aggregate": [
+    {
+      "backend": "npu_moe_distribute_v2",
+      "tokens": 4,
+      "hidden": 2048,
+      "top_k": 8,
+      "ok": false,
+      "rank_count": 8,
+      "stage": "dispatch",
+      "error_type": "RuntimeError",
+      "error": "npu_moe_distribute_dispatch_v2:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:128 NPU function error: call aclnnMoeDistributeDispatchV2 failed, error code is 561002"
+    }
+  ]
+}

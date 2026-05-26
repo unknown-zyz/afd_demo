@@ -413,6 +413,50 @@ Host1 `afd-npu-test` 上的 torch_npu 2.6.0 暴露了以下 API：
 - v2 看起来更接近通用接口，但当前 torch_npu 2.6 暴露的 Python schema 缺少 `comm_alg`，导致 910C 下无法选择 `fullmesh_v1/fullmesh_v2`，smoke 失败。
 - 因此当前阶段不应把官方 MoE distribute 直接接入真实 decode path；下一步应先确认是否有更新 torch_npu/op-plugin 版本或底层 custom op 能暴露 `comm_alg`，否则只能继续优化当前 broadcast/reduce 或 coordinator fallback all-to-all。
 
+### MoE dispatch/combine microbenchmark
+
+新增 benchmark 脚本：
+
+```bash
+torchrun --nproc_per_node=8 scripts/bench_moe_dispatch_npu.py \
+  --backend broadcast_reduce \
+  --tokens 4,16,64 \
+  --hidden 2048 \
+  --top-k 8 \
+  --experts 128 \
+  --output results_npu/ffn_moe_dispatch_bench/broadcast_reduce_ep8_h2048.json
+```
+
+产物：
+
+- `results_npu/ffn_moe_dispatch_bench/broadcast_reduce_ep8_h2048.json`
+- `results_npu/ffn_moe_dispatch_bench/official_base_ep8_h2048_fail.json`
+- `results_npu/ffn_moe_dispatch_bench/official_v2_ep8_h2048_fail.json`
+- `results_npu/ffn_moe_dispatch_bench/official_base_ep8_h7168.json`
+- `results_npu/ffn_moe_dispatch_bench/summary.csv`
+- `results_npu/ffn_moe_dispatch_bench/summary.md`
+
+Host1 EP8 / HCCL / Qwen3 hidden=2048 对比结果：
+
+| Backend | Tokens | Hidden | Top-k | dispatch 中位数 | reduce/combine 中位数 | total 中位数 | 结论 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| current broadcast/reduce | 4 | 2048 | 8 | 0.212 ms | reduce 0.152 ms | 0.364 ms | 当前真实 EPFFNLayer 等价通信可测。 |
+| current broadcast/reduce | 16 | 2048 | 8 | 0.155 ms | reduce 0.147 ms | 0.302 ms | 小 token 下固定 HCCL/launch 开销占主导。 |
+| current broadcast/reduce | 64 | 2048 | 8 | 0.149 ms | reduce 0.145 ms | 0.294 ms | payload 增大到 64 tokens 后仍主要受固定开销影响。 |
+| official base | 4 | 2048 | 8 | FAIL | FAIL | FAIL | `xShape dims1(H) only supports 7168, but got 2048`。 |
+| official v2 | 4 | 2048 | 8 | FAIL | FAIL | FAIL | `commAlg = 0` 无效；当前 schema 又无法传 `comm_alg`。 |
+| official base | 4 | 7168 | 2 | 0.184 ms | combine 0.094 ms | 0.279 ms | 支持形状下可跑通且 diff=0，但不是本项目 Qwen3 形状。 |
+
+这个 benchmark 将 `bench-moe-dispatch-comm` 的结论落地为：当前官方 MoE distribute 不能在 Qwen3 hidden=2048 上形成 apples-to-apples 性能对比；只能证明官方 base 在 H=7168 的特定形状可运行。
+
+`bench-moe-dispatch-real-routing` 也因此暂时阻塞：真实 Qwen router 输出的 hidden 维度仍是 2048，官方 base dispatch 在 dispatch 阶段即失败，v2 也卡在 `comm_alg` 暴露问题；即使用真实 routing 也无法进入 official combine。
+
+当前 backend 决策：
+
+- 不实现 `EPFFNLayer` 的 official MoE distribute backend。
+- 短期 FFN 优化继续围绕当前 `EPFFNLayer` 的 broadcast/reduce、`ShardedExperts.forward_local()`、post-attn RMSNorm、expert grouped compute、以及 coordinator fallback all-to-all 的可落地路径。
+- 若后续升级 torch_npu/op-plugin 后 v2 暴露 `comm_alg`，或 base 支持 H=2048，再重新打开 official MoE distribute backend 评估。
+
 ## 下一步计划
 
 1. 不把 official prefill 单独设为默认；只有 `official + RMSNorm/RoPE fusion` 在大 batch/长 seq 下表现为正收益。
