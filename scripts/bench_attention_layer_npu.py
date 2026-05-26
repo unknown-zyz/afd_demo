@@ -24,6 +24,8 @@ from src.model.attention_worker import AttentionLayer, AttentionOptimizationConf
 
 REFERENCE_CASES = {
     "prefill_full_layer": "hf",
+    "prefill_core": "hf_sdpa",
+    "decode_full_layer": "hf",
     "decode_core": "hf_sdpa",
 }
 
@@ -73,6 +75,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-print-json", action="store_true", help="Do not print final JSON to stdout.")
     parser.add_argument("--skip-prefill", action="store_true")
     parser.add_argument("--skip-decode", action="store_true")
+    parser.add_argument(
+        "--include-prefill-core",
+        action="store_true",
+        help="Also benchmark prefill attention kernel core: SDPA vs NPU prompt flash attention.",
+    )
+    parser.add_argument(
+        "--include-decode-full-layer",
+        action="store_true",
+        help="Also benchmark full decode AttentionLayer latency with fusion ablations.",
+    )
     parser.add_argument(
         "--include-precopy",
         action="store_true",
@@ -361,6 +373,178 @@ def full_layer_prefill_bench(
     return results
 
 
+def prefill_core_bench(
+    model: Any,
+    rotary_emb: Any,
+    layer_idx: int,
+    batch: int,
+    seq: int,
+    args: argparse.Namespace,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> list[dict[str, Any]]:
+    layer = make_attention_layer(
+        model,
+        layer_idx,
+        device,
+        dtype,
+        AttentionOptimizationConfig(attn_kernel="npu-official", fused_rope=True),
+    )
+    results: list[dict[str, Any]] = []
+    try:
+        flash_prefill, _ = layer._load_npu_attention_ops()
+    except Exception as exc:
+        results.append(
+            {
+                "case": "official_pfa",
+                "phase": "prefill_core",
+                "layer_idx": layer_idx,
+                "batch": batch,
+                "seq": seq,
+                "cache_len": None,
+                "ok": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+        )
+        del layer
+        clear_memory(device)
+        return results
+
+    hidden = torch.randn(batch, seq, model.config.hidden_size, device=device, dtype=dtype)
+    q, k, v = project_attention_states(layer, hidden, rotary_emb, use_fused_rope=True)
+    head_dim = int(getattr(layer.self_attn, "head_dim"))
+    num_heads = layer._num_attention_heads(head_dim)
+    num_kv_heads = layer._num_key_value_heads(head_dim)
+    scale = float(getattr(layer.self_attn, "scaling", 1.0 / math.sqrt(head_dim)))
+    repeat_factor = num_heads // num_kv_heads
+    k_repeated = k.repeat_interleave(repeat_factor, dim=1)
+    v_repeated = v.repeat_interleave(repeat_factor, dim=1)
+    causal_mask = None
+    if seq > 1:
+        causal_mask = torch.triu(
+            torch.ones(seq, seq, dtype=torch.bool, device=device),
+            diagonal=1,
+        ).contiguous()
+
+    def hf_sdpa_run() -> torch.Tensor:
+        return F.scaled_dot_product_attention(
+            q,
+            k_repeated,
+            v_repeated,
+            dropout_p=0.0,
+            is_causal=True,
+            scale=scale,
+        )
+
+    hf_out = None
+    try:
+        hf_ms, hf_samples, hf_out = bench(hf_sdpa_run, args.warmup, args.iters, args.repeats, device)
+        results.append(
+            {
+                "case": "hf_sdpa",
+                "phase": "prefill_core",
+                "layer_idx": layer_idx,
+                "batch": batch,
+                "seq": seq,
+                "cache_len": None,
+                "latency_ms": hf_ms,
+                "latency_samples_ms": hf_samples,
+                "ok": True,
+                "memory": memory_stats(device),
+            }
+        )
+    except Exception as exc:
+        results.append(
+            {
+                "case": "hf_sdpa",
+                "phase": "prefill_core",
+                "layer_idx": layer_idx,
+                "batch": batch,
+                "seq": seq,
+                "cache_len": None,
+                "ok": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+        )
+
+    def official_pfa_run() -> torch.Tensor:
+        return flash_prefill(
+            q,
+            k,
+            v,
+            atten_mask=causal_mask,
+            num_heads=num_heads,
+            input_layout="BNSD",
+            scale_value=scale,
+            num_key_value_heads=num_kv_heads,
+        )
+
+    official_row: dict[str, Any] = {
+        "case": "official_pfa",
+        "phase": "prefill_core",
+        "layer_idx": layer_idx,
+        "batch": batch,
+        "seq": seq,
+        "cache_len": None,
+    }
+    try:
+        official_ms, official_samples, official_out = bench(
+            official_pfa_run,
+            args.warmup,
+            args.iters,
+            args.repeats,
+            device,
+        )
+        official_row.update(
+            {
+                "latency_ms": official_ms,
+                "latency_samples_ms": official_samples,
+                "ok": True,
+                "memory": memory_stats(device),
+            }
+        )
+        if hf_out is not None:
+            official_row.update(tensor_diff(official_out, hf_out))
+    except Exception as exc:
+        official_row.update(
+            {
+                "ok": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+        )
+    results.append(official_row)
+    del layer
+    clear_memory(device)
+    return results
+
+
+class FrozenLayerCache:
+    """Read-only cache shim for stable decode full-layer benchmarking."""
+
+    def __init__(self, layer_idx: int, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
+        self.layer_idx = layer_idx
+        self.key_states = key_states
+        self.value_states = value_states
+
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if layer_idx != self.layer_idx:
+            raise RuntimeError(f"Frozen cache for layer {self.layer_idx} cannot serve layer {layer_idx}")
+        return (
+            torch.cat((self.key_states, key_states), dim=2).contiguous(),
+            torch.cat((self.value_states, value_states), dim=2).contiguous(),
+        )
+
+
 def project_decode_states(
     layer: AttentionLayer,
     hidden: torch.Tensor,
@@ -390,6 +574,115 @@ def project_decode_states(
     else:
         q, k = load_apply_rotary_pos_emb()(q, k, cos, sin)
     return q.contiguous(), k.contiguous(), v.contiguous()
+
+
+def project_attention_states(
+    layer: AttentionLayer,
+    hidden: torch.Tensor,
+    rotary_emb: Any,
+    use_fused_rope: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return project_decode_states(layer, hidden, rotary_emb, use_fused_rope)
+
+
+def make_frozen_cache(
+    layer: AttentionLayer,
+    cache_hidden: torch.Tensor,
+    rotary_emb: Any,
+    use_fused_rope: bool,
+) -> FrozenLayerCache:
+    _, key_cache, value_cache = project_attention_states(layer, cache_hidden, rotary_emb, use_fused_rope)
+    return FrozenLayerCache(layer.layer_idx, key_cache, value_cache)
+
+
+def decode_full_layer_configs() -> list[tuple[str, AttentionOptimizationConfig]]:
+    return [
+        ("hf", AttentionOptimizationConfig(attn_kernel="hf")),
+        ("official", AttentionOptimizationConfig(attn_kernel="npu-official")),
+        (
+            "official_fused_rmsnorm",
+            AttentionOptimizationConfig(attn_kernel="npu-official", fused_rmsnorm=True),
+        ),
+        (
+            "official_fused_rope",
+            AttentionOptimizationConfig(attn_kernel="npu-official", fused_rope=True),
+        ),
+        (
+            "official_fused_both",
+            AttentionOptimizationConfig(
+                attn_kernel="npu-official",
+                fused_rmsnorm=True,
+                fused_rope=True,
+            ),
+        ),
+    ]
+
+
+def full_layer_decode_bench(
+    model: Any,
+    rotary_emb: Any,
+    layer_idx: int,
+    batch: int,
+    cache_lens: list[int],
+    args: argparse.Namespace,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for cache_len in cache_lens:
+        token_hidden = torch.randn(batch, 1, model.config.hidden_size, device=device, dtype=dtype)
+        cache_hidden = torch.randn(batch, cache_len, model.config.hidden_size, device=device, dtype=dtype)
+        position_ids = torch.full((batch, 1), cache_len, device=device, dtype=torch.long)
+        reference: Optional[torch.Tensor] = None
+        for name, config in decode_full_layer_configs():
+            layer = make_attention_layer(model, layer_idx, device, dtype, config)
+            pos = position_embeddings(rotary_emb, token_hidden, position_ids)
+            cache = make_frozen_cache(layer, cache_hidden, rotary_emb, config.fused_rope)
+
+            def run() -> torch.Tensor:
+                return layer(
+                    hidden_states=token_hidden,
+                    position_ids=position_ids,
+                    position_embeddings=pos,
+                    past_key_value=cache,
+                    use_cache=True,
+                )[0]
+
+            row: dict[str, Any] = {
+                "case": name,
+                "phase": "decode_full_layer",
+                "layer_idx": layer_idx,
+                "batch": batch,
+                "seq": 1,
+                "cache_len": cache_len,
+                "optimization": config.to_dict(),
+            }
+            try:
+                ms, samples, out = bench(run, args.warmup, args.iters, args.repeats, device)
+                if reference is None:
+                    reference = out.detach()
+                row.update(
+                    {
+                        "latency_ms": ms,
+                        "latency_samples_ms": samples,
+                        "ok": True,
+                        "memory": memory_stats(device),
+                    }
+                )
+                if reference is not None and name != REFERENCE_CASES["decode_full_layer"]:
+                    row.update(tensor_diff(out, reference))
+            except Exception as exc:
+                row.update(
+                    {
+                        "ok": False,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
+            results.append(row)
+            del layer, cache
+            clear_memory(device)
+    return results
 
 
 def import_community(root: str, version: str) -> Optional[Callable[..., torch.Tensor]]:
@@ -831,6 +1124,8 @@ def main() -> None:
             "batches": batch_values,
             "prefill_seqs": seq_values,
             "decode_cache_lens": cache_lens,
+            "include_prefill_core": args.include_prefill_core,
+            "include_decode_full_layer": args.include_decode_full_layer,
             "warmup": args.warmup,
             "iters": args.iters,
             "repeats": args.repeats,
@@ -861,7 +1156,44 @@ def main() -> None:
                     groups_done += 1
                     if args.checkpoint_every > 0 and groups_done % args.checkpoint_every == 0:
                         checkpoint()
+                    if args.include_prefill_core:
+                        log_progress(args, f"prefill-core layer={layer_idx} batch={batch} seq={seq}")
+                        rows.extend(
+                            prefill_core_bench(
+                                model,
+                                rotary_emb_layer,
+                                layer_idx,
+                                batch,
+                                seq,
+                                args,
+                                layer_device,
+                                dtype,
+                            )
+                        )
+                        groups_done += 1
+                        if args.checkpoint_every > 0 and groups_done % args.checkpoint_every == 0:
+                            checkpoint()
             if not args.skip_decode:
+                if args.include_decode_full_layer:
+                    log_progress(
+                        args,
+                        f"decode-full-layer layer={layer_idx} batch={batch} cache_lens={','.join(map(str, cache_lens))}",
+                    )
+                    rows.extend(
+                        full_layer_decode_bench(
+                            model,
+                            rotary_emb_layer,
+                            layer_idx,
+                            batch,
+                            cache_lens,
+                            args,
+                            layer_device,
+                            dtype,
+                        )
+                    )
+                    groups_done += 1
+                    if args.checkpoint_every > 0 and groups_done % args.checkpoint_every == 0:
+                        checkpoint()
                 log_progress(
                     args,
                     f"decode layer={layer_idx} batch={batch} cache_lens={','.join(map(str, cache_lens))}",
@@ -896,6 +1228,8 @@ def main() -> None:
         "batches": batch_values,
         "prefill_seqs": seq_values,
         "decode_cache_lens": cache_lens,
+        "include_prefill_core": args.include_prefill_core,
+        "include_decode_full_layer": args.include_decode_full_layer,
         "warmup": args.warmup,
         "iters": args.iters,
         "repeats": args.repeats,
