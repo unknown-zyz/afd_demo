@@ -1,209 +1,284 @@
-# AttentionWorker NPU optimization progress
+# AttentionWorker NPU 优化进展
 
-## Summary
+## 总结
 
-Branch: `feat/attn-worker-npu-optimizations`.
+当前分支：`feat/attn-worker-npu-optimizations`。
 
-Validated on Ascend 910C in Host1 `afd-npu-test`; GPU results are not used as acceptance evidence.
+本文结论全部来自 Host1 `afd-npu-test` 上的 Ascend 910C；GPU 结果不作为验收依据。
 
-Current conclusion:
+当前最新结论：
 
-- Official NPU decode core (`torch_npu.npu_incre_flash_attention`) reaches tens of microseconds for the tested Qwen3 layer shapes and is correct against HF/SDPA.
-- Official prefill full-layer path is now numerically aligned after adding an explicit causal mask, but remains slower than the HF path for the tested seq=128 shapes.
-- RMSNorm/RoPE fusion reduces the official prefill overhead versus official-only, but still does not beat HF prefill in the tested shapes.
-- Community `MinghuasLab/flash-attention-npu` v2/v3 builds and runs, but its `flash_attn_with_kvcache` decode path is about two orders of magnitude slower than official IFA on the tested Qwen-like shapes and does not support RoPE fusion.
-- A Host1 2-rank end-to-end decode-DBO check did not show TPOT improvement for official or official+fusion, so multi-node large-batch decode-DBO is not promoted yet.
+- 旧的单层 benchmark 确实只测了第 0 层，不能单独代表 48 层平均。现在已补两组 NPU 数据：`batch=1..128, seq/cache=1..1024` 的 layer 0/23/47 形状矩阵，以及 48 层 representative aggregate。后续结论以 48 层 aggregate 为主。
+- 官方 NPU decode core（`torch_npu.npu_incre_flash_attention`）在 48 层 aggregate 上稳定快于 HF/SDPA：b1/cache1 为 `0.043ms vs 0.071ms`，b128/cache1024 为 `0.246ms vs 1.585ms`。
+- 官方 prefill 的 prompt FA 不是所有形状都快：小形状 b1/s128 仍慢于 HF；大形状下 `official + RMSNorm/RoPE fusion` 已经反超，例如 b128/s1024 为 `55.39ms vs HF 69.36ms`。
+- layer 输入预拷贝已经补了跨设备 A/B。对小形状减少重复 `.to()` 有明显收益；大形状收益较小但仍为正。
+- MB3/MB4 是 pipeline 按 batch 维切分，不是单层 Attention kernel 优化。b12/s128/t10 端到端对比显示 MB3/MB4 目前不应默认启用：prefill MB2 最快，decode TPOT 也是 MB2 最好。
+- 社区版 `MinghuasLab/flash-attention-npu` v2/v3 可构建运行，但 decode kvcache 在全形状 sampled matrix 中仍慢于官方 IFA，且不支持 RoPE 融合；继续只作为 benchmark 对照。
 
-## Implemented changes
+## 已实现内容
 
-| Area | Status | Notes |
+| 项目 | 状态 | 说明 |
 |---|---|---|
-| Optimization config and timing metadata | Implemented | CLI/env controls and timing JSON metadata for attention kernel, precopy, fusion, TP placeholder, stream overlap, active/reserved NPUs. |
-| Layer input precopy | Implemented | `AttentionLayerInputCache` prepositions mask, position ids, and RoPE tensors per layer device. |
-| Official NPU attention adapter | Implemented | Prefill uses `torch_npu.npu_prompt_flash_attention` when `npu_flash_attention` is unavailable; decode uses `torch_npu.npu_incre_flash_attention`. |
-| Causal mask for official prefill | Implemented | Explicit upper-triangular bool mask is created when no mask is supplied and `seq_len > 1`. |
-| RMSNorm/RoPE fusion | Implemented | Uses `torch_npu.npu_rms_norm` or `npu_fused_rms_norm` if present, and `torch_npu.npu_rotary_mul`. |
-| msprof workflow | Implemented | `run_npu.sh`/matrix support msprof collection and analysis flags. |
-| Reserved NPU pool | Implemented | `--reserved-npus` removes devices from active launch pool and records metadata. |
-| NPU stream overlap | Implemented for static A/F paths | `--attn-stream-overlap` now controls accelerator compute streams in prefill and decode DBO schedulers; MB3/MB4 NPU smokes passed. |
-| Async MoE communicator protocol | Implemented at communicator API level | Fallback all-to-all payloads use `async_op=True` handles with tensor lifetime retention; coordinator skeleton now calls async dispatch/combine. |
-| Attention TP | Not implemented | Requires multi-attention-rank execution semantics and Q/K/V/O weight partitioning; blocked until a safe TP topology is designed. |
+| 优化配置与 timing 元数据 | 已实现 | CLI / 环境变量已覆盖 attention kernel、precopy、fusion、TP 占位字段、stream overlap、active/reserved NPU 等元数据。 |
+| Layer 输入预拷贝 | 已实现并补性能 A/B | `AttentionLayerInputCache` 可将 mask、position ids、RoPE tensors 预放置到各 layer device。 |
+| 官方 NPU attention 适配 | 已实现 | Prefill 使用当前环境可用的 `torch_npu.npu_prompt_flash_attention`，decode 使用 `torch_npu.npu_incre_flash_attention`。 |
+| official prefill 的 causal mask 修复 | 已实现 | 当未显式传入 mask 且 `seq_len > 1` 时，构造 causal bool mask。 |
+| RMSNorm / RoPE 融合 | 已实现并补矩阵 benchmark | RMSNorm 优先使用 `torch_npu.npu_fused_rms_norm`，不可用时用 `torch_npu.npu_rms_norm`；RoPE 使用 `torch_npu.npu_rotary_mul`。 |
+| msprof 工作流 | 已实现并用于本轮分析 | `run_npu.sh` / matrix 脚本支持 msprof；本轮另外用 full profiler 采集了单层 benchmark 代表点。 |
+| 预留 NPU 资源池 | 已实现 | `--reserved-npus` 会将设备从初始 active pool 中移除，并写入 timing 元数据。 |
+| NPU stream overlap | 已实现（静态 A/F 路径） | `--attn-stream-overlap` 已接入 prefill 与 decode DBO scheduler；MB2/MB3/MB4 已补端到端对比。 |
+| Async MoE communicator 协议 | 已实现（API 级） | fallback all-to-all payload 已改为 `async_op=True` handle，并保留 tensor 生命周期；coordinator skeleton 已改用 async dispatch/combine API。 |
+| Attention TP | 未实现 | 需要多 attention rank 执行语义、Q/K/V/O 切分与 KV cache ownership 设计，当前暂时 blocked。 |
 
-## Single-layer benchmark
+## 单层 benchmark
 
-Benchmark script: `scripts/bench_attention_layer_npu.py`.
+Benchmark 脚本：`scripts/bench_attention_layer_npu.py`。
 
-Artifacts:
+本轮已扩展能力：
 
-- `results_npu/attention_layer_bench/median_b1_s128_c32_128_512.json`
-- `results_npu/attention_layer_bench/median_b4_s128_c128_512.json`
+- `--layer-idxs 0,23,47` 或 `--layer-idxs all`。
+- `--batches 1,2,4,8,16,32,64,128`。
+- `--seqs 1,16,32,64,128,256,512,1024`。
+- `--decode-cache-lens 1,16,32,64,128,256,512,1024`。
+- 输出 per-layer raw rows、48 层 aggregate、CSV、Markdown。
+- 表格字段已拆分为性能差异 `aggregate_speedup_vs_hf` / `aggregate_delta_ms_vs_hf` 和数值误差 `max_abs_diff` / `mean_abs_diff`，不再把“相比 HF 的差异”混写成一个含糊字段。
 
-Environment:
+主要产物：
+
+- `results_npu/attention_layer_bench/shape_matrix_layers_0_23_47.csv`
+- `results_npu/attention_layer_bench/shape_matrix_layers_0_23_47.md`
+- `results_npu/attention_layer_bench/all48_representative_matrix.csv`
+- `results_npu/attention_layer_bench/all48_representative_matrix.json`
+- `results_npu/attention_layer_bench/all48_representative_matrix.md`
+- `results_npu/attention_layer_bench/precopy_cross_device_layers_0_23_47.csv`
+- `results_npu/attention_layer_bench/precopy_cross_device_layers_0_23_47.md`
+
+实验环境：
 
 - Host1 `afd-npu-test`
-- Model: `/models/Qwen3-30B-A3B`
-- Layer: 0
-- dtype: `float16`
-- warmup: 5
-- iterations per repeat: 20
-- repeats: 3
-- reported latency: median of repeat averages
+- 模型：`/models/Qwen3-30B-A3B`
+- dtype：`float16`
+- sampled shape matrix：layers `0,23,47`，batch `1..128`，prefill seq / decode cache `1..1024`
+- 48 层 representative matrix：layers `all`，batch `1,8,32,128`，prefill seq / decode cache `1,128,1024`
 
-Command example:
+示例命令：
 
 ```bash
 ASCEND_VISIBLE_DEVICES=0 python scripts/bench_attention_layer_npu.py \
   --model-name /models/Qwen3-30B-A3B \
   --device npu:0 \
   --dtype float16 \
-  --batch 1 \
-  --seq 128 \
-  --decode-cache-lens 32,128,512 \
-  --warmup 5 \
-  --iters 20 \
+  --layer-idxs all \
+  --batches 1,8,32,128 \
+  --seqs 1,128,1024 \
+  --decode-cache-lens 1,128,1024 \
+  --warmup 1 \
+  --iters 3 \
   --repeats 3 \
-  --include-community \
-  --community-root /tmp/flash-attention-npu \
-  --output results_npu/attention_layer_bench/median_b1_s128_c32_128_512.json
+  --include-precopy \
+  --no-print-json \
+  --output results_npu/attention_layer_bench/all48_representative_matrix.json \
+  --summary-csv results_npu/attention_layer_bench/all48_representative_matrix.csv \
+  --summary-md results_npu/attention_layer_bench/all48_representative_matrix.md
 ```
 
-### Prefill full-layer latency
+### 48 层 prefill full-layer 代表结果
 
-| Batch | Seq | Case | Median latency | Max abs diff vs HF | Result |
-|---:|---:|---|---:|---:|---|
-| 1 | 128 | HF | 0.775 ms | N/A | Baseline |
-| 1 | 128 | official | 1.115 ms | 1.22e-4 | Slower |
-| 1 | 128 | official + fused RMSNorm | 1.007 ms | 2.44e-4 | Slower |
-| 1 | 128 | official + fused RoPE | 0.999 ms | 1.22e-4 | Slower |
-| 1 | 128 | official + both fusions | 0.936 ms | 2.44e-4 | Slower |
-| 4 | 128 | HF | 0.691 ms | N/A | Baseline |
-| 4 | 128 | official | 1.104 ms | 1.22e-4 | Slower |
-| 4 | 128 | official + fused RMSNorm | 0.901 ms | 2.44e-4 | Slower |
-| 4 | 128 | official + fused RoPE | 0.885 ms | 1.22e-4 | Slower |
-| 4 | 128 | official + both fusions | 0.831 ms | 2.44e-4 | Slower |
+`speedup_vs_hf = HF latency / 当前 latency`，大于 1 表示当前路径更快。
 
-### Decode core latency
+| Batch | Seq | 路径 | 48 层中位延迟 | speedup vs HF | max abs diff | 结论 |
+|---:|---:|---|---:|---:|---:|---|
+| 1 | 128 | HF | 0.726 ms | 1.00 | N/A | 基线 |
+| 1 | 128 | official | 0.986 ms | 0.736 | 2.87e-3 | 更慢 |
+| 1 | 128 | official + 两个 fusion | 0.870 ms | 0.834 | 3.91e-3 | 仍慢于 HF |
+| 1 | 128 | official + 两个 fusion + precopy | 0.875 ms | 0.829 | 3.91e-3 | 仍慢于 HF |
+| 8 | 128 | HF | 0.783 ms | 1.00 | N/A | 基线 |
+| 8 | 128 | official | 0.992 ms | 0.789 | 3.91e-3 | 更慢 |
+| 8 | 128 | official + 两个 fusion | 0.882 ms | 0.888 | 4.88e-3 | 仍慢于 HF |
+| 32 | 1024 | HF | 17.255 ms | 1.00 | N/A | 基线 |
+| 32 | 1024 | official | 17.912 ms | 0.963 | 7.57e-3 | 略慢 |
+| 32 | 1024 | official + 两个 fusion | 14.038 ms | 1.229 | 9.52e-3 | 更快 |
+| 128 | 1024 | HF | 69.357 ms | 1.00 | N/A | 基线 |
+| 128 | 1024 | official | 71.563 ms | 0.969 | 7.81e-3 | 略慢 |
+| 128 | 1024 | official + 两个 fusion | 55.393 ms | 1.252 | 9.98e-3 | 更快 |
 
-| Batch | Cache len | Case | Median latency | Diff vs HF/SDPA | Result |
-|---:|---:|---|---:|---:|---|
-| 1 | 32 | HF/SDPA | 0.0519 ms | N/A | Baseline |
-| 1 | 32 | official IFA | 0.0364 ms | 0 | Faster |
-| 1 | 32 | community v2 | 4.7734 ms | 0 | Much slower |
-| 1 | 32 | community v3 | 4.8970 ms | 0 | Much slower |
-| 1 | 128 | HF/SDPA | 0.0397 ms | N/A | Baseline |
-| 1 | 128 | official IFA | 0.0406 ms | 0 | Similar/slightly slower |
-| 1 | 128 | community v2 | 4.5507 ms | 4.77e-7 | Much slower |
-| 1 | 128 | community v3 | 5.1499 ms | 4.77e-7 | Much slower |
-| 1 | 512 | HF/SDPA | 0.0417 ms | N/A | Baseline |
-| 1 | 512 | official IFA | 0.0421 ms | 0 | Similar/slightly slower |
-| 1 | 512 | community v2 | 4.4366 ms | 1.91e-6 | Much slower |
-| 1 | 512 | community v3 | 4.8621 ms | 1.91e-6 | Much slower |
-| 4 | 128 | HF/SDPA | 0.0403 ms | N/A | Baseline |
-| 4 | 128 | official IFA | 0.0284 ms | 0 | Faster |
-| 4 | 512 | HF/SDPA | 0.0514 ms | N/A | Baseline |
-| 4 | 512 | official IFA | 0.0289 ms | 0 | Faster |
+解读：
 
-## End-to-end Host1 decode-DBO check
+- 小 seq / 小 batch 下，official prompt FA 的 launch、layout、mask、手动拆解 QKV/RoPE 等开销会抵消 kernel 收益。
+- 大 batch / 长 seq 下，`official + RMSNorm/RoPE fusion` 开始显著优于 HF。
+- official 不带 fusion 仍普遍不够好，说明收益不只来自 PFA 本身，还依赖 RMSNorm/RoPE 与 layout 开销控制。
 
-Topology: Host1 single machine, 2 ranks, `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`, batch 8, seq 128, tokens 20.
+### 48 层 decode core 代表结果
 
-Artifacts in Host1 worktree:
+| Batch | Cache len | 路径 | 48 层中位延迟 | speedup vs HF/SDPA | max abs diff | 结论 |
+|---:|---:|---|---:|---:|---:|---|
+| 1 | 1 | HF/SDPA | 0.071 ms | 1.00 | N/A | 基线 |
+| 1 | 1 | official IFA | 0.043 ms | 1.638 | 0 | 更快 |
+| 8 | 128 | HF/SDPA | 0.067 ms | 1.00 | N/A | 基线 |
+| 8 | 128 | official IFA | 0.046 ms | 1.468 | 0 | 更快 |
+| 32 | 1024 | HF/SDPA | 0.434 ms | 1.00 | N/A | 基线 |
+| 32 | 1024 | official IFA | 0.076 ms | 5.688 | 6.10e-5 | 显著更快 |
+| 128 | 1024 | HF/SDPA | 1.585 ms | 1.00 | N/A | 基线 |
+| 128 | 1024 | official IFA | 0.246 ms | 6.451 | 1.22e-4 | 显著更快 |
 
-- `results/prefill_dbo/timing_attention_host1_hf_b8_s128_t20.json`
-- `results/prefill_dbo/timing_attention_host1_official_b8_s128_t20.json`
-- `results/prefill_dbo/timing_attention_host1_official_fused_b8_s128_t20.json`
+解读：
 
-| Case | Prefill | Decode TPOT | Total | Interpretation |
+- `npu_incre_flash_attention` 是当前最明确的 Attention 单层正收益路径。
+- layer0 与 48 层 aggregate 接近但不完全相同；部分 shape 的 sampled-layer / all48 比值超过 10%，因此最终报告不应只引用第 0 层。
+
+### 社区 flash-attention-npu 对照
+
+在 sampled shape matrix 中，社区 v2/v3 继续作为 decode kvcache 对照：
+
+| Batch | Cache len | official IFA | community v2 | community v3 | 结论 |
+|---:|---:|---:|---:|---:|---|
+| 1 | 1 | 0.049 ms | 3.864 ms | 4.134 ms | 社区慢约 79x/85x |
+| 8 | 128 | 0.053 ms | 3.669 ms | 4.007 ms | 社区慢约 70x/76x |
+| 32 | 1024 | 0.081 ms | 3.882 ms | 3.958 ms | 社区慢约 48x/49x |
+| 128 | 1024 | 0.250 ms | 3.882 ms | 3.916 ms | 社区慢约 15.5x/15.7x |
+
+社区实现仍有两个部署问题：
+
+- `flash_attn_with_kvcache` 可运行，但当前形状下慢于官方 IFA。
+- RoPE 参数路径报 `NPU FlashAttention does not support rotary embedding`，不能满足本项目的 RoPE 融合诉求。
+
+## Layer 输入预拷贝效果
+
+用户关心的 precopy 已补专项 A/B：layer 在 `npu:0`，layer-invariant inputs 起始在 `npu:1`，对比 `precopy_inputs=False` 与 `True`。这比默认 1A1F 单 attention device 更能体现减少重复 `.to()` 的效果。
+
+产物：
+
+- `results_npu/attention_layer_bench/precopy_cross_device_layers_0_23_47.csv`
+- `results_npu/attention_layer_bench/precopy_cross_device_layers_0_23_47.md`
+
+| Batch | Seq | 路径 | 非 precopy | precopy | 同路径收益 | 结论 |
+|---:|---:|---|---:|---:|---:|---|
+| 1 | 128 | HF | 1.009 ms | 0.830 ms | 17.7% | 小形状收益明显 |
+| 1 | 128 | official + 两个 fusion | 1.140 ms | 0.976 ms | 14.4% | 小形状收益明显 |
+| 32 | 1024 | HF | 18.273 ms | 18.104 ms | 0.9% | 大形状收益较小 |
+| 32 | 1024 | official + 两个 fusion | 15.207 ms | 14.924 ms | 1.9% | 大形状仍有小幅收益 |
+| 128 | 1024 | HF | 72.844 ms | 72.227 ms | 0.8% | 大形状收益较小 |
+| 128 | 1024 | official + 两个 fusion | 59.225 ms | 58.666 ms | 0.9% | 大形状仍有小幅收益 |
+
+结论：precopy 是低风险优化。它对小 shape 的重复跨设备迁移更敏感；对大 shape，主耗时转移到 MatMul/PFA/layout，precopy 不是主要瓶颈，但仍没有观察到负收益。
+
+## prompt_flash_attention 与 incre_flash_attention 的区别
+
+`npu_prompt_flash_attention` / `prompt_flash_attention` 面向 prefill：
+
+- Q/K/V 都来自 prompt token，通常 `q_len > 1`。
+- 需要处理 causal mask 或 prompt mask。
+- 不依赖历史 KV cache。
+- 本项目当前环境没有暴露公开 `torch_npu.npu_flash_attention`，实际使用可用的 `torch_npu.npu_prompt_flash_attention`。
+
+`npu_incre_flash_attention` / `incre_flash_attention` 面向 decode：
+
+- 通常每步 `q_len = 1`。
+- K/V 来自已存在的 KV cache。
+- 算子目标是小 query 对长 KV cache 的增量 attention。
+- 当前 910C 上它是单层 decode core 最明确的正收益来源。
+
+为什么 prompt FA 在小 shape 比 HF 慢：
+
+- official 路径在项目内手动拆解 QKV、q/k norm、RoPE、transpose、mask、PFA、o_proj；HF 路径可能已经触发 PyTorch/torch_npu 的优化组合。
+- b1/s128 这类 shape 太小，PFA launch、layout 转换、mask 构造等固定开销占比高。
+- 当前 official prefill 需要显式 causal bool mask；mask 构造和格式转换会进入 trace。
+- BNSD layout、`.contiguous()`、transpose/cast 在小 shape 下占比高。
+
+## msprof 分析
+
+本轮尝试了两类 profiling：
+
+- `msprof op`：只抓到了单个 Cast 算子，不足以解释完整 Attention 路径。
+- full profiler：`msprof --runtime-api=on --task-time=on --sys-hardware-mem=on` 可以导出 `op_summary_*.csv`，用于本轮分析。
+
+full profiler 产物在远端：
+
+- `results_npu/attention_msprof_full/prefill_b1_s128_l0/.../op_summary_*.csv`
+- `results_npu/attention_msprof_full/prefill_b32_s1024_l0/.../op_summary_*.csv`
+- `results_npu/attention_msprof_full/decode_b128_c1024_l0/.../op_summary_*.csv`
+- 本地精简摘要：`results_npu/attention_msprof_full/summary_attention_msprof.csv`
+
+注意：benchmark 程序在 msprof application 内生成随机输入，因此 `DSARandomNormal` 也被采集。下面的 op_summary 用于定位算子类别占比，不能直接等同于纯 forward 的精确分解；后续若要严格归因，应把输入预生成并从 profiling 区间排除。
+
+| Profiling 点 | benchmark 结果 | op_summary 关键观察 |
+|---|---|---|
+| prefill b1/s128/layer0 | HF 1.320 ms；official 1.238 ms；official+both 1.017 ms | PFA/FlashAttention 类 op 合计约 0.954 ms；MatMul 约 1.077 ms；RoPE/RMSNorm/相关 elementwise 约 3.158 ms；layout/cast/transpose 约 2.479 ms。小 shape 下非 attention kernel 开销很高。 |
+| prefill b32/s1024/layer0 | HF 17.383 ms；official 18.030 ms；official+both 14.226 ms | PFA/FlashAttention 类 op 合计约 55.9 ms；MatMul 约 87.7 ms；layout/cast/transpose 约 84.0 ms。大 shape 下 fusion 反超，但 layout 与投影仍是主要优化对象。 |
+| decode b128/cache1024/layer0 | HF/SDPA 1.679 ms；official IFA 0.338 ms | IFA 单 op 约 0.223 ms/次，而 FlashAttentionScore/SDPA 相关 op 约 1.56~1.75 ms/次；这解释了 IFA 在大 batch/cache decode 上的明显优势。 |
+
+结论：
+
+- prompt FA 小 shape 慢不是单一 PFA kernel 问题，而是 QKV/O projection、RoPE/RMSNorm、layout/cast/transpose、mask 等固定开销共同造成。
+- decode IFA 的 kernel 本身确实快，但端到端 decode-DBO TPOT 未转正，说明瓶颈可能在 full-layer decode、KV cache update、A/F 通信、FFN 或 pipeline 气泡，而不在 IFA core 单算子。
+
+## MB3 / MB4 切分位置与效果
+
+MB3/MB4 的切分实现不在 Attention kernel 内，而在 pipeline 调度层：
+
+| 路径 | 实现位置 | 说明 |
+|---|---|---|
+| CLI / launch | `src/main.py:121`、`scripts/run_npu.sh:73`、`scripts/run_experiment_matrix_npu.sh:132` | 解析 `--num-micro-batches` 并透传。 |
+| Prefill DBO | `src/pipeline/async_scheduler.py:87-113`、`src/pipeline/async_scheduler.py:259-260`、`src/pipeline/micro_batch.py:101-158` | `MicroBatchManager.split_batch()` 按 batch 维均分，余数给前几个 MB。 |
+| Decode DBO | `src/pipeline/decode_scheduler.py:132-137`、`src/pipeline/decode_scheduler.py:431-465`、`src/pipeline/decode_scheduler.py:483-520` | `_compute_mb_sizes()` 计算 MB size，并用 `mb_offsets` 切 input、mask、position embeddings 和 KV cache slice。 |
+| FFN / EP 侧 | `src/pipeline/decode_scheduler.py:717-730`、`src/pipeline/decode_scheduler.py:875-884`、`src/pipeline/decode_scheduler.py:999-1008` | FFN/coordinator/expert 侧按同一 `mb_sizes` 接收或构造 tensor。 |
+
+因此，MB3/MB4 是端到端 pipeline overlap / scheduling 优化，不应该混入单层 Attention kernel benchmark。
+
+本轮补了 Host1 2-rank 1A1F、`--attn-stream-overlap`、b12/s128/t10、每个配置 3 次中位数：
+
+本地精简摘要：`results_npu/attention_mb_bench/summary_b12_s128_t10_aggregate.csv`。
+
+| 模式 | MB | total_time_ms 中位数 | decode_tpot_ms 中位数 | 相对 MB2 结论 |
 |---|---:|---:|---:|---|
-| HF | 1248.0 ms | 319.3 ms | 325.6 ms | Baseline |
-| official | 1350.5 ms | 374.6 ms | 312.7 ms | TPOT slower despite lower total timing field |
-| official + fused RMSNorm/RoPE | 1673.7 ms | 348.6 ms | 310.8 ms | TPOT still slower than HF |
+| prefill DBO | 2 | 746.3 | N/A | 基线 |
+| prefill DBO | 3 | 797.7 | N/A | 慢 6.9% |
+| prefill DBO | 4 | 1002.4 | N/A | 慢 34.3% |
+| decode DBO | 2 | 379.6 | 277.7 | TPOT 基线 |
+| decode DBO | 3 | 339.9 | 294.0 | total 更低，但 TPOT 慢 5.9% |
+| decode DBO | 4 | 464.5 | 391.9 | TPOT 慢 41.1% |
 
-The single-layer decode-core improvement does not yet transfer cleanly to the real decode-DBO TPOT metric. Multi-node large-batch decode-DBO should wait until the full AttentionLayer path or scheduler integration shows TPOT-positive behavior on Host1.
+结论：MB3/MB4 已经验证“能跑”，但在当前 b12/s128/t10 下没有成为更好的默认值。decode MB3 的 total_time 看起来更低，但最终 decode 性能应以 `decode_tpot_ms` 为准，因此 MB2 仍是当前默认选择。
 
-## Stream-overlap and MB3/MB4 validation
+## Host1 单机端到端 decode-DBO 检查
 
-`--attn-stream-overlap` is now wired into both prefill `AsyncPipelineScheduler` and decode `DecodeDBOScheduler`. When enabled on CUDA/NPU backends, scheduler compute sections run on an accelerator compute stream while communication remains asynchronous through the existing distributed send/recv handles.
+早期 gate 配置：Host1 单机 2 rank，`--attn-size 1 --ffn-size 1 --ffn-tp-size 1`，batch 8，seq 128，tokens 20。
 
-Host1 NPU smoke commands used the 2-rank topology with `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`:
+| 路径 | Prefill | Decode TPOT | Total | 解释 |
+|---|---:|---:|---:|---|
+| HF | 1248.0 ms | 319.3 ms | 325.6 ms | 基线 |
+| official | 1350.5 ms | 374.6 ms | 312.7 ms | total 字段更低，但 TPOT 更慢 |
+| official + fused RMSNorm/RoPE | 1673.7 ms | 348.6 ms | 310.8 ms | TPOT 仍慢于 HF |
 
-```bash
-ASCEND_VISIBLE_DEVICES=0,1 MASTER_PORT=29841 HCCL_IF_BASE_PORT=29901 \
-  bash scripts/run_npu.sh --batch 3 --seq 32 --tokens 4 \
-    --no-generate --attn-stream-overlap --num-micro-batches 3 \
-    --model-name /models/Qwen3-30B-A3B
+单层 decode core 的收益暂时没有稳定传导到真实 decode-DBO 的 `decode_tpot_ms` 指标。因此，多机大 batch decode-DBO 继续等待，直到 Host1 单机端到端 TPOT 先转正。
 
-ASCEND_VISIBLE_DEVICES=2,3 MASTER_PORT=29842 HCCL_IF_BASE_PORT=29922 \
-  bash scripts/run_npu.sh --batch 3 --seq 32 --tokens 4 \
-    --attn-stream-overlap --num-micro-batches 3 \
-    --model-name /models/Qwen3-30B-A3B
+## Async MoE communicator 协议
 
-ASCEND_VISIBLE_DEVICES=4,5 MASTER_PORT=29843 HCCL_IF_BASE_PORT=29943 \
-  bash scripts/run_npu.sh --batch 4 --seq 32 --tokens 4 \
-    --no-generate --attn-stream-overlap --num-micro-batches 4 \
-    --model-name /models/Qwen3-30B-A3B
-
-ASCEND_VISIBLE_DEVICES=6,7 MASTER_PORT=29844 HCCL_IF_BASE_PORT=29964 \
-  bash scripts/run_npu.sh --batch 4 --seq 32 --tokens 4 \
-    --attn-stream-overlap --num-micro-batches 4 \
-    --model-name /models/Qwen3-30B-A3B
-```
-
-All four runs exited 0. Timing metadata confirmed `attn_stream_overlap: true` and `num_micro_batches` of 3 or 4:
-
-| Case | num_micro_batches | total_time_ms | decode_tpot_ms |
-|---|---:|---:|---:|
-| prefill b3/s32/t4 | 3 | 660.0 | N/A |
-| decode b3/s32/t4 | 3 | 278.0 | 304.0 |
-| prefill b4/s32/t4 | 4 | 858.3 | N/A |
-| decode b4/s32/t4 | 4 | 387.4 | 405.6 |
-
-## Async MoE communicator protocol
-
-The coordinator communicator interface now includes:
+当前 coordinator communicator 接口已经扩展为：
 
 - `dispatch_async(...)`
 - `wait_dispatch(handle)`
 - `combine_async(...)`
 - `wait_combine(handle)`
 
-For `FallbackMoECommunicator`, dispatch still exchanges route counts synchronously because payload sizes depend on those counts. The hidden-state and weight payload all-to-alls are then enqueued with `async_op=True`, and the returned handle keeps send buffers, count tensors, receive buffers, and `dist.Work` objects alive until `wait_dispatch()`.
+对于 `FallbackMoECommunicator`：
 
-`combine_async()` similarly enqueues the reverse all-to-all with `async_op=True`; `wait_combine()` waits and then performs inverse permutation plus top-k weighting. The DeepEP wrapper exposes the same methods as compatibility handles around its current synchronous wrapper calls. The coordinator skeleton worker now uses the async methods, so future real FFN serving can overlap dispatch of later microbatches with combine of earlier ones without changing the public communicator API.
+- route counts 的交换仍是同步进行，因为后续 payload 大小依赖这些 counts；
+- hidden-state 和 weight 的 payload all-to-all 改为 `async_op=True`；
+- 返回的 handle 会保留 send buffer、count tensor、receive buffer 和 `dist.Work` 引用，直到 `wait_dispatch()` 完成。
 
-Validation:
+`combine_async()` 同样将 reverse all-to-all 改为 `async_op=True`；`wait_combine()` 在等待完成后执行 inverse permutation 和 top-k weighting。DeepEP wrapper 目前提供兼容层形式的 async handle，方便后续真实异步接入而不改变上层 API。coordinator skeleton attention worker 已经改用 async dispatch / combine 调用。
 
-- Host1 container compile check for `src/coordinator_arch/comm/*`, coordinator attention worker, and communicator tests passed.
-- Host1 mocked-collective smoke verified fallback `dispatch_async -> wait_dispatch -> combine_async -> wait_combine` returns the expected tensor and waits the payload work handles.
+验证情况：
 
-## Community flash-attention-npu assessment
+- Host1 容器内对 `src/coordinator_arch/comm/*`、coordinator attention worker 和 communicator test 文件的 compile 检查已通过。
+- Host1 mocked-collective smoke 已验证 fallback `dispatch_async -> wait_dispatch -> combine_async -> wait_combine` 能返回预期 tensor，并且确实等待 payload work handles。
 
-Source: `MinghuasLab/flash-attention-npu`.
+## 下一步计划
 
-Preparation:
-
-- Cloned locally because Host1 GitHub clone hit TLS timeouts.
-- Pulled `csrc/catlass` submodule.
-- Transferred tarball to Host1 and built in place under `/tmp/flash-attention-npu`.
-- Built artifacts:
-  - `/tmp/flash-attention-npu/flash_attn_npu_2.cpython-311-aarch64-linux-gnu.so`
-  - `/tmp/flash-attention-npu/flash_attn_npu_3.cpython-311-aarch64-linux-gnu.so`
-
-Findings:
-
-- `flash_attn_with_kvcache` imports and runs for decode.
-- RoPE fusion is not available: passing `rotary_cos`/`rotary_sin` reports `NPU FlashAttention does not support rotary embedding`.
-- v2/v3 decode latency is roughly 4.4-5.2 ms in tested shapes, versus official IFA at about 0.03-0.04 ms.
-- Current data does not support using the community implementation as the production default for this project.
-
-## Next plan
-
-1. Do not default-enable official prefill or fusions yet; prefill full-layer is still slower than HF in the tested shapes.
-2. Investigate why official decode core does not improve end-to-end decode TPOT:
-   - include output projection and KV-cache update in the decode microbenchmark,
-   - add per-stage timing inside `AttentionLayer._forward_npu_official_attention`,
-   - compare layout transposes, QKV projection cost, and scheduler timing.
-3. Extend the stream-overlap path to EP async MoE communicator handles only after the static A/F stream path has a TPOT-positive configuration.
-4. Run msprof op profiling on HF vs official+fusion for the b8/s128/t20 decode-DBO case.
-5. Only after Host1 end-to-end TPOT is positive, run cross-host large-batch decode-DBO with fresh `MASTER_PORT`/`HCCL_IF_BASE_PORT`.
-6. Keep community flash-attention-npu as a benchmark-only comparator unless a future shape matrix shows a clear advantage.
+1. 不把 official prefill 单独设为默认；只有 `official + RMSNorm/RoPE fusion` 在大 batch/长 seq 下表现为正收益。
+2. decode IFA 可作为 decode core 的优先路径继续推进，但还需要把 output projection、KV-cache update、A/F 通信、FFN 和 scheduler 气泡纳入端到端分析。
+3. 若要继续 msprof 精细归因，应改造 benchmark：预生成输入，只 profile forward 区间，避免 `DSARandomNormal` 污染 op_summary。
+4. MB2 继续作为默认 microbatch 数；MB3/MB4 保留为实验开关，不默认启用。
+5. 只有 Host1 单机端到端 decode TPOT 转正后，才继续跑跨机大 batch decode-DBO，并使用 fresh `MASTER_PORT` / `HCCL_IF_BASE_PORT`。
+6. 社区版 `flash-attention-npu` 继续保留为 benchmark-only comparator，除非后续证明其在目标部署形状中优于官方 IFA。
