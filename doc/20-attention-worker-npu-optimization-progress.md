@@ -4,20 +4,18 @@
 
 当前分支：`feat/attn-worker-npu-optimizations`。
 
-本文结论全部来自 Host1 `afd-npu-test` 上的 Ascend 910C；GPU 结果不作为验收依据。
+本文结论全部来自 Ascend 910C NPU；GPU 结果不作为验收依据。早期结果主要来自 Host1 `afd-npu-test`，2026-05-27 统一矩阵因 Host1 HBM 被占用，切到 Host2 `afd-npu-test-h2` 执行。
 
 当前最新结论：
 
-- 旧的单层 benchmark 确实只测了第 0 层，不能单独代表 48 层平均。现在已补两组 NPU 数据：`batch=1..128, seq/cache=1..1024` 的 layer 0/23/47 形状矩阵，以及 48 层 representative aggregate。后续结论以 48 层 aggregate 为主。
-- 新增补测明确了 benchmark 口径：`prefill_full_layer` 是完整 AttentionLayer 时间；旧 `decode_core` 只测 IFA/SDPA core，不等同于完整 decode Attention 侧时间。现在已补 `prefill_core` 和 `decode_full_layer` 两个 phase。
-- Prefill kernel-only 结果显示，小/中形状下 PFA core 本身也慢于 SDPA core：all-48 b1/s128 上 `official_pfa 0.195ms vs HF/SDPA 0.077ms`，因此 prefill 慢不能只归因于 full-layer 拆解开销。
-- Decode full-layer fusion 补测显示，raw official IFA full-layer 略慢于 HF，但 RMSNorm/RoPE fusion 可以把完整 decode AttentionLayer 拉到正收益：all-48 b1/cache128 上 `official+both 0.721ms vs HF 0.850ms`。
-- 官方 NPU decode core（`torch_npu.npu_incre_flash_attention`）在此前 48 层矩阵的大 batch/cache 上明显快于 HF/SDPA：b128/cache1024 为 `0.246ms vs 1.585ms`；但新增 b1/cache128 all-48 口径下 core 收益不明显，因此最终要按 shape 区间解读。
-- 官方 prefill 的 prompt FA 不是所有形状都快：小形状 b1/s128 仍慢于 HF；大形状下 `official + RMSNorm/RoPE fusion` 已经反超，例如 b128/s1024 为 `55.39ms vs HF 69.36ms`。
-- layer 输入预拷贝已经补了跨设备 A/B。对小形状减少重复 `.to()` 有明显收益；大形状收益较小但仍为正。
-- MB3/MB4 是 pipeline 按 batch 维切分，不是单层 Attention kernel 优化。b12/s128/t10 端到端对比显示 MB3/MB4 目前不应默认启用：prefill MB2 最快，decode TPOT 也是 MB2 最好。
-- 社区版 `MinghuasLab/flash-attention-npu` v2/v3 可构建运行，但 decode kvcache 在全形状 sampled matrix 中仍慢于官方 IFA，且不支持 RoPE 融合；继续只作为 benchmark 对照。
-- FFN 侧已初步探测昇腾官方 MoE distribute API：当前 torch_npu 2.6 暴露 base/v2 dispatch/combine，但 v2 缺少 `comm_alg` 参数导致 910C fullmesh 配置不可用；base 版要求 EP world size 为 8 的倍数且 hidden size 只能是 7168，与本项目 Qwen3 hidden size 2048 不直接匹配。
+- 报告主口径已统一为 4 类：`prefill_core`、`prefill_full_layer`、`decode_core`、`decode_full_layer`，都使用 all-48 layer aggregate，并在同一 `B={1,8,32}` × `S/cache={128,512,1024}` 矩阵上统计。
+- Prefill core：官方 PFA 在这 9 个 shape 均慢于 HF/SDPA；例如 b32/s1024 为 `3.461ms vs 2.442ms`。
+- Prefill full-layer：`official + RMSNorm/RoPE fusion` 在中/大 shape 明显优于 HF；例如 b32/s1024 为 `14.733ms vs 17.755ms`。
+- Decode core：官方 IFA 在所有 batch/cache 下都优于 HF/SDPA；例如 b32/cache1024 为 `0.078ms vs 0.431ms`。
+- Decode full-layer：`official + RMSNorm/RoPE fusion` 是当前单层最佳路径，9 个 shape 约 `0.632-0.659ms`，比 HF `0.716-1.051ms` 更稳定。
+- 真实 decode-DBO 同一 3x3 矩阵已跑 3 次取中位数并生成 pipeline 图。单层 Attention 收益没有直接转化为 TPOT：b1 TPOT 约 `146-148ms`，b8 约 `326-363ms`，b32 约 `701-755ms`，主要瓶颈仍在 FFN/通信/pipeline。
+- pipeline 中的 `attn_compute` 与单层 bench 不是同一口径：b8/b32 的 pipeline 每层 MB-sum Attention 中位数约 `1.8-1.9ms`，约为 MB-equivalent 单层 bench 的 `1.42-1.51x`；b1 会退化为 1 个 microbatch，timing JSON 无 per-layer pipeline events。
+- batch/seq scaling 不能简单按 `B*S^2` 解读 full-layer：core、QKV/OProj、RMSNorm/RoPE、layout/mask、kernel launch、设备同步和 pipeline 切分混在一起；本报告后续以 core/full-layer 分开判断。
 
 ## 已实现内容
 
@@ -34,7 +32,169 @@
 | Async MoE communicator 协议 | 已实现（API 级） | fallback all-to-all payload 已改为 `async_op=True` handle，并保留 tensor 生命周期；coordinator skeleton 已改用 async dispatch/combine API。 |
 | Attention TP | 未实现 | 需要多 attention rank 执行语义、Q/K/V/O 切分与 KV cache ownership 设计，当前暂时 blocked。 |
 
-## 单层 benchmark
+## 统一 Attention 实验矩阵（2026-05-27）
+
+统一矩阵全部来自 Host2 `afd-npu-test-h2`，模型 `/models/Qwen3-30B-A3B`，dtype `bfloat16`，all-48 layers aggregate：
+
+```text
+B ∈ {1, 8, 32}
+S/cache ∈ {128, 512, 1024}
+```
+
+产物：
+
+- `results_npu/attention_scope_aligned/single_layer_aligned_all48.{json,csv,md}`
+- `results_npu/attention_scope_aligned/single_layer_aligned_mb_equiv.{json,csv,md}`
+- `results_npu/attention_scope_aligned/decode_dbo/decode_dbo_summary.{csv,md}`
+- `results_npu/attention_scope_aligned/decode_dbo/pipeline_plot_index.{csv,md}`
+- `results_npu/attention_scope_aligned/alignment_summary.{csv,md}`
+- `results_npu/attention_scope_aligned/single_layer_scaling_summary.{csv,md}`
+
+### 四类单层口径
+
+| phase | 计时对象 | 包含 | 不包含 |
+|---|---|---|---|
+| `prefill_core` | 已准备 q/k/v 后的 prefill attention kernel | SDPA core 或 PFA core | RMSNorm、QKV、RoPE、OProj、FFN、A/F 通信 |
+| `prefill_full_layer` | 完整 prefill `AttentionLayer.forward()` | RMSNorm、QKV、q/k norm、RoPE、PFA/SDPA、OProj | FFN、A/F 通信 |
+| `decode_core` | 已准备 q/k/v/cache 后的 decode attention kernel | SDPA 或 IFA core | RMSNorm、QKV、RoPE、KV update、OProj、FFN、A/F 通信 |
+| `decode_full_layer` | 完整 decode `AttentionLayer.forward()` | RMSNorm、QKV、q/k norm、RoPE、KV cache update/read、IFA/SDPA、OProj | FFN、A/F 通信 |
+
+### Prefill core：HF/SDPA vs official PFA
+
+单位：ms / layer，48 层中位数。
+
+| Batch | Seq | HF/SDPA | official PFA | speedup |
+|---:|---:|---:|---:|---:|
+| 1 | 128 | 0.079 | 0.180 | 0.44x |
+| 1 | 512 | 0.116 | 0.191 | 0.61x |
+| 1 | 1024 | 0.166 | 0.219 | 0.76x |
+| 8 | 128 | 0.119 | 0.199 | 0.60x |
+| 8 | 512 | 0.289 | 0.371 | 0.78x |
+| 8 | 1024 | 0.697 | 0.952 | 0.73x |
+| 32 | 128 | 0.211 | 0.338 | 0.62x |
+| 32 | 512 | 0.878 | 1.160 | 0.76x |
+| 32 | 1024 | 2.442 | 3.461 | 0.71x |
+
+结论：在当前 910C / torch_npu 2.6 / Qwen3 shape 下，PFA core 本身未转正；prefill 不应把 official PFA 单独设为默认。
+
+### Prefill full-layer：HF vs official vs official+fusion
+
+单位：ms / layer，48 层中位数。
+
+| Batch | Seq | HF | official | official+RMSNorm/RoPE | best vs HF |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 128 | 0.756 | 1.020 | 0.896 | 0.84x |
+| 1 | 512 | 0.765 | 1.019 | 0.933 | 0.82x |
+| 1 | 1024 | 0.894 | 1.057 | 0.946 | 0.95x |
+| 8 | 128 | 0.800 | 1.028 | 0.910 | 0.88x |
+| 8 | 512 | 1.783 | 1.769 | 1.509 | 1.18x |
+| 8 | 1024 | 3.523 | 3.662 | 3.024 | 1.17x |
+| 32 | 128 | 1.672 | 1.769 | 1.692 | 0.99x |
+| 32 | 512 | 7.597 | 8.082 | 6.566 | 1.16x |
+| 32 | 1024 | 17.755 | 18.930 | 14.733 | 1.21x |
+
+结论：full-layer 中 fusion 的收益能覆盖 raw PFA 的劣势，尤其是中/大 seq；但小 shape 仍不适合默认切 official。
+
+### Decode core：HF/SDPA vs official IFA
+
+单位：ms / layer，48 层中位数。
+
+| Batch | Cache | HF/SDPA | official IFA | speedup |
+|---:|---:|---:|---:|---:|
+| 1 | 128 | 0.049 | 0.046 | 1.07x |
+| 1 | 512 | 0.048 | 0.045 | 1.07x |
+| 1 | 1024 | 0.052 | 0.047 | 1.11x |
+| 8 | 128 | 0.071 | 0.046 | 1.54x |
+| 8 | 512 | 0.088 | 0.047 | 1.87x |
+| 8 | 1024 | 0.114 | 0.050 | 2.28x |
+| 32 | 128 | 0.137 | 0.058 | 2.36x |
+| 32 | 512 | 0.217 | 0.065 | 3.34x |
+| 32 | 1024 | 0.431 | 0.078 | 5.53x |
+
+结论：IFA core 是 decode Attention kernel 层面的明确正收益，且 batch/cache 越大越明显。
+
+### Decode full-layer：HF vs official vs official+fusion
+
+单位：ms / layer，48 层中位数。
+
+| Batch | Cache | HF | official | official+RMSNorm/RoPE | best vs HF |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 128 | 0.737 | 0.779 | 0.646 | 1.14x |
+| 1 | 512 | 0.716 | 0.752 | 0.644 | 1.11x |
+| 1 | 1024 | 0.723 | 0.769 | 0.659 | 1.10x |
+| 8 | 128 | 0.728 | 0.760 | 0.646 | 1.13x |
+| 8 | 512 | 0.727 | 0.765 | 0.644 | 1.13x |
+| 8 | 1024 | 0.752 | 0.746 | 0.632 | 1.19x |
+| 32 | 128 | 0.741 | 0.748 | 0.645 | 1.15x |
+| 32 | 512 | 0.772 | 0.752 | 0.642 | 1.20x |
+| 32 | 1024 | 1.051 | 0.758 | 0.649 | 1.62x |
+
+结论：decode full-layer 中 `official + fused RMSNorm/RoPE` 是当前单层最佳 Attention 路径。
+
+## 真实 decode-DBO TPOT 与 pipeline 图
+
+同一 3x3 矩阵在 Host2 以 `--attn-size 1 --ffn-size 1 --ffn-tp-size 1`、MB2、`--comm-timing-mode completion`、`--attn-kernel npu-official --attn-fused-rmsnorm --attn-fused-rope` 跑 3 次取中位数。命令请求 `--tokens 10`，timing JSON 中有效 `decode_steps=9`，`decode_tpot_ms = decode_loop_ms / 9`。
+
+| Batch | Seq | runs | Decode TPOT | Prefill | Decode loop | TBT p99 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 128 | 3 | 147.851 ms | 1505.818 ms | 1330.658 ms | 190.906 ms |
+| 1 | 512 | 3 | 147.642 ms | 1566.023 ms | 1328.780 ms | 190.748 ms |
+| 1 | 1024 | 3 | 145.796 ms | 1629.519 ms | 1312.162 ms | 191.482 ms |
+| 8 | 128 | 3 | 329.983 ms | 1676.454 ms | 2969.844 ms | 367.659 ms |
+| 8 | 512 | 3 | 325.665 ms | 2130.335 ms | 2930.982 ms | 390.316 ms |
+| 8 | 1024 | 3 | 363.003 ms | 2571.169 ms | 3267.024 ms | 424.517 ms |
+| 32 | 128 | 3 | 750.708 ms | 2151.859 ms | 6756.370 ms | 967.178 ms |
+| 32 | 512 | 3 | 755.041 ms | 3480.649 ms | 6795.370 ms | 855.561 ms |
+| 32 | 1024 | 3 | 700.748 ms | 6606.341 ms | 6306.731 ms | 843.208 ms |
+
+Pipeline 图索引：
+
+| Batch | Seq | plot |
+|---:|---:|---|
+| 1 | 128/512/1024 | 无图：batch=1 时 MB2 退化为 1 个 microbatch，timing JSON 无 per-layer `events`。 |
+| 8 | 128 | `results_npu/attention_scope_aligned/decode_dbo/plots/pipeline_b8_s128_t10_rep3.png` |
+| 8 | 512 | `results_npu/attention_scope_aligned/decode_dbo/plots/pipeline_b8_s512_t10_rep3.png` |
+| 8 | 1024 | `results_npu/attention_scope_aligned/decode_dbo/plots/pipeline_b8_s1024_t10_rep3.png` |
+| 32 | 128 | `results_npu/attention_scope_aligned/decode_dbo/plots/pipeline_b32_s128_t10_rep1.png` |
+| 32 | 512 | `results_npu/attention_scope_aligned/decode_dbo/plots/pipeline_b32_s512_t10_rep1.png` |
+| 32 | 1024 | `results_npu/attention_scope_aligned/decode_dbo/plots/pipeline_b32_s1024_t10_rep1.png` |
+
+## 单层 bench 与 pipeline Attention 时间是否一致
+
+对齐脚本：`scripts/analyze_attention_scope_alignment.py`。
+
+比较对象：
+
+- `single_layer_global_ms`：单层 bench 直接用全局 batch B 跑一次完整 decode full-layer。
+- `single_layer_mb_sum_ms`：按 MB2 实际 microbatch size 跑单层 bench 后求和，例如 B=8 对应 `B_eff=4 + 4`。
+- `pipeline_attn_per_layer_sum_median_ms`：真实 decode-DBO timing JSON 中同一 layer 的 MB `attn_compute` 事件求和，排除 layer0。
+
+| Batch | Cache | Pipeline per-layer MB-sum | Single global | Single MB-sum | Pipeline / MB-sum |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 128 | N/A | 0.646 ms | 0.627 ms | N/A |
+| 1 | 512 | N/A | 0.644 ms | 0.621 ms | N/A |
+| 1 | 1024 | N/A | 0.659 ms | 0.626 ms | N/A |
+| 8 | 128 | 1.798 ms | 0.646 ms | 1.265 ms | 1.42x |
+| 8 | 512 | 1.844 ms | 0.644 ms | 1.261 ms | 1.46x |
+| 8 | 1024 | 1.899 ms | 0.632 ms | 1.263 ms | 1.50x |
+| 32 | 128 | 1.799 ms | 0.645 ms | 1.257 ms | 1.43x |
+| 32 | 512 | 1.796 ms | 0.642 ms | 1.248 ms | 1.44x |
+| 32 | 1024 | 1.900 ms | 0.649 ms | 1.258 ms | 1.51x |
+
+结论：
+
+- 单层 bench 的全局 batch 时间不能直接拿来解释 pipeline 逐层时间，因为 decode-DBO 按 microbatch 切分；更合理的是用 MB-equivalent 单层 bench 求和。
+- 即便用 MB-equivalent 求和，真实 pipeline `attn_compute` 仍高 `1.42-1.51x`。这部分差异来自 scheduler 事件边界、KV cache slice/merge、真实生成路径状态、同步/计时开销和通信重叠时的流调度，不应简单归因为 Attention kernel 本身。
+- b1 没有 pipeline event 是预期行为：`DecodeDBOScheduler._compute_mb_sizes()` 会把 microbatch 数限制到不超过 batch size，B=1 时实际就是 1 个 MB。
+
+## Batch / Seq scaling 解读
+
+- Prefill core 更接近 attention kernel，但也不严格按 `B*S^2` 线性放大，因为内核选择、tiling、launch overhead 和硬件利用率会改变斜率。
+- Prefill full-layer 包含 QKV/OProj、RMSNorm、RoPE、layout、mask 等大量非 attention-core 开销；其中许多项近似 `B*S` 或固定开销，不能用 `B*S^2` 单独解释。
+- Decode core 主要随 `B*cache` 增长；IFA 对大 batch/cache 的收益最清晰。
+- Decode full-layer 在本次矩阵里更接近固定开销主导，fusion 后约 `0.63-0.66ms/layer`，但真实 TPOT 仍由 FFN/通信/pipeline 主导。
+
+## 历史补充：旧单层 benchmark（保留参考，不作为主口径）
 
 Benchmark 脚本：`scripts/bench_attention_layer_npu.py`。
 
