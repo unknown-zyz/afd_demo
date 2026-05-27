@@ -33,6 +33,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--use-v2", action="store_true", help="Use *_v2 MoE distribute APIs.")
+    parser.add_argument(
+        "--comm-alg",
+        default="",
+        help="Optional comm_alg for *_v2 APIs when the installed torch_npu schema exposes it.",
+    )
     parser.add_argument("--global-bs", type=int, default=None, help="global_bs for official API.")
     parser.add_argument("--output", required=True, help="JSON output path written by rank 0.")
     return parser.parse_args()
@@ -67,6 +72,24 @@ def init_dist() -> tuple[int, int]:
 def get_hcomm_info(rank: int) -> str:
     backend = dist.group.WORLD._get_backend(torch.device("npu"))
     return backend.get_hccl_comm_name(rank)
+
+
+def op_supports_kwarg(op_name: str, kwarg: str) -> bool:
+    packet = getattr(torch.ops.npu, op_name, None)
+    if packet is None:
+        return False
+    try:
+        return kwarg in str(packet.default._schema)
+    except Exception:
+        return False
+
+
+def maybe_add_comm_alg(kwargs: dict[str, Any], op_name: str, comm_alg: str) -> None:
+    if not comm_alg:
+        return
+    if not op_supports_kwarg(op_name, "comm_alg"):
+        raise RuntimeError(f"{op_name} schema does not expose comm_alg; cannot pass {comm_alg!r}")
+    kwargs["comm_alg"] = comm_alg
 
 
 def bench(fn: Callable[[], None], warmup: int, iters: int, repeats: int) -> tuple[float, list[float]]:
@@ -174,16 +197,19 @@ def official_case(
     state: dict[str, torch.Tensor] = {}
 
     def dispatch_once() -> None:
-        output = dispatch(
-            x=x,
-            expert_ids=expert_ids,
-            group_ep=hcomm,
-            ep_world_size=world,
-            ep_rank_id=rank,
-            moe_expert_num=experts,
-            expert_scales=weights,
-            global_bs=global_bs,
-        )
+        kwargs: dict[str, Any] = {
+            "x": x,
+            "expert_ids": expert_ids,
+            "group_ep": hcomm,
+            "ep_world_size": world,
+            "ep_rank_id": rank,
+            "moe_expert_num": experts,
+            "expert_scales": weights,
+            "global_bs": global_bs,
+        }
+        if args.use_v2:
+            maybe_add_comm_alg(kwargs, "npu_moe_distribute_dispatch_v2", args.comm_alg)
+        output = dispatch(**kwargs)
         state["expand_x"], _, state["expand_idx"], state["expert_token_nums"], state["ep_recv_counts"], state[
             "tp_recv_counts"
         ], state["expand_scales"] = output
@@ -219,6 +245,7 @@ def official_case(
         }
         if args.use_v2:
             kwargs["assist_info_for_combine"] = state["expand_idx"]
+            maybe_add_comm_alg(kwargs, "npu_moe_distribute_combine_v2", args.comm_alg)
         else:
             kwargs["expand_idx"] = state["expand_idx"]
         state["combined"] = combine(**kwargs)
@@ -245,6 +272,7 @@ def official_case(
         "tokens": tokens,
         "hidden": hidden,
         "top_k": top_k,
+        "comm_alg": args.comm_alg if args.use_v2 else "",
         "global_bs": global_bs,
         "dispatch_ms": dispatch_ms,
         "combine_ms": combine_ms,
@@ -259,15 +287,23 @@ def official_case(
 def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (row.get("backend"), row.get("tokens"), row.get("hidden"), row.get("top_k"), row.get("ok"))
+        key = (
+            row.get("backend"),
+            row.get("tokens"),
+            row.get("hidden"),
+            row.get("top_k"),
+            row.get("comm_alg", ""),
+            row.get("ok"),
+        )
         grouped.setdefault(key, []).append(row)
     result = []
-    for (backend, tokens, hidden, top_k, ok), group in grouped.items():
+    for (backend, tokens, hidden, top_k, comm_alg, ok), group in grouped.items():
         out: dict[str, Any] = {
             "backend": backend,
             "tokens": tokens,
             "hidden": hidden,
             "top_k": top_k,
+            "comm_alg": comm_alg,
             "ok": ok,
             "rank_count": len(group),
         }
@@ -308,6 +344,9 @@ def main() -> None:
             "backend": args.backend,
             "world_size": world,
             "dtype": args.dtype,
+            "torch": torch.__version__,
+            "torch_npu": getattr(__import__("torch_npu"), "__version__", None),
+            "comm_alg": args.comm_alg if args.use_v2 else "",
             "warmup": args.warmup,
             "iters": args.iters,
             "repeats": args.repeats,

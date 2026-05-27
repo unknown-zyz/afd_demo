@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         help="global_bs passed to MoE distribute ops. Defaults to tokens * ep_world_size.",
     )
     parser.add_argument("--use-v2", action="store_true", help="Use *_v2 APIs in smoke mode.")
+    parser.add_argument(
+        "--comm-alg",
+        default="",
+        help="Optional comm_alg for *_v2 APIs when the installed torch_npu schema exposes it.",
+    )
     return parser.parse_args()
 
 
@@ -65,6 +70,24 @@ def schema_probe() -> None:
 def get_hcomm_info(rank: int) -> str:
     backend = dist.group.WORLD._get_backend(torch.device("npu"))
     return backend.get_hccl_comm_name(rank)
+
+
+def op_supports_kwarg(op_name: str, kwarg: str) -> bool:
+    packet = getattr(torch.ops.npu, op_name, None)
+    if packet is None:
+        return False
+    try:
+        return kwarg in str(packet.default._schema)
+    except Exception:
+        return False
+
+
+def maybe_add_comm_alg(kwargs: dict[str, Any], op_name: str, comm_alg: str) -> None:
+    if not comm_alg:
+        return
+    if not op_supports_kwarg(op_name, "comm_alg"):
+        raise RuntimeError(f"{op_name} schema does not expose comm_alg; cannot pass {comm_alg!r}")
+    kwargs["comm_alg"] = comm_alg
 
 
 def init_hccl() -> tuple[int, int]:
@@ -107,16 +130,19 @@ def smoke(args: argparse.Namespace) -> None:
     torch.npu.synchronize()
     start = time.perf_counter()
     log(f"rank={rank} before dispatch")
-    output = dispatch(
-        x=x,
-        expert_ids=expert_ids,
-        group_ep=hcomm,
-        ep_world_size=world,
-        ep_rank_id=rank,
-        moe_expert_num=args.experts,
-        expert_scales=weights,
-        global_bs=global_bs,
-    )
+    dispatch_kwargs: dict[str, Any] = {
+        "x": x,
+        "expert_ids": expert_ids,
+        "group_ep": hcomm,
+        "ep_world_size": world,
+        "ep_rank_id": rank,
+        "moe_expert_num": args.experts,
+        "expert_scales": weights,
+        "global_bs": global_bs,
+    }
+    if args.use_v2:
+        maybe_add_comm_alg(dispatch_kwargs, "npu_moe_distribute_dispatch_v2", args.comm_alg)
+    output = dispatch(**dispatch_kwargs)
     torch.npu.synchronize()
     dispatch_ms = (time.perf_counter() - start) * 1000.0
     expand_x, _dynamic_scales, expand_idx, expert_token_nums, ep_recv_counts, tp_recv_counts, expand_scales = output
@@ -145,6 +171,7 @@ def smoke(args: argparse.Namespace) -> None:
     }
     if args.use_v2:
         kwargs["assist_info_for_combine"] = expand_idx
+        maybe_add_comm_alg(kwargs, "npu_moe_distribute_combine_v2", args.comm_alg)
     else:
         kwargs["expand_idx"] = expand_idx
 

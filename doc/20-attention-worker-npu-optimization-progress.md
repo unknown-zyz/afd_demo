@@ -17,6 +17,15 @@
 - pipeline 中的 `attn_compute` 与单层 bench 不是同一口径：b8/b32 的 pipeline 每层 MB-sum Attention 中位数约 `1.8-1.9ms`，约为 MB-equivalent 单层 bench 的 `1.42-1.51x`；b1 会退化为 1 个 microbatch，timing JSON 无 per-layer pipeline events。
 - batch/seq scaling 不能简单按 `B*S^2` 解读 full-layer：core、QKV/OProj、RMSNorm/RoPE、layout/mask、kernel launch、设备同步和 pipeline 切分混在一起；本报告后续以 core/full-layer 分开判断。
 
+### 这一阶段已经得到的稳定判断
+
+- Attention 单层优化已经基本收敛：decode 侧 `official IFA + fused RMSNorm/RoPE` 是当前最优单层路径；prefill 侧则不能简单把 official PFA 设为默认，只能在 full-layer 中依赖 fusion 在中/大 shape 上转正。
+- 之前几轮补实验已经把几个争议点收敛清楚：社区 `flash-attention-npu` 在当前形状上明显慢于官方 IFA，且不支持本项目所需的 RoPE 融合；precopy 是低风险优化，但主要改善小 shape 的重复跨设备迁移；MB3/MB4 能跑但没有成为更好的默认设置。
+- msprof 与 unified matrix 的结论一致：prefill 小 shape 慢不只是 PFA kernel 本身，QKV/OProj、layout/cast/transpose、mask、RMSNorm/RoPE 等固定开销同样重要；decode IFA 的 kernel 优势是真实存在的，但它还不等于端到端 TPOT 优势。
+- 因此当前阶段的核心结论不是“Attention 还没优化完”，而是“Attention 单层已拿到主要收益，端到端 decode-DBO 的主瓶颈已经转向 FFN、A/F 通信和 pipeline overlap”。
+- MoE distribute 的版本问题已用新建隔离容器验证：当前生产/验证容器仍是 CANN 8.5.0 + torch_npu 2.6，v2 不暴露 `comm_alg`；隔离容器 CANN 8.5.1 + torch_npu 2.9 已暴露 `comm_alg`，且 `dispatch_v2/combine_v2` 在 Qwen3 `H=2048`、`comm_alg=fullmesh_v2` 下可跑通。
+- 当前分支最新相关提交包括 `16a7bd1`、`2b36ad6`、`5dfe9ed`；其中后两个提交只做结果 CSV 规范化，不改变实验结论。`git push -u origin HEAD` 仍受本地 GitHub 凭据缺失阻塞。
+
 ## 已实现内容
 
 | 项目 | 状态 | 说明 |
@@ -31,6 +40,18 @@
 | NPU stream overlap | 已实现（静态 A/F 路径） | `--attn-stream-overlap` 已接入 prefill 与 decode DBO scheduler；MB2/MB3/MB4 已补端到端对比。 |
 | Async MoE communicator 协议 | 已实现（API 级） | fallback all-to-all payload 已改为 `async_op=True` handle，并保留 tensor 生命周期；coordinator skeleton 已改用 async dispatch/combine API。 |
 | Attention TP | 未实现 | 需要多 attention rank 执行语义、Q/K/V/O 切分与 KV cache ownership 设计，当前暂时 blocked。 |
+
+## 剩余 blocked 待办（截至 2026-05-27）
+
+当前只剩 3 个 blocked 项，它们都不是简单“还没做”，而是被当前拓扑设计、torch_npu API 能力或端到端 gate 条件卡住：
+
+| 待办 | 为什么 blocked | 重新打开的前提 | 当前优先级 |
+|---|---|---|---|
+| `attention-tp` | 当前运行语义默认只有一个 attention coordinator；若直接局部改成多 attention ranks，会同时影响 TP group、Q/K/V/O 权重切分、KV cache ownership、A/F 通信接口和 scheduler 假设。 | 先单独完成 attention TP 拓扑设计，明确 coordinator 语义、KV cache 所属关系与 NPU 验证矩阵，再进入代码实现。 | 中 |
+| `bench-moe-dispatch-real-routing` | 当前 `afd-npu-test*` 生产/验证容器仍是 torch_npu 2.6 + CANN 8.5.0，base 只接受 H=7168，v2 不暴露 `comm_alg`；隔离容器已证明 torch_npu 2.9 + CANN 8.5.1 的 v2 可用，但真实 decode path 尚未迁移到该版本。 | 用隔离容器/新环境继续跑 real routing benchmark；若稳定，再规划 official v2 backend 接入，不能直接改现有容器。 | 中 |
+| `multinode-decode-dbo-large-batch` | 现阶段 Host1 单机端到端 decode-DBO 还没有出现“official/fusion 路径 TPOT 转正”的 gate 结果；在这种情况下继续跑跨机大 batch，只会把单机未解决瓶颈带到更复杂的 HCCL 场景。 | 先把单机 FFN/通信/pipeline 瓶颈压下去，确认 Host1 单机 TPOT 相比 HF 转正，再继续跨机大 batch。 | 高 |
+
+从后续收益看，真正最值得优先推进的是第三项背后的单机端到端瓶颈，也就是 FFN、通信与 pipeline overlap；另外两项更多是“结构性扩展项”，不适合在当前状态下硬推进。
 
 ## 统一 Attention 实验矩阵（2026-05-27）
 
@@ -611,18 +632,56 @@ Host1 EP8 / HCCL / Qwen3 hidden=2048 对比结果：
 
 `bench-moe-dispatch-real-routing` 也因此暂时阻塞：真实 Qwen router 输出的 hidden 维度仍是 2048，官方 base dispatch 在 dispatch 阶段即失败，v2 也卡在 `comm_alg` 暴露问题；即使用真实 routing 也无法进入 official combine。
 
+### 隔离容器版本验证：CANN 8.5.1 + torch_npu 2.9
+
+根据用户要求，版本排查没有修改现有 `afd-npu-test` / `afd-npu-test-h2`，而是在 Host2 新建本任务专用容器：
+
+| 项 | 值 |
+|---|---|
+| 容器 | `afd-npu-version-probe-torch29-npu` |
+| 镜像 | `quay.io/ascend/vllm-ascend:v0.18.0rc1-a3` |
+| CANN | `8.5.1`，inner `V100R001C25SPC002B220` |
+| torch | `2.9.0+cpu` |
+| torch_npu | `2.9.0.post1+gitee7ba04` |
+| 产物 | `results_npu/moe_version_probe/` |
+
+关键 schema 变化：
+
+```text
+npu_moe_distribute_dispatch_v2(..., str comm_alg="", ...)
+npu_moe_distribute_combine_v2(..., str comm_alg="", ...)
+```
+
+隔离 probe 结果：
+
+| Case | 结果 | 结论 |
+|---|---:|---|
+| base H=7168, top_k=2 | total `0.906 ms`，diff=0 | sanity 通过，但不是 Qwen3 shape。 |
+| base H=2048, top_k=8 | FAIL：`xShape dims1(H) only supports 7168, but got 2048` | base 版仍不适合 Qwen3 hidden size。 |
+| v2 H=2048, default `comm_alg` | total `2336 ms`，diff=0 | 默认能过但极慢，不可作为候选。 |
+| v2 H=2048, `comm_alg=fullmesh_v1` | total `1.080 ms`，diff=0 | 可用。 |
+| v2 H=2048, `comm_alg=fullmesh_v2` | total `0.482 ms`，diff=0 | 当前最佳 isolated probe 结果。 |
+| 更新后的 `bench_moe_dispatch_npu.py`，v2 H=2048, `fullmesh_v2` | warm 后 total `0.860 ms`，diff=0 | 仓库脚本已能条件化传 `--comm-alg` 并跑通。 |
+
+解释：
+
+- 这说明前一次 v2 失败确实和版本/API 配套有关：torch_npu 2.6 schema 没有 `comm_alg`，torch_npu 2.9 schema 已暴露该参数。
+- 仅升级到 CANN 8.5.1/torch_npu 2.9 并不修复 base 版 H=2048 限制；真正可用的是 `dispatch_v2/combine_v2 + comm_alg=fullmesh_v2`。
+- 这个验证没有改变当前生产/验证容器；如果要接入真实 decode path，需要先在新环境中跑 real routing correctness/perf，再设计 official v2 backend。
+- 该镜像未安装 `torchair`，所以没有验证用户提到的静态图尾节点强校验场景；本项目当前 probe 和真实路径是 eager/torchrun 口径。
+
 当前 backend 决策：
 
-- 不实现 `EPFFNLayer` 的 official MoE distribute backend。
-- 短期 FFN 优化继续围绕当前 `EPFFNLayer` 的 broadcast/reduce、`ShardedExperts.forward_local()`、post-attn RMSNorm、expert grouped compute、以及 coordinator fallback all-to-all 的可落地路径。
-- 若后续升级 torch_npu/op-plugin 后 v2 暴露 `comm_alg`，或 base 支持 H=2048，再重新打开 official MoE distribute backend 评估。
+- 当前 `afd-npu-test*` 环境仍不实现 `EPFFNLayer` 的 official MoE distribute backend。
+- 新环境候选路径是 `npu_moe_distribute_dispatch_v2/combine_v2 + comm_alg=fullmesh_v2`，不是 base 版。
+- 短期 FFN 优化仍继续围绕当前 `EPFFNLayer` 的 broadcast/reduce、`ShardedExperts.forward_local()`、post-attn RMSNorm、expert grouped compute、以及 coordinator fallback all-to-all；official v2 backend 需要单独设计和 real routing 验证。
 
 ## 下一步计划
 
-1. 不把 official prefill 单独设为默认；只有 `official + RMSNorm/RoPE fusion` 在大 batch/长 seq 下表现为正收益。
-2. decode IFA 可作为 decode core 的优先路径继续推进，但还需要把 output projection、KV-cache update、A/F 通信、FFN 和 scheduler 气泡纳入端到端分析。
-3. 若要继续 msprof 精细归因，应改造 benchmark：预生成输入，只 profile forward 区间，避免 `DSARandomNormal` 污染 op_summary。
+1. 保持当前 Attention 侧结论不变：不把 official prefill 单独设为默认；decode 侧继续以 `official IFA + fused RMSNorm/RoPE` 作为优先单层路径。
+2. 下一阶段重点转到 FFN：优先分析/优化 `src/model/ffn_worker.py`、`src/model/ep_moe.py`、`src/pipeline/decode_scheduler.py` 中的 post-attention layernorm、dispatch/combine、local expert compute 和 pipeline bubble。
+3. 若继续做归因，优先补“单机端到端 TPOT 为什么没吃到 Attention 收益”的 msprof/时间线分析，而不是继续扩大单层 Attention benchmark 覆盖面。
 4. MB2 继续作为默认 microbatch 数；MB3/MB4 保留为实验开关，不默认启用。
-5. 只有 Host1 单机端到端 decode TPOT 转正后，才继续跑跨机大 batch decode-DBO，并使用 fresh `MASTER_PORT` / `HCCL_IF_BASE_PORT`。
-6. 社区版 `flash-attention-npu` 继续保留为 benchmark-only comparator，除非后续证明其在目标部署形状中优于官方 IFA。
-7. FFN 侧先不要默认接官方 MoE distribute；优先确认可用 API 版本，或继续设计当前 `EPFFNLayer` broadcast/reduce 与 coordinator all-to-all 的可落地优化。
+5. `attention-tp` 在完成拓扑设计前保持 blocked，不做局部硬接实现。
+6. 官方 MoE distribute 的可行候选已收敛为新环境下的 v2 + `comm_alg=fullmesh_v2`；在 real routing 与真实 decode path 验证完成前，仍不接入当前生产路径。
+7. 只有 Host1 单机端到端 decode TPOT 转正后，才继续跑跨机大 batch decode-DBO，并使用 fresh `MASTER_PORT` / `HCCL_IF_BASE_PORT`。
