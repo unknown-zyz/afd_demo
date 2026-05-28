@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import shlex
 import subprocess
@@ -88,6 +89,10 @@ OOM_RE = re.compile(
     r"out of memory|OOM|ACL_ERROR_RT_MEMORY_ALLOCATION|memory allocation|MemoryError",
     re.IGNORECASE,
 )
+SSH_FAILURE_RE = re.compile(
+    r"kex_exchange_identification|Connection (?:closed|reset)|ssh_exchange_identification",
+    re.IGNORECASE,
+)
 
 
 def is_oom_text(text: str) -> bool:
@@ -104,6 +109,10 @@ def classify_oom_side(h1_text: str, h2_text: str) -> str:
     if h2_oom:
         return "ffn"
     return ""
+
+
+def is_ssh_failure_text(text: str) -> bool:
+    return bool(SSH_FAILURE_RE.search(text))
 
 
 def serial_baseline_tag(cfg: RunConfig) -> str:
@@ -223,6 +232,7 @@ def stale_processes(remote: Remote, pattern: str) -> str:
         remote,
         f"ps -ef | grep -E {quote(pattern)} | grep -v grep || true",
         timeout=60,
+        check=False,
     ).strip()
 
 
@@ -327,12 +337,26 @@ def parse_tpot(line: str) -> str:
 
 
 def fetch_file(remote: Remote, remote_path: str, local_path: Path) -> bool:
-    text = read_remote_text(remote, remote_path)
-    if not text.strip():
+    for attempt in range(1, 4):
+        text = read_remote_text(remote, remote_path)
+        if not text.strip() or is_ssh_failure_text(text):
+            if attempt < 3:
+                time.sleep(5 * attempt)
+                continue
+            return False
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_text(text)
+        return True
+    return False
+
+
+def is_valid_json(path: Path) -> bool:
+    try:
+        with path.open() as f:
+            json.load(f)
+        return True
+    except Exception:
         return False
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    local_path.write_text(text)
-    return True
 
 
 def generate_local_artifacts(local_out: Path, cfg: RunConfig) -> tuple[str, str]:
@@ -341,7 +365,7 @@ def generate_local_artifacts(local_out: Path, cfg: RunConfig) -> tuple[str, str]
     ffn = local_out / f"timing_ffn_coordinator_{suffix}.json"
     report = local_out / f"report_{suffix}.md"
     pipeline = local_out / f"pipeline_{suffix}.png"
-    if not attn.exists() or not ffn.exists():
+    if not attn.exists() or not ffn.exists() or not is_valid_json(attn) or not is_valid_json(ffn):
         return "", ""
     report_cmd = [
             sys.executable,
