@@ -143,14 +143,29 @@ start_resource_monitor() {
   if (( ! RESOURCE_MONITOR )); then
     return 0
   fi
+  local monitor_devices="${ASCEND_VISIBLE_DEVICES:-0}"
+  if [[ "$SIDE" == "host2" ]]; then
+    monitor_devices="$HOST2_FFN_DEVICES"
+  fi
+  sample_usages() {
+    local dev card chip
+    IFS=',' read -ra _monitor_devs <<< "$monitor_devices"
+    for dev in "${_monitor_devs[@]}"; do
+      [[ -n "$dev" ]] || continue
+      card=$((dev / 2))
+      chip=$((dev % 2))
+      echo "--- npu=$dev card=$card chip=$chip ---"
+      npu-smi info -t usages -i "$card" -c "$chip" 2>&1 || true
+    done
+  }
   {
     echo "resource_monitor_start side=$SIDE ts=$(date -Is)"
-    npu-smi info -t usages 2>&1 || true
+    sample_usages
   } >"$OUT_DIR/npu_smi_${SIDE}_start.log"
   (
     while true; do
       echo "=== ts=$(date -Is) side=$SIDE ==="
-      npu-smi info -t usages 2>&1 || true
+      sample_usages
       sleep "$RESOURCE_MONITOR_INTERVAL"
     done
   ) >"$OUT_DIR/npu_smi_${SIDE}.log" 2>&1 &
