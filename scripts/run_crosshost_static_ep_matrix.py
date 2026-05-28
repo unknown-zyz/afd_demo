@@ -122,7 +122,20 @@ def remote_bash(
     docker_args += [remote.container, "bash", "-lc", command]
     rendered = " ".join(quote(part) for part in docker_args)
     proc = run_cmd(remote_command(remote, rendered), input_text=input_text, timeout=timeout, check=check)
-    return proc.stdout
+    return strip_ssh_warnings(proc.stdout)
+
+
+def strip_ssh_warnings(output: str) -> str:
+    lines = []
+    for line in output.splitlines():
+        if line.startswith("** WARNING:"):
+            continue
+        if line.startswith('** This session may be vulnerable to "store now'):
+            continue
+        if line.startswith("** The server may need to be upgraded."):
+            continue
+        lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def remote_detached(remote: Remote, script_path: str, *, timeout: int = 120) -> str:
