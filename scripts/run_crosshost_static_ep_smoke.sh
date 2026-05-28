@@ -150,7 +150,8 @@ start_resource_monitor() {
   (
     while true; do
       echo "=== ts=$(date -Is) side=$SIDE ==="
-      npu-smi info watch -d "$RESOURCE_MONITOR_INTERVAL" -s ptaicmbnu
+      npu-smi info -t usages 2>&1 || true
+      sleep "$RESOURCE_MONITOR_INTERVAL"
     done
   ) >"$OUT_DIR/npu_smi_${SIDE}.log" 2>&1 &
   PIDS+=("$!")
