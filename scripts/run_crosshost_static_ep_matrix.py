@@ -369,8 +369,8 @@ def run_one(
         hbm_before = host2_hbm_summary(host2)
         print(f"=== {cfg.tag} ===", flush=True)
         print(hbm_before, flush=True)
-        h1_stale = stale_processes(host1, "src.main|run_crosshost_static_ep")
-        h2_stale = stale_processes(host2, "src.main|run_crosshost_static_ep")
+        h1_stale = stale_processes(host1, "src[.]main|run_crosshost_static_[e]p")
+        h2_stale = stale_processes(host2, "src[.]main|run_crosshost_static_[e]p")
         if h1_stale or h2_stale:
             status = "SKIP_STALE_PROCESS"
             detail = f"h1={bool(h1_stale)} h2={bool(h2_stale)}"

@@ -102,7 +102,7 @@ fi
 
 show_stale() {
   echo "=== stale process check ($SIDE) ==="
-  ps -ef | grep -E "src.main|run_crosshost_static_ep" | grep -v grep || true
+  ps -ef | grep -E "src[.]main|run_crosshost_static_[e]p" || true
 }
 
 copy_timing_files() {
