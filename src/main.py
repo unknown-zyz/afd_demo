@@ -194,7 +194,7 @@ def parse_args():
     parser.add_argument('--ffn-ep-size', type=int, default=1,
                         help='Expert-parallel degree within the FFN role. 1 disables EP.')
     parser.add_argument('--ffn-ep-backend', type=str,
-                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap'],
+                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap', 'npu_moe_v2'],
                         default='broadcast_reduce_sync',
                         help='FFN EP backend. Overlap mode is experimental.')
     parser.add_argument('--ffn-coordinator-rank', type=int, default=None,

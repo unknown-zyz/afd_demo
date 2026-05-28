@@ -35,6 +35,7 @@ FFN_TP_SIZE=2
 FFN_EP_SIZE=1
 FFN_EP_BACKEND="broadcast_reduce_sync"
 EP_EXPERT_POLICY="round_robin"
+EP_EXPERT_POLICY_SET=false
 TOKENS=5
 BATCH=8
 SEQ=128
@@ -66,7 +67,7 @@ while [[ $# -gt 0 ]]; do
         --ffn-tp-size)  FFN_TP_SIZE="$2"; shift 2 ;;
         --ffn-ep-size)  FFN_EP_SIZE="$2"; shift 2 ;;
         --ffn-ep-backend) FFN_EP_BACKEND="$2"; shift 2 ;;
-        --ep-expert-policy) EP_EXPERT_POLICY="$2"; shift 2 ;;
+        --ep-expert-policy) EP_EXPERT_POLICY="$2"; EP_EXPERT_POLICY_SET=true; shift 2 ;;
         --tokens)       TOKENS="$2"; shift 2 ;;
         --batch)        BATCH="$2";  shift 2 ;;
         --seq)          SEQ="$2";    shift 2 ;;
@@ -89,6 +90,9 @@ fi
 if (( FFN_EP_SIZE > 1 && FFN_EP_SIZE != FFN_SIZE )); then
     echo "ERROR: EP MVP requires --ffn-ep-size=$FFN_EP_SIZE to equal --ffn-size=$FFN_SIZE" >&2
     exit 1
+fi
+if [ "$FFN_EP_BACKEND" = "npu_moe_v2" ] && [ "$EP_EXPERT_POLICY_SET" = false ]; then
+    EP_EXPERT_POLICY="contiguous"
 fi
 
 echo "=== NPU-910C launch ==="

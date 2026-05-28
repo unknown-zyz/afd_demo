@@ -6,6 +6,7 @@ coordinating between attention and FFN workers across nodes.
 """
 
 import logging
+import os
 import socket
 import statistics
 import time
@@ -24,6 +25,16 @@ from ..utils import device as devmod
 from ..utils.sampling import sample_next_token, StoppingCriteria
 
 logger = logging.getLogger(__name__)
+
+
+def _debug_num_layers(num_layers: int) -> int:
+    value = os.environ.get("AFD_DEBUG_MAX_LAYERS")
+    if value in (None, ""):
+        return num_layers
+    requested = int(value)
+    if requested <= 0:
+        raise ValueError("AFD_DEBUG_MAX_LAYERS must be positive")
+    return min(num_layers, requested)
 
 
 def _tbt_stats(step_times_ms: List[float]) -> Dict[str, Optional[float]]:
@@ -515,7 +526,7 @@ class DisaggregatedQwenModel(nn.Module):
             layer_input_cache = None
         
         # Run through all layers
-        for layer_idx in range(self.num_layers):
+        for layer_idx in range(_debug_num_layers(self.num_layers)):
             hidden_states = self.forward_layer_sync(
                 layer_idx=layer_idx,
                 hidden_states=hidden_states,
@@ -687,7 +698,7 @@ class DisaggregatedQwenModel(nn.Module):
             layer_input_cache = None
         
         # Run through layers
-        for layer_idx in range(self.num_layers):
+        for layer_idx in range(_debug_num_layers(self.num_layers)):
             hidden_states = self.forward_layer_with_cache(
                 layer_idx=layer_idx,
                 hidden_states=hidden_states,
@@ -758,7 +769,7 @@ class DisaggregatedQwenModel(nn.Module):
             layer_input_cache = None
         
         # Run through layers
-        for layer_idx in range(self.num_layers):
+        for layer_idx in range(_debug_num_layers(self.num_layers)):
             hidden_states = self.forward_layer_with_cache(
                 layer_idx=layer_idx,
                 hidden_states=hidden_states,

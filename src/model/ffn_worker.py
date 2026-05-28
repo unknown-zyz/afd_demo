@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
 
-from .ep_moe import EPFFNLayer, ExpertShardPlan, ShardedExperts
+from .ep_moe import EPFFNLayer, ExpertShardPlan, ShardedExperts, parse_gate_output
 from ..distributed import get_distributed_context
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,8 @@ class FFNLayer(nn.Module):
             hidden_states_2d = hidden_states.reshape(-1, hidden_dim)
 
             router_start = time.perf_counter()
-            _, routing_weights, selected_experts = self.mlp.gate(hidden_states_2d)
+            top_k = int(getattr(self.mlp.gate, "top_k", getattr(self.mlp, "num_experts_per_tok", 8)))
+            routing_weights, selected_experts = parse_gate_output(self.mlp.gate(hidden_states_2d), top_k)
             router_end = time.perf_counter()
             stage_timing.router_s = router_end - router_start
             stage_timing.router_start_s = router_start
@@ -202,9 +203,10 @@ class FFNWorker(nn.Module):
             layer_device = self.role_devices[layer_device_idx]
             if self.use_ep and hasattr(layer.mlp, "experts"):
                 experts = layer.mlp.experts
+                num_experts = int(getattr(experts, "num_experts", len(experts)))
                 shard_policy = "explicit" if self.expert_to_rank is not None else self.ctx.config.ep_expert_policy
                 plan = ExpertShardPlan(
-                    num_experts=int(experts.num_experts),
+                    num_experts=num_experts,
                     ep_size=self.ctx.ffn_ep_size,
                     ep_rank=self.ctx.ffn_ep_rank,
                     policy=shard_policy,

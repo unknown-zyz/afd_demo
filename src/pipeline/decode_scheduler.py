@@ -11,6 +11,7 @@ batch slice of the KV cache, then the updated slices are merged back.
 """
 
 import logging
+import os
 import time
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass
@@ -23,6 +24,16 @@ from ..utils import device as devmod
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
 
 logger = logging.getLogger(__name__)
+
+
+def _debug_num_layers(num_layers: int) -> int:
+    value = os.environ.get("AFD_DEBUG_MAX_LAYERS")
+    if value in (None, ""):
+        return num_layers
+    requested = int(value)
+    if requested <= 0:
+        raise ValueError("AFD_DEBUG_MAX_LAYERS must be positive")
+    return min(num_layers, requested)
 
 
 @dataclass
@@ -146,12 +157,13 @@ class DecodeDBOScheduler:
         return result
 
     def _use_ep_overlap(self, num_mb: int) -> bool:
-        return (
-            self.ctx.ffn_ep_enabled
-            and self.ctx.config is not None
-            and self.ctx.config.ffn_ep_backend == "broadcast_reduce_overlap"
-            and num_mb >= 2
-        )
+        if not self.ctx.ffn_ep_enabled or self.ctx.config is None:
+            return False
+        if self.ctx.config.ffn_ep_backend == "broadcast_reduce_overlap":
+            return num_mb >= 2
+        if self.ctx.config.ffn_ep_backend == "npu_moe_v2":
+            return num_mb >= 1
+        return False
 
     def _record_ffn_stage_timing(
         self,
@@ -365,7 +377,7 @@ class DecodeDBOScheduler:
             actual_num_mb = min(self.num_micro_batches, batch_size)
             tracker = TimingTracker(
                 node=self.ctx.role,
-                num_layers=self.model.num_layers,
+                num_layers=_debug_num_layers(self.model.num_layers),
                 num_micro_batches=actual_num_mb,
                 mode=self.timing_mode,
                 comm_timing_mode=self.comm_timing_mode,
@@ -394,7 +406,7 @@ class DecodeDBOScheduler:
             self._timing_data.attention_optimizations = self.model.attention_optimization_metadata()
 
         self.stats.total_time = time.perf_counter() - start_time
-        self.stats.num_layers = self.model.num_layers
+        self.stats.num_layers = _debug_num_layers(self.model.num_layers)
         self._current_step += 1
 
         return result
@@ -427,7 +439,7 @@ class DecodeDBOScheduler:
         assert self.model.attention_worker is not None
 
         batch_size = input_ids.shape[0]
-        num_layers = self.model.num_layers
+        num_layers = _debug_num_layers(self.model.num_layers)
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
         peer = self.ctx.peer_rank
@@ -714,7 +726,7 @@ class DecodeDBOScheduler:
         """
         assert self.model.ffn_worker is not None
 
-        num_layers = self.model.num_layers
+        num_layers = _debug_num_layers(self.model.num_layers)
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
         if self._use_ep_overlap(num_mb):
@@ -871,7 +883,7 @@ class DecodeDBOScheduler:
         """FFN EP decode path with in-layer MB overlap for dispatch/reduce."""
         assert self.model.ffn_worker is not None
 
-        num_layers = self.model.num_layers
+        num_layers = _debug_num_layers(self.model.num_layers)
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
 
@@ -995,7 +1007,7 @@ class DecodeDBOScheduler:
         """FFN EP non-coordinator decode loop: only participate in EP collectives."""
         assert self.model.ffn_worker is not None
 
-        num_layers = self.model.num_layers
+        num_layers = _debug_num_layers(self.model.num_layers)
         mb_sizes = self._compute_mb_sizes(batch_size)
         num_mb = len(mb_sizes)
 
