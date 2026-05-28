@@ -93,6 +93,14 @@ SSH_FAILURE_RE = re.compile(
     r"kex_exchange_identification|Connection (?:closed|reset)|ssh_exchange_identification",
     re.IGNORECASE,
 )
+TERMINAL_STATUSES = {"OK", "OOM", "SKIP_AFTER_OOM", "DRY_RUN"}
+RETRYABLE_STATUSES = {
+    "FAIL",
+    "FAIL_MISSING_TIMING",
+    "ORCHESTRATION_FAIL",
+    "SKIP_STALE_PROCESS",
+    "TIMEOUT_WAIT",
+}
 
 
 def is_oom_text(text: str) -> bool:
@@ -815,9 +823,11 @@ def main() -> int:
     if args.resume and summary_path.exists():
         with summary_path.open() as f:
             for row in csv.DictReader(f):
+                if row.get("status") in RETRYABLE_STATUSES:
+                    continue
                 rows.append(row)
                 idx += 1
-                if row.get("status") in {"OK", "OOM", "SKIP_AFTER_OOM", "DRY_RUN"}:
+                if row.get("status") in TERMINAL_STATUSES:
                     completed_keys.add(row_key(row))
                 if row.get("status") == "OOM":
                     oom_stops.add((
@@ -905,12 +915,15 @@ def main() -> int:
                         rows.append(row)
                         if args.adaptive_oom and row["status"] == "OOM":
                             oom_stops.add(skip_key)
-                        if row["status"] in {"OK", "OOM", "SKIP_AFTER_OOM", "DRY_RUN"}:
+                        if row["status"] in TERMINAL_STATUSES:
                             completed_keys.add(current_key)
                         with summary_path.open("w", newline="") as f:
                             writer = csv.DictWriter(f, fieldnames=fields)
                             writer.writeheader()
                             writer.writerows(rows)
+                        if row["status"] == "SKIP_STALE_PROCESS":
+                            print("Stopping after stale process detection; clean explicit PIDs and resume.", flush=True)
+                            return 1
                         if row["status"] == "OK" and batch >= 16 and seq >= 256:
                             large_success = True
         if args.stop_after_first_large_success and large_success:
