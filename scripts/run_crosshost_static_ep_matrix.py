@@ -131,6 +131,44 @@ def serial_baseline_tag(cfg: RunConfig) -> str:
     return serial_cfg.tag
 
 
+def row_key(row: dict[str, str]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(row["ep_size"]),
+        str(row["backend"]),
+        str(row["mode"]),
+        str(row["num_micro_batches"]),
+        str(row["batch"]),
+        str(row["seq"]),
+    )
+
+
+def cfg_key(ep_size: int, backend: str, mode: str, mb: int, batch: int, seq: int) -> tuple[str, str, str, str, str, str]:
+    return (str(ep_size), backend, mode, str(mb), str(batch), str(seq))
+
+
+def base_row(cfg: RunConfig, status: str, detail: str = "") -> dict[str, str]:
+    return {
+        "ep_size": str(cfg.ep_size),
+        "backend": cfg.backend,
+        "mode": cfg.mode,
+        "num_micro_batches": str(cfg.num_micro_batches),
+        "batch": str(cfg.batch),
+        "seq": str(cfg.seq),
+        "tokens": str(cfg.tokens),
+        "status": status,
+        "detail": detail,
+        "decode_tpot_ms": "",
+        "oom_side": "",
+        "report": "",
+        "pipeline": "",
+        "resource_h1": "",
+        "resource_h2": "",
+        "h1_rank0_log": "",
+        "h2_rank1_log": "",
+        "h2_rank_last_log": "",
+    }
+
+
 def run_cmd(
     cmd: list[str],
     *,
@@ -720,6 +758,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-monitor-interval", type=int, default=1)
     parser.add_argument("--adaptive-oom", action="store_true", default=True)
     parser.add_argument("--no-adaptive-oom", action="store_false", dest="adaptive_oom")
+    parser.add_argument("--resume", action="store_true", default=True)
+    parser.add_argument("--no-resume", action="store_false", dest="resume")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-after-first-large-success", action="store_true")
     return parser.parse_args()
@@ -769,14 +809,36 @@ def main() -> int:
         "h2_rank_last_log",
     ]
     rows: list[dict[str, str]] = []
+    completed_keys: set[tuple[str, str, str, str, str, str]] = set()
     idx = 0
     oom_stops: set[tuple[int, str, str, int, int]] = set()
+    if args.resume and summary_path.exists():
+        with summary_path.open() as f:
+            for row in csv.DictReader(f):
+                rows.append(row)
+                idx += 1
+                if row.get("status") in {"OK", "OOM", "SKIP_AFTER_OOM", "DRY_RUN"}:
+                    completed_keys.add(row_key(row))
+                if row.get("status") == "OOM":
+                    oom_stops.add((
+                        int(row["ep_size"]),
+                        row["backend"],
+                        row["mode"],
+                        int(row["num_micro_batches"]),
+                        int(row["seq"]),
+                    ))
+        if rows:
+            print(f"Resuming from {summary_path}: loaded {len(rows)} prior rows")
+
     for batch, seq in configs:
         large_success = False
         for ep_size in ep_sizes:
             for backend in backends:
                 for mode in modes:
                     for mb in mbs:
+                        current_key = cfg_key(ep_size, backend, mode, mb, batch, seq)
+                        if current_key in completed_keys:
+                            continue
                         skip_key = (ep_size, backend, mode, mb, seq)
                         if args.adaptive_oom and skip_key in oom_stops:
                             cfg = RunConfig(
@@ -791,27 +853,13 @@ def main() -> int:
                                 h1_hccl_port=args.base_h1_hccl_port + (idx + 1) * 20,
                                 h2_hccl_port=args.base_h2_hccl_port + (idx + 1) * 20,
                             )
-                            row = {
-                                "ep_size": str(cfg.ep_size),
-                                "backend": cfg.backend,
-                                "mode": cfg.mode,
-                                "num_micro_batches": str(cfg.num_micro_batches),
-                                "batch": str(cfg.batch),
-                                "seq": str(cfg.seq),
-                                "tokens": str(cfg.tokens),
-                                "status": "SKIP_AFTER_OOM",
-                                "detail": "larger batch skipped after earlier OOM for same ep/backend/mode/mb/seq",
-                                "decode_tpot_ms": "",
-                                "oom_side": "",
-                                "report": "",
-                                "pipeline": "",
-                                "resource_h1": "",
-                                "resource_h2": "",
-                                "h1_rank0_log": "",
-                                "h2_rank1_log": "",
-                                "h2_rank_last_log": "",
-                            }
+                            row = base_row(
+                                cfg,
+                                "SKIP_AFTER_OOM",
+                                "larger batch skipped after earlier OOM for same ep/backend/mode/mb/seq",
+                            )
                             rows.append(row)
+                            completed_keys.add(current_key)
                             with summary_path.open("w", newline="") as f:
                                 writer = csv.DictWriter(f, fieldnames=fields)
                                 writer.writeheader()
@@ -830,29 +878,35 @@ def main() -> int:
                             h1_hccl_port=args.base_h1_hccl_port + idx * 20,
                             h2_hccl_port=args.base_h2_hccl_port + idx * 20,
                         )
-                        row = run_one(
-                            host1=host1,
-                            host2=host2,
-                            cfg=cfg,
-                            out_root=args.out_root,
-                            timeout_sec=args.timeout_sec,
-                            poll_sec=args.poll_sec,
-                            startup_check_sec=args.startup_check_sec,
-                            model_name=args.model_name,
-                            host2_ffn_devices=args.host2_ffn_devices,
-                            debug_max_layers=args.debug_max_layers,
-                            attn_kernel=args.attn_kernel,
-                            attn_precopy_layer_inputs=args.attn_precopy_layer_inputs,
-                            attn_fused_rmsnorm=args.attn_fused_rmsnorm,
-                            attn_fused_rope=args.attn_fused_rope,
-                            attn_stream_overlap=args.attn_stream_overlap,
-                            resource_monitor=args.resource_monitor,
-                            resource_monitor_interval=args.resource_monitor_interval,
-                            dry_run=args.dry_run,
-                        )
+                        try:
+                            row = run_one(
+                                host1=host1,
+                                host2=host2,
+                                cfg=cfg,
+                                out_root=args.out_root,
+                                timeout_sec=args.timeout_sec,
+                                poll_sec=args.poll_sec,
+                                startup_check_sec=args.startup_check_sec,
+                                model_name=args.model_name,
+                                host2_ffn_devices=args.host2_ffn_devices,
+                                debug_max_layers=args.debug_max_layers,
+                                attn_kernel=args.attn_kernel,
+                                attn_precopy_layer_inputs=args.attn_precopy_layer_inputs,
+                                attn_fused_rmsnorm=args.attn_fused_rmsnorm,
+                                attn_fused_rope=args.attn_fused_rope,
+                                attn_stream_overlap=args.attn_stream_overlap,
+                                resource_monitor=args.resource_monitor,
+                                resource_monitor_interval=args.resource_monitor_interval,
+                                dry_run=args.dry_run,
+                            )
+                        except RuntimeError as exc:
+                            row = base_row(cfg, "ORCHESTRATION_FAIL", str(exc).splitlines()[-1][:300])
+                            print(f"{cfg.tag}: ORCHESTRATION_FAIL {row['detail']}", flush=True)
                         rows.append(row)
                         if args.adaptive_oom and row["status"] == "OOM":
                             oom_stops.add(skip_key)
+                        if row["status"] in {"OK", "OOM", "SKIP_AFTER_OOM", "DRY_RUN"}:
+                            completed_keys.add(current_key)
                         with summary_path.open("w", newline="") as f:
                             writer = csv.DictWriter(f, fieldnames=fields)
                             writer.writeheader()
