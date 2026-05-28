@@ -219,21 +219,23 @@ def read_remote_text(remote: Remote, path: str, *, tail_lines: int | None = None
 
 
 def grep_remote(remote: Remote, path: str, pattern: str) -> str:
-    return remote_bash(
+    out = remote_bash(
         remote,
         f"grep -E {quote(pattern)} {quote(path)} 2>/dev/null | tail -n 1 || true",
         timeout=60,
         check=False,
     ).strip()
+    return "" if is_ssh_failure_text(out) else out
 
 
 def stale_processes(remote: Remote, pattern: str) -> str:
-    return remote_bash(
+    out = remote_bash(
         remote,
         f"ps -ef | grep -E {quote(pattern)} | grep -v grep || true",
         timeout=60,
         check=False,
     ).strip()
+    return "" if is_ssh_failure_text(out) else out
 
 
 def host2_hbm_summary(host2: Remote) -> str:
