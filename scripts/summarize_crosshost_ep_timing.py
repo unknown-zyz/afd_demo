@@ -87,6 +87,9 @@ def summarize_pair(attn_path: Path, ffn_path: Path) -> dict[str, Any] | None:
         "mode": match.group("mode"),
         "ep_size": int(match.group("ep")),
         "backend": match.group("backend"),
+        "attn_kernel": attn.get("attention_optimizations", {}).get("attn_kernel", ""),
+        "attn_fused_rmsnorm": attn.get("attention_optimizations", {}).get("attn_fused_rmsnorm", ""),
+        "attn_fused_rope": attn.get("attention_optimizations", {}).get("attn_fused_rope", ""),
         "num_micro_batches": num_mb,
         "batch": int(match.group("batch")),
         "seq": int(match.group("seq")),
@@ -120,15 +123,17 @@ def write_markdown(rows: list[dict[str, Any]], path: Path) -> None:
     lines = [
         "# Cross-host static EP timing summary",
         "",
-        "| EP | Backend | Mode | MB | B | S | TPOT ms | A avg/layer | F avg/layer | F/A | recv-wait | dispatch | local experts | reduce | overlap proxy |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| EP | Backend | Attn | Fusion | Mode | MB | B | S | T | TPOT ms | A avg/layer | F avg/layer | F/A | recv-wait | dispatch | local experts | reduce | overlap proxy |",
+        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         attn = float(row["attention_avg_layer_ms_excl_l0"] or 0)
         ffn = float(row["ffn_avg_layer_ms_excl_l0"] or 0)
         ratio = ffn / attn if attn > 0 else 0.0
-        lines.append(
-            "| {ep_size} | {backend} | {mode} | {num_micro_batches} | {batch} | {seq} | "
+        fusion = "rms+rope" if row.get("attn_fused_rmsnorm") and row.get("attn_fused_rope") else "-"
+        template = (
+            "| {ep_size} | {backend} | {attn_kernel} | " + fusion + " | {mode} | "
+            "{num_micro_batches} | {batch} | {seq} | {tokens} | "
             "{decode_tpot_ms} | {attention_avg_layer_ms_excl_l0:.3f} | "
             "{ffn_avg_layer_ms_excl_l0:.3f} | "
             f"{ratio:.2f} | "
@@ -136,8 +141,9 @@ def write_markdown(rows: list[dict[str, Any]], path: Path) -> None:
             "{ep_dispatch_avg_layer_ms_excl_l0:.3f} | "
             "{ep_local_experts_avg_layer_ms_excl_l0:.3f} | "
             "{ep_reduce_avg_layer_ms_excl_l0:.3f} | "
-            "{overlap_efficiency_proxy:.3f} |".format(**row)
+            "{overlap_efficiency_proxy:.3f} |"
         )
+        lines.append(template.format(**row))
     lines.append("")
     lines.append("说明：均值默认跳过 L0，以避免 pipeline/JIT warmup 干扰。`F/A` 越接近 1，FFN 与 Attention 单层耗时越对齐。")
     path.write_text("\n".join(lines) + "\n")

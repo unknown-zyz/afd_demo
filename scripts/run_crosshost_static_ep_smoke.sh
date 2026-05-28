@@ -32,6 +32,11 @@ TIMEOUT_SEC=3600
 OUT_DIR="results_npu/crosshost_static_ep/smoke"
 TIMING_SUFFIX=""
 DEBUG_MAX_LAYERS=""
+ATTN_KERNEL="${AFD_ATTN_KERNEL:-hf}"
+ATTN_PRECOPY_LAYER_INPUTS=0
+ATTN_FUSED_RMSNORM=0
+ATTN_FUSED_ROPE=0
+ATTN_STREAM_OVERLAP=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +61,11 @@ while [[ $# -gt 0 ]]; do
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --timing-suffix) TIMING_SUFFIX="$2"; shift 2 ;;
     --debug-max-layers) DEBUG_MAX_LAYERS="$2"; shift 2 ;;
+    --attn-kernel) ATTN_KERNEL="$2"; shift 2 ;;
+    --attn-precopy-layer-inputs) ATTN_PRECOPY_LAYER_INPUTS=1; shift ;;
+    --attn-fused-rmsnorm) ATTN_FUSED_RMSNORM=1; shift ;;
+    --attn-fused-rope) ATTN_FUSED_ROPE=1; shift ;;
+    --attn-stream-overlap) ATTN_STREAM_OVERLAP=1; shift ;;
     *) echo "Unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -86,7 +96,8 @@ fi
 mkdir -p "$OUT_DIR" results/prefill_dbo results/logs
 
 source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true
-source /usr/local/Ascend/cann-8.5.0/opp/vendors/hwcomputing/bin/set_env.bash 2>/dev/null || true
+# Some vendor OPP set_env scripts call exit instead of return on certain hosts.
+# Do not source them in-process; the base Ascend toolkit env is sufficient here.
 
 export MASTER_ADDR MASTER_PORT HCCL_IF_BASE_PORT
 export HCCL_CONNECT_TIMEOUT="${HCCL_CONNECT_TIMEOUT:-600}"
@@ -151,13 +162,27 @@ COMMON_ARGS=(
   --master-addr "$MASTER_ADDR"
   --master-port "$MASTER_PORT"
   --model-name "$MODEL_NAME"
+  --attn-kernel "$ATTN_KERNEL"
   "${EXTRA_ARGS[@]}"
 )
+if (( ATTN_PRECOPY_LAYER_INPUTS )); then
+  COMMON_ARGS+=(--attn-precopy-layer-inputs)
+fi
+if (( ATTN_FUSED_RMSNORM )); then
+  COMMON_ARGS+=(--attn-fused-rmsnorm)
+fi
+if (( ATTN_FUSED_ROPE )); then
+  COMMON_ARGS+=(--attn-fused-rope)
+fi
+if (( ATTN_STREAM_OVERLAP )); then
+  COMMON_ARGS+=(--attn-stream-overlap)
+fi
 
 echo "=== cross-host static EP smoke ==="
 echo "side=$SIDE world=$WORLD_SIZE ep=$FFN_EP_SIZE backend=$FFN_EP_BACKEND mode=$MODE mb=$NUM_MICRO_BATCHES"
 echo "master=$MASTER_ADDR:$MASTER_PORT hccl_if_base_port=$HCCL_IF_BASE_PORT hccl_if_ip=${HCCL_IF_IP:-<unset>}"
 echo "batch=$BATCH seq=$SEQ tokens=$TOKENS timeout_sec=$TIMEOUT_SEC debug_max_layers=${DEBUG_MAX_LAYERS:-<none>}"
+echo "attention kernel=$ATTN_KERNEL precopy=$ATTN_PRECOPY_LAYER_INPUTS fused_rmsnorm=$ATTN_FUSED_RMSNORM fused_rope=$ATTN_FUSED_ROPE stream_overlap=$ATTN_STREAM_OVERLAP"
 echo "out_dir=$OUT_DIR timing_suffix=$TIMING_SUFFIX model=$MODEL_NAME"
 if [[ "$SIDE" == "host2" ]]; then
   echo "host2_ffn_devices=$HOST2_FFN_DEVICES"

@@ -20,7 +20,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_HOST1_SSH = "ssh -p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229"
+DEFAULT_HOST1_SSH = (
+    "ssh -o BatchMode=yes -o ConnectTimeout=20 "
+    "-o ServerAliveInterval=15 -o ServerAliveCountMax=3 "
+    "-p 22 -i ~/.ssh/id_rsa_second schedTeam@1.95.114.229"
+)
 DEFAULT_HOST2_INNER = (
     "sudo ssh -o StrictHostKeyChecking=no "
     "-i /root/ssh_key/KeyPair-f1dd.pem root@192.168.0.192"
@@ -87,15 +91,22 @@ def run_cmd(
     timeout: int = 120,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        cmd,
-        input=input_text,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-        check=False,
-    )
+    attempts = 3
+    proc: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(1, attempts + 1):
+        proc = subprocess.run(
+            cmd,
+            input=input_text,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            check=False,
+        )
+        if proc.returncode != 255 or attempt == attempts:
+            break
+        time.sleep(5 * attempt)
+    assert proc is not None
     if check and proc.returncode != 0:
         rendered = " ".join(quote(part) for part in cmd)
         raise RuntimeError(f"command failed rc={proc.returncode}: {rendered}\n{proc.stdout}")
@@ -174,7 +185,6 @@ def stale_processes(remote: Remote, pattern: str) -> str:
         remote,
         f"ps -ef | grep -E {quote(pattern)} | grep -v grep || true",
         timeout=60,
-        check=False,
     ).strip()
 
 
@@ -197,6 +207,11 @@ def build_side_script(
     model_name: str,
     host2_ffn_devices: str,
     debug_max_layers: int | None,
+    attn_kernel: str,
+    attn_precopy_layer_inputs: bool,
+    attn_fused_rmsnorm: bool,
+    attn_fused_rope: bool,
+    attn_stream_overlap: bool,
 ) -> str:
     if side == "host1":
         side_args = [
@@ -234,7 +249,16 @@ def build_side_script(
         f"--out-dir {quote(out_dir)}",
         f"--timing-suffix xhost_static_{cfg.tag}",
         f"--model-name {quote(model_name)}",
+        f"--attn-kernel {quote(attn_kernel)}",
     ]
+    if attn_precopy_layer_inputs:
+        args.append("--attn-precopy-layer-inputs")
+    if attn_fused_rmsnorm:
+        args.append("--attn-fused-rmsnorm")
+    if attn_fused_rope:
+        args.append("--attn-fused-rope")
+    if attn_stream_overlap:
+        args.append("--attn-stream-overlap")
     if debug_max_layers is not None:
         args.append(f"--debug-max-layers {debug_max_layers}")
     return f"""#!/usr/bin/env bash
@@ -335,6 +359,11 @@ def run_one(
     model_name: str,
     host2_ffn_devices: str,
     debug_max_layers: int | None,
+    attn_kernel: str,
+    attn_precopy_layer_inputs: bool,
+    attn_fused_rmsnorm: bool,
+    attn_fused_rope: bool,
+    attn_stream_overlap: bool,
     dry_run: bool,
 ) -> dict[str, str]:
     out_dir = f"{out_root}/{cfg.tag}"
@@ -361,6 +390,11 @@ def run_one(
             model_name=model_name,
             host2_ffn_devices=host2_ffn_devices,
             debug_max_layers=debug_max_layers,
+            attn_kernel=attn_kernel,
+            attn_precopy_layer_inputs=attn_precopy_layer_inputs,
+            attn_fused_rmsnorm=attn_fused_rmsnorm,
+            attn_fused_rope=attn_fused_rope,
+            attn_stream_overlap=attn_stream_overlap,
         )
         h2_content = build_side_script(
             side="host2",
@@ -371,6 +405,11 @@ def run_one(
             model_name=model_name,
             host2_ffn_devices=host2_ffn_devices,
             debug_max_layers=debug_max_layers,
+            attn_kernel=attn_kernel,
+            attn_precopy_layer_inputs=attn_precopy_layer_inputs,
+            attn_fused_rmsnorm=attn_fused_rmsnorm,
+            attn_fused_rope=attn_fused_rope,
+            attn_stream_overlap=attn_stream_overlap,
         )
         print(f"=== DRY RUN {cfg.tag} ===")
         print("--- Host2 script ---")
@@ -402,6 +441,11 @@ def run_one(
                     model_name=model_name,
                     host2_ffn_devices=host2_ffn_devices,
                     debug_max_layers=debug_max_layers,
+                    attn_kernel=attn_kernel,
+                    attn_precopy_layer_inputs=attn_precopy_layer_inputs,
+                    attn_fused_rmsnorm=attn_fused_rmsnorm,
+                    attn_fused_rope=attn_fused_rope,
+                    attn_stream_overlap=attn_stream_overlap,
                 ),
             )
             write_remote_script(
@@ -416,6 +460,11 @@ def run_one(
                     model_name=model_name,
                     host2_ffn_devices=host2_ffn_devices,
                     debug_max_layers=debug_max_layers,
+                    attn_kernel=attn_kernel,
+                    attn_precopy_layer_inputs=attn_precopy_layer_inputs,
+                    attn_fused_rmsnorm=attn_fused_rmsnorm,
+                    attn_fused_rope=attn_fused_rope,
+                    attn_stream_overlap=attn_stream_overlap,
                 ),
             )
             remote_detached(host2, h2_script)
@@ -526,6 +575,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-h2-hccl-port", type=int, default=43100)
     parser.add_argument("--summary-csv", default="results_npu/crosshost_static_ep/matrix_summary.csv")
     parser.add_argument("--debug-max-layers", type=int, default=None)
+    parser.add_argument("--attn-kernel", default="hf", choices=["hf", "npu-official"])
+    parser.add_argument("--attn-precopy-layer-inputs", action="store_true")
+    parser.add_argument("--attn-fused-rmsnorm", action="store_true")
+    parser.add_argument("--attn-fused-rope", action="store_true")
+    parser.add_argument("--attn-stream-overlap", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-after-first-large-success", action="store_true")
     return parser.parse_args()
@@ -596,6 +650,11 @@ def main() -> int:
                             model_name=args.model_name,
                             host2_ffn_devices=args.host2_ffn_devices,
                             debug_max_layers=args.debug_max_layers,
+                            attn_kernel=args.attn_kernel,
+                            attn_precopy_layer_inputs=args.attn_precopy_layer_inputs,
+                            attn_fused_rmsnorm=args.attn_fused_rmsnorm,
+                            attn_fused_rope=args.attn_fused_rope,
+                            attn_stream_overlap=args.attn_stream_overlap,
                             dry_run=args.dry_run,
                         )
                         rows.append(row)
