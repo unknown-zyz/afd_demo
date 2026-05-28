@@ -15,7 +15,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 TAG_RE = re.compile(
-    r"xhost_static_(?P<mode>decode-dbo(?:-crosslayer)?)_ep(?P<ep>\d+)_"
+    r"xhost_static_(?P<mode>serial|decode-dbo(?:-crosslayer)?)_ep(?P<ep>\d+)_"
     r"(?P<backend>broadcast_reduce_(?:sync|overlap))(?P<mb>_mb\d+)?"
     r"_b(?P<batch>\d+)_s(?P<seq>\d+)_t(?P<tokens>\d+)"
 )
@@ -95,6 +95,8 @@ def summarize_pair(attn_path: Path, ffn_path: Path) -> dict[str, Any] | None:
         "seq": int(match.group("seq")),
         "tokens": int(match.group("tokens")),
         "decode_tpot_ms": attn.get("decode_tpot_ms", ""),
+        "serial_tpot_ms": "",
+        "speedup_vs_ep_serial": "",
         "prefill_ms": attn.get("prefill_ms", ""),
         "attention_avg_layer_ms_excl_l0": attn_avg,
         "ffn_avg_layer_ms_excl_l0": ffn_avg,
@@ -123,8 +125,8 @@ def write_markdown(rows: list[dict[str, Any]], path: Path) -> None:
     lines = [
         "# Cross-host static EP timing summary",
         "",
-        "| EP | Backend | Attn | Fusion | Mode | MB | B | S | T | TPOT ms | A avg/layer | F avg/layer | F/A | recv-wait | dispatch | local experts | reduce | overlap proxy |",
-        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| EP | Backend | Attn | Fusion | Mode | MB | B | S | T | TPOT ms | Serial TPOT | Speedup | A avg/layer | F avg/layer | F/A | recv-wait | dispatch | local experts | reduce | overlap proxy |",
+        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         attn = float(row["attention_avg_layer_ms_excl_l0"] or 0)
@@ -134,7 +136,8 @@ def write_markdown(rows: list[dict[str, Any]], path: Path) -> None:
         template = (
             "| {ep_size} | {backend} | {attn_kernel} | " + fusion + " | {mode} | "
             "{num_micro_batches} | {batch} | {seq} | {tokens} | "
-            "{decode_tpot_ms} | {attention_avg_layer_ms_excl_l0:.3f} | "
+            "{decode_tpot_ms} | {serial_tpot_ms} | {speedup_vs_ep_serial} | "
+            "{attention_avg_layer_ms_excl_l0:.3f} | "
             "{ffn_avg_layer_ms_excl_l0:.3f} | "
             f"{ratio:.2f} | "
             "{attention_recv_wait_avg_layer_ms_excl_l0:.3f} | "
@@ -145,13 +148,49 @@ def write_markdown(rows: list[dict[str, Any]], path: Path) -> None:
         )
         lines.append(template.format(**row))
     lines.append("")
-    lines.append("说明：均值默认跳过 L0，以避免 pipeline/JIT warmup 干扰。`F/A` 越接近 1，FFN 与 Attention 单层耗时越对齐。")
+    lines.append("说明：均值默认跳过 L0，以避免 pipeline/JIT warmup 干扰。`Speedup` 使用同 EP/backend/B/S/T 的 serial TPOT 作为 denominator。`F/A` 越接近 1，FFN 与 Attention 单层耗时越对齐。")
     path.write_text("\n".join(lines) + "\n")
+
+
+def attach_serial_speedups(rows: list[dict[str, Any]]) -> None:
+    serial_by_key: dict[tuple[int, str, int, int, int], float] = {}
+    for row in rows:
+        if row["mode"] != "serial":
+            continue
+        value = row.get("decode_tpot_ms")
+        if value in ("", None):
+            continue
+        key = (
+            int(row["ep_size"]),
+            str(row["backend"]),
+            int(row["batch"]),
+            int(row["seq"]),
+            int(row["tokens"]),
+        )
+        serial_by_key[key] = float(value)
+
+    for row in rows:
+        key = (
+            int(row["ep_size"]),
+            str(row["backend"]),
+            int(row["batch"]),
+            int(row["seq"]),
+            int(row["tokens"]),
+        )
+        serial = serial_by_key.get(key)
+        if serial is None:
+            continue
+        row["serial_tpot_ms"] = serial
+        cur = row.get("decode_tpot_ms")
+        if cur in ("", None):
+            continue
+        cur_f = float(cur)
+        row["speedup_vs_ep_serial"] = serial / cur_f if cur_f > 0 else ""
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default="results_npu/crosshost_static_ep")
+    parser.add_argument("--root", default="crosshost_static_ep16_sweep")
     parser.add_argument("--output-csv", default="")
     parser.add_argument("--output-md", default="")
     args = parser.parse_args()
@@ -168,6 +207,7 @@ def main() -> int:
         row = summarize_pair(attn_path, ffn_path)
         if row is not None:
             rows.append(row)
+    attach_serial_speedups(rows)
     rows.sort(key=lambda r: (-r["batch"], -r["seq"], -r["ep_size"], r["backend"], r["mode"], r["num_micro_batches"]))
 
     csv_path = Path(args.output_csv) if args.output_csv else root / "crosshost_ep_timing_summary.csv"

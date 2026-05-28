@@ -32,6 +32,8 @@ TIMEOUT_SEC=3600
 OUT_DIR="results_npu/crosshost_static_ep/smoke"
 TIMING_SUFFIX=""
 DEBUG_MAX_LAYERS=""
+RESOURCE_MONITOR=0
+RESOURCE_MONITOR_INTERVAL=1
 ATTN_KERNEL="${AFD_ATTN_KERNEL:-hf}"
 ATTN_PRECOPY_LAYER_INPUTS=0
 ATTN_FUSED_RMSNORM=0
@@ -61,6 +63,8 @@ while [[ $# -gt 0 ]]; do
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --timing-suffix) TIMING_SUFFIX="$2"; shift 2 ;;
     --debug-max-layers) DEBUG_MAX_LAYERS="$2"; shift 2 ;;
+    --resource-monitor) RESOURCE_MONITOR=1; shift ;;
+    --resource-monitor-interval) RESOURCE_MONITOR_INTERVAL="$2"; shift 2 ;;
     --attn-kernel) ATTN_KERNEL="$2"; shift 2 ;;
     --attn-precopy-layer-inputs) ATTN_PRECOPY_LAYER_INPUTS=1; shift ;;
     --attn-fused-rmsnorm) ATTN_FUSED_RMSNORM=1; shift ;;
@@ -78,8 +82,8 @@ if ! [[ "$FFN_EP_SIZE" =~ ^[0-9]+$ ]] || (( FFN_EP_SIZE < 1 )); then
   echo "ERROR: --ffn-ep-size must be a positive integer" >&2
   exit 2
 fi
-if [[ "$MODE" != "decode-dbo" && "$MODE" != "decode-dbo-crosslayer" ]]; then
-  echo "ERROR: --mode must be decode-dbo or decode-dbo-crosslayer" >&2
+if [[ "$MODE" != "serial" && "$MODE" != "decode-dbo" && "$MODE" != "decode-dbo-crosslayer" ]]; then
+  echo "ERROR: --mode must be serial, decode-dbo, or decode-dbo-crosslayer" >&2
   exit 2
 fi
 if [[ -z "$TIMING_SUFFIX" ]]; then
@@ -125,6 +129,7 @@ copy_timing_files() {
 }
 
 PIDS=()
+RANK_PIDS=()
 cleanup() {
   for pid in "${PIDS[@]:-}"; do
     if kill -0 "$pid" 2>/dev/null; then
@@ -134,10 +139,30 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+start_resource_monitor() {
+  if (( ! RESOURCE_MONITOR )); then
+    return 0
+  fi
+  {
+    echo "resource_monitor_start side=$SIDE ts=$(date -Is)"
+    npu-smi info -t usages 2>&1 || true
+  } >"$OUT_DIR/npu_smi_${SIDE}_start.log"
+  (
+    while true; do
+      echo "=== ts=$(date -Is) side=$SIDE ==="
+      npu-smi info watch -d "$RESOURCE_MONITOR_INTERVAL" -s ptaicmbnu
+    done
+  ) >"$OUT_DIR/npu_smi_${SIDE}.log" 2>&1 &
+  PIDS+=("$!")
+  echo "resource_monitor_pid=${PIDS[-1]} log=$OUT_DIR/npu_smi_${SIDE}.log"
+}
+
 WORLD_SIZE=$((FFN_EP_SIZE + 1))
 EXTRA_ARGS=()
 if [[ "$MODE" == "decode-dbo-crosslayer" ]]; then
   EXTRA_ARGS+=(--crosslayer)
+elif [[ "$MODE" == "serial" ]]; then
+  EXTRA_ARGS+=(--no-dbo)
 fi
 
 COMMON_ARGS=(
@@ -182,6 +207,7 @@ echo "=== cross-host static EP smoke ==="
 echo "side=$SIDE world=$WORLD_SIZE ep=$FFN_EP_SIZE backend=$FFN_EP_BACKEND mode=$MODE mb=$NUM_MICRO_BATCHES"
 echo "master=$MASTER_ADDR:$MASTER_PORT hccl_if_base_port=$HCCL_IF_BASE_PORT hccl_if_ip=${HCCL_IF_IP:-<unset>}"
 echo "batch=$BATCH seq=$SEQ tokens=$TOKENS timeout_sec=$TIMEOUT_SEC debug_max_layers=${DEBUG_MAX_LAYERS:-<none>}"
+echo "resource_monitor=$RESOURCE_MONITOR interval=$RESOURCE_MONITOR_INTERVAL"
 echo "attention kernel=$ATTN_KERNEL precopy=$ATTN_PRECOPY_LAYER_INPUTS fused_rmsnorm=$ATTN_FUSED_RMSNORM fused_rope=$ATTN_FUSED_ROPE stream_overlap=$ATTN_STREAM_OVERLAP"
 echo "out_dir=$OUT_DIR timing_suffix=$TIMING_SUFFIX model=$MODEL_NAME"
 if [[ "$SIDE" == "host2" ]]; then
@@ -190,6 +216,7 @@ fi
 show_stale
 
 rm -f results/prefill_dbo/timing_*_"${TIMING_SUFFIX}".json
+start_resource_monitor
 
 if [[ "$SIDE" == "host1" ]]; then
   export ASCEND_VISIBLE_DEVICES="${ASCEND_VISIBLE_DEVICES:-0}"
@@ -230,10 +257,11 @@ for rank in $(seq 1 "$FFN_EP_SIZE"); do
       >"$LOG" 2>&1
   ) &
   PIDS+=("$!")
-  echo "rank=$rank pid=${PIDS[-1]} device=$dev log=$LOG"
+  RANK_PIDS+=("$!")
+  echo "rank=$rank pid=${RANK_PIDS[-1]} device=$dev log=$LOG"
 done
 
-for pid in "${PIDS[@]}"; do
+for pid in "${RANK_PIDS[@]}"; do
   if ! wait "$pid"; then
     rc=1
   fi

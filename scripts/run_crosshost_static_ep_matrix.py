@@ -84,6 +84,44 @@ def parse_configs(value: str) -> list[tuple[int, int]]:
     return configs
 
 
+OOM_RE = re.compile(
+    r"out of memory|OOM|ACL_ERROR_RT_MEMORY_ALLOCATION|memory allocation|MemoryError",
+    re.IGNORECASE,
+)
+
+
+def is_oom_text(text: str) -> bool:
+    return bool(OOM_RE.search(text))
+
+
+def classify_oom_side(h1_text: str, h2_text: str) -> str:
+    h1_oom = is_oom_text(h1_text)
+    h2_oom = is_oom_text(h2_text)
+    if h1_oom and h2_oom:
+        return "both_or_peer"
+    if h1_oom:
+        return "attention"
+    if h2_oom:
+        return "ffn"
+    return ""
+
+
+def serial_baseline_tag(cfg: RunConfig) -> str:
+    serial_cfg = RunConfig(
+        ep_size=cfg.ep_size,
+        backend=cfg.backend,
+        mode="serial",
+        num_micro_batches=2,
+        batch=cfg.batch,
+        seq=cfg.seq,
+        tokens=cfg.tokens,
+        master_port=cfg.master_port,
+        h1_hccl_port=cfg.h1_hccl_port,
+        h2_hccl_port=cfg.h2_hccl_port,
+    )
+    return serial_cfg.tag
+
+
 def run_cmd(
     cmd: list[str],
     *,
@@ -212,6 +250,8 @@ def build_side_script(
     attn_fused_rmsnorm: bool,
     attn_fused_rope: bool,
     attn_stream_overlap: bool,
+    resource_monitor: bool,
+    resource_monitor_interval: int,
 ) -> str:
     if side == "host1":
         side_args = [
@@ -259,6 +299,9 @@ def build_side_script(
         args.append("--attn-fused-rope")
     if attn_stream_overlap:
         args.append("--attn-stream-overlap")
+    if resource_monitor:
+        args.append("--resource-monitor")
+        args.append(f"--resource-monitor-interval {resource_monitor_interval}")
     if debug_max_layers is not None:
         args.append(f"--debug-max-layers {debug_max_layers}")
     return f"""#!/usr/bin/env bash
@@ -300,8 +343,7 @@ def generate_local_artifacts(local_out: Path, cfg: RunConfig) -> tuple[str, str]
     pipeline = local_out / f"pipeline_{suffix}.png"
     if not attn.exists() or not ffn.exists():
         return "", ""
-    subprocess.run(
-        [
+    report_cmd = [
             sys.executable,
             str(ROOT / "scripts" / "gen_experiment_report.py"),
             "--attn-timing",
@@ -320,12 +362,22 @@ def generate_local_artifacts(local_out: Path, cfg: RunConfig) -> tuple[str, str]
             str(cfg.tokens),
             "--comm-timing-mode",
             "completion",
-        ],
+    ]
+    serial_attn = (
+        local_out.parent
+        / serial_baseline_tag(cfg)
+        / f"timing_attention_xhost_static_{serial_baseline_tag(cfg)}.json"
+    )
+    if cfg.mode != "serial" and serial_attn.exists():
+        report_cmd += ["--serial-baseline", str(serial_attn)]
+    subprocess.run(
+        report_cmd,
         cwd=ROOT,
         check=False,
     )
-    subprocess.run(
-        [
+    if cfg.mode == "serial":
+        return (str(report) if report.exists() else "", "")
+    plot_cmd = [
             sys.executable,
             str(ROOT / "scripts" / "visualize_dbo_pipeline.py"),
             "--attn-timing",
@@ -340,7 +392,11 @@ def generate_local_artifacts(local_out: Path, cfg: RunConfig) -> tuple[str, str]
             "3",
             "--ffn-view",
             "fourlane",
-        ],
+    ]
+    if serial_attn.exists():
+        plot_cmd += ["--serial-timing", str(serial_attn)]
+    subprocess.run(
+        plot_cmd,
         cwd=ROOT,
         check=False,
     )
@@ -364,6 +420,8 @@ def run_one(
     attn_fused_rmsnorm: bool,
     attn_fused_rope: bool,
     attn_stream_overlap: bool,
+    resource_monitor: bool,
+    resource_monitor_interval: int,
     dry_run: bool,
 ) -> dict[str, str]:
     out_dir = f"{out_root}/{cfg.tag}"
@@ -379,6 +437,9 @@ def run_one(
     tpot = ""
     report = ""
     pipeline = ""
+    oom_side = ""
+    resource_h1 = ""
+    resource_h2 = ""
 
     if dry_run:
         h1_content = build_side_script(
@@ -395,6 +456,8 @@ def run_one(
             attn_fused_rmsnorm=attn_fused_rmsnorm,
             attn_fused_rope=attn_fused_rope,
             attn_stream_overlap=attn_stream_overlap,
+            resource_monitor=resource_monitor,
+            resource_monitor_interval=resource_monitor_interval,
         )
         h2_content = build_side_script(
             side="host2",
@@ -410,6 +473,8 @@ def run_one(
             attn_fused_rmsnorm=attn_fused_rmsnorm,
             attn_fused_rope=attn_fused_rope,
             attn_stream_overlap=attn_stream_overlap,
+            resource_monitor=resource_monitor,
+            resource_monitor_interval=resource_monitor_interval,
         )
         print(f"=== DRY RUN {cfg.tag} ===")
         print("--- Host2 script ---")
@@ -446,6 +511,8 @@ def run_one(
                     attn_fused_rmsnorm=attn_fused_rmsnorm,
                     attn_fused_rope=attn_fused_rope,
                     attn_stream_overlap=attn_stream_overlap,
+                    resource_monitor=resource_monitor,
+                    resource_monitor_interval=resource_monitor_interval,
                 ),
             )
             write_remote_script(
@@ -465,6 +532,8 @@ def run_one(
                     attn_fused_rmsnorm=attn_fused_rmsnorm,
                     attn_fused_rope=attn_fused_rope,
                     attn_stream_overlap=attn_stream_overlap,
+                    resource_monitor=resource_monitor,
+                    resource_monitor_interval=resource_monitor_interval,
                 ),
             )
             remote_detached(host2, h2_script)
@@ -494,12 +563,30 @@ def run_one(
                         if h1_rc == 0 and h2_rc == 0:
                             status = "OK"
                         else:
-                            status = "FAIL"
+                            h1_tail = read_remote_text(host1, h1_rank, tail_lines=120)
+                            h2_tail = (
+                                read_remote_text(host2, h2_rank1, tail_lines=80)
+                                + "\n"
+                                + read_remote_text(host2, h2_rank_last, tail_lines=80)
+                            )
+                            oom_side = classify_oom_side(h1_tail, h2_tail)
+                            status = "OOM" if oom_side else "FAIL"
                             detail = f"h1_rc={h1_rc} h2_rc={h2_rc}"
+                            if oom_side:
+                                detail += f" oom_side={oom_side}"
                         break
                     if any(term in h1_done + h2_done for term in ("Traceback", "RuntimeError", "ERROR", "OOM")):
-                        status = "FAIL"
+                        h1_tail = read_remote_text(host1, h1_rank, tail_lines=120)
+                        h2_tail = (
+                            read_remote_text(host2, h2_rank1, tail_lines=80)
+                            + "\n"
+                            + read_remote_text(host2, h2_rank_last, tail_lines=80)
+                        )
+                        oom_side = classify_oom_side(h1_tail, h2_tail)
+                        status = "OOM" if oom_side else "FAIL"
                         detail = f"h1={h1_done[-120:]} h2={h2_done[-120:]}"
+                        if oom_side:
+                            detail += f" oom_side={oom_side}"
                         break
                     time.sleep(poll_sec)
                 else:
@@ -524,6 +611,23 @@ def run_one(
                     local_out / f"timing_ffn_coordinator_{suffix}.json",
                 )
                 report, pipeline = generate_local_artifacts(local_out, cfg)
+            if resource_monitor:
+                h1_resource = f"{host1.workdir}/{out_dir}/npu_smi_host1.log"
+                h2_resource = f"{host2.workdir}/{out_dir}/npu_smi_host2.log"
+                if fetch_file(host1, h1_resource, local_out / "npu_smi_host1.log"):
+                    resource_h1 = str(local_out / "npu_smi_host1.log")
+                if fetch_file(host2, h2_resource, local_out / "npu_smi_host2.log"):
+                    resource_h2 = str(local_out / "npu_smi_host2.log")
+                fetch_file(
+                    host1,
+                    f"{host1.workdir}/{out_dir}/npu_smi_host1_start.log",
+                    local_out / "npu_smi_host1_start.log",
+                )
+                fetch_file(
+                    host2,
+                    f"{host2.workdir}/{out_dir}/npu_smi_host2_start.log",
+                    local_out / "npu_smi_host2_start.log",
+                )
         print(f"{cfg.tag}: {status} tpot={tpot} {detail}", flush=True)
 
     return {
@@ -537,8 +641,11 @@ def run_one(
         "status": status,
         "detail": detail,
         "decode_tpot_ms": tpot,
+        "oom_side": oom_side,
         "report": report,
         "pipeline": pipeline,
+        "resource_h1": resource_h1,
+        "resource_h2": resource_h2,
         "h1_rank0_log": h1_rank,
         "h2_rank1_log": h2_rank1,
         "h2_rank_last_log": h2_rank_last,
@@ -554,17 +661,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host2-container", default="afd-npu-test-h2")
     parser.add_argument("--host1-workdir", default="/workspace/afd_demo_crosshost_ep")
     parser.add_argument("--host2-workdir", default="/workspace/afd_demo_repo_crosshost_ep")
-    parser.add_argument("--out-root", default="results_npu/crosshost_static_ep")
+    parser.add_argument("--out-root", default="crosshost_static_ep16_sweep")
     parser.add_argument("--model-name", default="/models/Qwen3-30B-A3B")
-    parser.add_argument("--ep-sizes", default="16,12,8")
+    parser.add_argument("--ep-sizes", default="16")
     parser.add_argument("--host2-ffn-devices", default="0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15")
-    parser.add_argument("--backends", default="broadcast_reduce_overlap,broadcast_reduce_sync")
-    parser.add_argument("--modes", default="decode-dbo,decode-dbo-crosslayer")
-    parser.add_argument("--num-micro-batches", default="2,4")
+    parser.add_argument("--backends", default="broadcast_reduce_overlap")
+    parser.add_argument("--modes", default="serial,decode-dbo,decode-dbo-crosslayer")
+    parser.add_argument("--num-micro-batches", default="2")
+    parser.add_argument("--batches", default="2,4,8,16,32,64,128,256")
+    parser.add_argument("--seqs", default="128,256,512,1024")
     parser.add_argument(
         "--configs",
-        default="32:256,16:256,16:128,8:256,4:128,2:64",
-        help="Comma-separated B:S configs. Listed order is preserved; defaults prioritize large configs.",
+        default="",
+        help="Optional comma-separated B:S configs. If omitted, uses --batches × --seqs.",
     )
     parser.add_argument("--tokens", type=int, default=20)
     parser.add_argument("--timeout-sec", type=int, default=3600)
@@ -573,13 +682,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-master-port", type=int, default=35600)
     parser.add_argument("--base-h1-hccl-port", type=int, default=42100)
     parser.add_argument("--base-h2-hccl-port", type=int, default=43100)
-    parser.add_argument("--summary-csv", default="results_npu/crosshost_static_ep/matrix_summary.csv")
+    parser.add_argument("--summary-csv", default="crosshost_static_ep16_sweep/matrix_summary.csv")
     parser.add_argument("--debug-max-layers", type=int, default=None)
     parser.add_argument("--attn-kernel", default="hf", choices=["hf", "npu-official"])
     parser.add_argument("--attn-precopy-layer-inputs", action="store_true")
     parser.add_argument("--attn-fused-rmsnorm", action="store_true")
     parser.add_argument("--attn-fused-rope", action="store_true")
     parser.add_argument("--attn-stream-overlap", action="store_true")
+    parser.add_argument("--resource-monitor", action="store_true", default=True)
+    parser.add_argument("--no-resource-monitor", action="store_false", dest="resource_monitor")
+    parser.add_argument("--resource-monitor-interval", type=int, default=1)
+    parser.add_argument("--adaptive-oom", action="store_true", default=True)
+    parser.add_argument("--no-adaptive-oom", action="store_false", dest="adaptive_oom")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-after-first-large-success", action="store_true")
     return parser.parse_args()
@@ -593,7 +707,14 @@ def main() -> int:
     backends = parse_csv_strings(args.backends)
     modes = parse_csv_strings(args.modes)
     mbs = parse_csv_ints(args.num_micro_batches)
-    configs = parse_configs(args.configs)
+    if args.configs:
+        configs = parse_configs(args.configs)
+    else:
+        batches = parse_csv_ints(args.batches)
+        seqs = parse_csv_ints(args.seqs)
+        configs = [(batch, seq) for seq in seqs for batch in batches]
+    if args.adaptive_oom:
+        configs = sorted(configs, key=lambda item: (item[1], item[0]))
     host2_device_count = len(parse_csv_ints(args.host2_ffn_devices))
     for ep_size in ep_sizes:
         if ep_size > host2_device_count:
@@ -612,20 +733,64 @@ def main() -> int:
         "status",
         "detail",
         "decode_tpot_ms",
+        "oom_side",
         "report",
         "pipeline",
+        "resource_h1",
+        "resource_h2",
         "h1_rank0_log",
         "h2_rank1_log",
         "h2_rank_last_log",
     ]
     rows: list[dict[str, str]] = []
     idx = 0
+    oom_stops: set[tuple[int, str, str, int, int]] = set()
     for batch, seq in configs:
         large_success = False
         for ep_size in ep_sizes:
             for backend in backends:
                 for mode in modes:
                     for mb in mbs:
+                        skip_key = (ep_size, backend, mode, mb, seq)
+                        if args.adaptive_oom and skip_key in oom_stops:
+                            cfg = RunConfig(
+                                ep_size=ep_size,
+                                backend=backend,
+                                mode=mode,
+                                num_micro_batches=mb,
+                                batch=batch,
+                                seq=seq,
+                                tokens=args.tokens,
+                                master_port=args.base_master_port + idx + 1,
+                                h1_hccl_port=args.base_h1_hccl_port + (idx + 1) * 20,
+                                h2_hccl_port=args.base_h2_hccl_port + (idx + 1) * 20,
+                            )
+                            row = {
+                                "ep_size": str(cfg.ep_size),
+                                "backend": cfg.backend,
+                                "mode": cfg.mode,
+                                "num_micro_batches": str(cfg.num_micro_batches),
+                                "batch": str(cfg.batch),
+                                "seq": str(cfg.seq),
+                                "tokens": str(cfg.tokens),
+                                "status": "SKIP_AFTER_OOM",
+                                "detail": "larger batch skipped after earlier OOM for same ep/backend/mode/mb/seq",
+                                "decode_tpot_ms": "",
+                                "oom_side": "",
+                                "report": "",
+                                "pipeline": "",
+                                "resource_h1": "",
+                                "resource_h2": "",
+                                "h1_rank0_log": "",
+                                "h2_rank1_log": "",
+                                "h2_rank_last_log": "",
+                            }
+                            rows.append(row)
+                            with summary_path.open("w", newline="") as f:
+                                writer = csv.DictWriter(f, fieldnames=fields)
+                                writer.writeheader()
+                                writer.writerows(rows)
+                            continue
                         idx += 1
                         cfg = RunConfig(
                             ep_size=ep_size,
@@ -655,9 +820,13 @@ def main() -> int:
                             attn_fused_rmsnorm=args.attn_fused_rmsnorm,
                             attn_fused_rope=args.attn_fused_rope,
                             attn_stream_overlap=args.attn_stream_overlap,
+                            resource_monitor=args.resource_monitor,
+                            resource_monitor_interval=args.resource_monitor_interval,
                             dry_run=args.dry_run,
                         )
                         rows.append(row)
+                        if args.adaptive_oom and row["status"] == "OOM":
+                            oom_stops.add(skip_key)
                         with summary_path.open("w", newline="") as f:
                             writer = csv.DictWriter(f, fieldnames=fields)
                             writer.writeheader()
