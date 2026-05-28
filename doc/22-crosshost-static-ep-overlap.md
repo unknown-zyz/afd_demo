@@ -50,6 +50,8 @@ bash scripts/run_crosshost_static_ep_smoke.sh \
 
 ```bash
 python scripts/run_crosshost_static_ep_matrix.py \
+  --host1-workdir /workspace/afd_demo_crosshost_ep \
+  --host2-workdir /workspace/afd_demo_repo_crosshost_ep \
   --ep-sizes 16,12,8 \
   --host2-ffn-devices 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
   --backends broadcast_reduce_overlap,broadcast_reduce_sync \
@@ -64,6 +66,8 @@ python scripts/run_crosshost_static_ep_matrix.py \
 ```bash
 python scripts/run_crosshost_static_ep_matrix.py \
   --dry-run \
+  --host1-workdir /workspace/afd_demo_crosshost_ep \
+  --host2-workdir /workspace/afd_demo_repo_crosshost_ep \
   --ep-sizes 16 \
   --backends broadcast_reduce_overlap \
   --modes decode-dbo \
