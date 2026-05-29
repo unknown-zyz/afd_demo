@@ -822,6 +822,7 @@ class DisaggregatedQwenModel(nn.Module):
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
+        ep_overlap_early_recv: bool = False,
     ) -> torch.Tensor:
         """
         Generate text autoregressively with optional Decode DBO.
@@ -842,6 +843,7 @@ class DisaggregatedQwenModel(nn.Module):
             comm_timing_mode: "enqueue" for isend return overhead or
                 "completion" for effective Work completion latency
             decode_use_crosslayer: Enable cross-layer micro-batch pipelining in decode DBO
+            ep_overlap_early_recv: Post next-layer A2F irecv per MB in FFN EP overlap decode.
         
         Returns:
             Generated token IDs [batch_size, seq_len + num_generated]
@@ -853,6 +855,7 @@ class DisaggregatedQwenModel(nn.Module):
                 num_decode_micro_batches, enable_timing, timing_mode,
                 comm_timing_mode,
                 decode_use_crosslayer,
+                ep_overlap_early_recv,
             )
         
         # Initialize KV cache if needed
@@ -902,6 +905,7 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                ep_overlap_early_recv=ep_overlap_early_recv,
                 use_stream_overlap=self.attention_optimization_config.stream_overlap,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
@@ -1001,6 +1005,7 @@ class DisaggregatedQwenModel(nn.Module):
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
+        ep_overlap_early_recv: bool = False,
     ) -> torch.Tensor:
         """
         FFN node participation in generation.
@@ -1030,6 +1035,7 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                ep_overlap_early_recv=ep_overlap_early_recv,
                 use_stream_overlap=self.attention_optimization_config.stream_overlap,
             )
         

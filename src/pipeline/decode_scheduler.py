@@ -11,6 +11,7 @@ batch slice of the KV cache, then the updated slices are merged back.
 """
 
 import logging
+import os
 import time
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass
@@ -92,6 +93,7 @@ class DecodeDBOScheduler:
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         use_crosslayer: bool = False,
+        ep_overlap_early_recv: bool = False,
         use_stream_overlap: bool = False,
     ):
         self.model = model
@@ -116,12 +118,16 @@ class DecodeDBOScheduler:
         #   - True: post next-layer irecvs before draining current-layer sends,
         #     enabling cross-layer micro-batch pipeline.
         self.use_crosslayer = use_crosslayer
+        self.ep_overlap_early_recv = (
+            ep_overlap_early_recv
+            or os.environ.get("AFD_EP_OVERLAP_EARLY_RECV", "0") == "1"
+        )
         # Eagerly init directional groups (collective: both nodes must reach here)
         _ = self.ctx.a2f_group
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}, "
             f"use_crosslayer={use_crosslayer}, stream_overlap={use_stream_overlap}, "
-            f"comm_timing={comm_timing_mode}"
+            f"comm_timing={comm_timing_mode}, ep_overlap_early_recv={self.ep_overlap_early_recv}"
         )
 
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
@@ -149,7 +155,11 @@ class DecodeDBOScheduler:
         return (
             self.ctx.ffn_ep_enabled
             and self.ctx.config is not None
-            and self.ctx.config.ffn_ep_backend in {"broadcast_reduce_overlap", "all_to_all_single"}
+            and self.ctx.config.ffn_ep_backend in {
+                "broadcast_reduce_overlap",
+                "all_to_all_single",
+                "sparse_p2p_overlap",
+            }
             and num_mb >= 2
         )
 
@@ -904,6 +914,7 @@ class DecodeDBOScheduler:
             send_handles: List[dist.Work] = []
             next_a2f_handles: List[Optional[dist.Work]] = [None] * num_mb
             next_a2f_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
+            next_a2f_posted = [False] * num_mb
 
             for mb_idx, mb_size in enumerate(mb_sizes):
                 if is_coordinator:
@@ -934,6 +945,22 @@ class DecodeDBOScheduler:
 
             previous: Optional[Tuple[int, Any]] = None
 
+            def _post_next_layer_irecv(done_mb_idx: int) -> None:
+                if not is_coordinator or layer_idx + 1 >= num_layers:
+                    return
+                if next_a2f_posted[done_mb_idx]:
+                    return
+                next_tag = self._get_tag(layer_idx + 1, done_mb_idx, "a2f")
+                recv_tensor = torch.empty(
+                    mb_sizes[done_mb_idx], 1, self.model.hidden_size,
+                    dtype=self.model.dtype, device=self.model.device,
+                )
+                next_a2f_handles[done_mb_idx] = dist.irecv(
+                    recv_tensor, src=peer, tag=next_tag, group=a2f_group,
+                )
+                next_a2f_tensors[done_mb_idx] = recv_tensor
+                next_a2f_posted[done_mb_idx] = True
+
             def _finish_and_send(done_mb_idx: int, done_item) -> None:
                 layer.finish_reduce(done_item)
                 output = layer.finish_output(done_item)
@@ -946,6 +973,8 @@ class DecodeDBOScheduler:
                     if tracker:
                         tracker.record_send(handle, layer_idx, done_mb_idx, send_start, output)
                     send_handles.append(handle)
+                    if self.use_crosslayer and self.ep_overlap_early_recv:
+                        _post_next_layer_irecv(done_mb_idx)
 
             for mb_idx, item in enumerate(items):
                 layer.finish_dispatch(item)
@@ -964,15 +993,7 @@ class DecodeDBOScheduler:
                 def _post_next_layer_irecvs():
                     if layer_idx + 1 < num_layers:
                         for mb_idx, mb_size in enumerate(mb_sizes):
-                            next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
-                            recv_tensor = torch.empty(
-                                mb_size, 1, self.model.hidden_size,
-                                dtype=self.model.dtype, device=self.model.device,
-                            )
-                            next_a2f_handles[mb_idx] = dist.irecv(
-                                recv_tensor, src=peer, tag=next_tag, group=a2f_group,
-                            )
-                            next_a2f_tensors[mb_idx] = recv_tensor
+                            _post_next_layer_irecv(mb_idx)
 
                 if self.use_crosslayer:
                     _post_next_layer_irecvs()

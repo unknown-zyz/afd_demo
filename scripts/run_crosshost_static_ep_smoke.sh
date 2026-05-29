@@ -34,6 +34,12 @@ TIMING_SUFFIX=""
 DEBUG_MAX_LAYERS=""
 RESOURCE_MONITOR=0
 RESOURCE_MONITOR_INTERVAL=1
+MSPROF=0
+MSPROF_OUTPUT_ROOT=""
+MSPROF_OP=0
+MSPROF_ANALYZE=0
+MSPROF_RANKS="all"
+MSPROF_STORAGE_LIMIT_MB=""
 ATTN_KERNEL="${AFD_ATTN_KERNEL:-hf}"
 ATTN_PRECOPY_LAYER_INPUTS=0
 ATTN_FUSED_RMSNORM=0
@@ -65,6 +71,12 @@ while [[ $# -gt 0 ]]; do
     --debug-max-layers) DEBUG_MAX_LAYERS="$2"; shift 2 ;;
     --resource-monitor) RESOURCE_MONITOR=1; shift ;;
     --resource-monitor-interval) RESOURCE_MONITOR_INTERVAL="$2"; shift 2 ;;
+    --msprof) MSPROF=1; shift ;;
+    --msprof-output-root) MSPROF_OUTPUT_ROOT="$2"; shift 2 ;;
+    --msprof-op) MSPROF=1; MSPROF_OP=1; shift ;;
+    --msprof-analyze) MSPROF_ANALYZE=1; shift ;;
+    --msprof-ranks) MSPROF_RANKS="$2"; shift 2 ;;
+    --msprof-storage-limit-mb) MSPROF_STORAGE_LIMIT_MB="$2"; shift 2 ;;
     --attn-kernel) ATTN_KERNEL="$2"; shift 2 ;;
     --attn-precopy-layer-inputs) ATTN_PRECOPY_LAYER_INPUTS=1; shift ;;
     --attn-fused-rmsnorm) ATTN_FUSED_RMSNORM=1; shift ;;
@@ -95,6 +107,9 @@ if [[ -z "$TIMING_SUFFIX" ]]; then
 fi
 if [[ -z "$HOST2_FFN_DEVICES" ]]; then
   HOST2_FFN_DEVICES="$(seq -s, 0 $((FFN_EP_SIZE - 1)))"
+fi
+if [[ -z "$MSPROF_OUTPUT_ROOT" ]]; then
+  MSPROF_OUTPUT_ROOT="$OUT_DIR/msprof"
 fi
 
 mkdir -p "$OUT_DIR" results/prefill_dbo results/logs
@@ -173,6 +188,61 @@ start_resource_monitor() {
   echo "resource_monitor_pid=${PIDS[-1]} log=$OUT_DIR/npu_smi_${SIDE}.log"
 }
 
+run_rank() {
+  local rank_label="$1"
+  local rank_num="$2"
+  local log_path="$3"
+  shift 3
+  local py_cmd=(python3 -u -m src.main "$@")
+  local profile_this_rank=0
+  if (( MSPROF )); then
+    if [[ "$MSPROF_RANKS" == "all" || ",$MSPROF_RANKS," == *",$rank_num,"* ]]; then
+      profile_this_rank=1
+    fi
+  fi
+  if (( profile_this_rank )); then
+    if ! command -v msprof >/dev/null 2>&1; then
+      echo "ERROR: --msprof requested but msprof is not on PATH" >&2
+      return 127
+    fi
+    local rank_msprof_output="$MSPROF_OUTPUT_ROOT/$TIMING_SUFFIX/${SIDE}_${rank_label}"
+    mkdir -p "$rank_msprof_output"
+    local app_cmd
+    app_cmd=$(printf " %q" "${py_cmd[@]}")
+    app_cmd=${app_cmd:1}
+    local msprof_cmd=(msprof)
+    if (( MSPROF_OP )); then
+      msprof_cmd+=(op)
+    else
+      msprof_cmd+=(--hccl=on --runtime-api=on --task-time=on --sys-hardware-mem=on --sys-io-profiling=on)
+    fi
+    if [[ -n "$MSPROF_STORAGE_LIMIT_MB" ]]; then
+      msprof_cmd+=(--storage-limit="${MSPROF_STORAGE_LIMIT_MB}MB")
+    fi
+    msprof_cmd+=(--output="$rank_msprof_output" --application="$app_cmd")
+    timeout "$TIMEOUT_SEC" "${msprof_cmd[@]}" >"$log_path" 2>&1
+  else
+    timeout "$TIMEOUT_SEC" "${py_cmd[@]}" >"$log_path" 2>&1
+  fi
+}
+
+analyze_msprof_outputs() {
+  if (( ! MSPROF || ! MSPROF_ANALYZE )); then
+    return 0
+  fi
+  local rc=0
+  shopt -s nullglob
+  for profile_dir in "$MSPROF_OUTPUT_ROOT/$TIMING_SUFFIX"/"${SIDE}"_*; do
+    [[ -d "$profile_dir" ]] || continue
+    if ! msprof --analyze=on --rule=communication,communication_matrix --output="$profile_dir" >"$profile_dir/msprof-analyze.log" 2>&1; then
+      echo "ERROR: msprof analyze failed for $profile_dir" >&2
+      rc=1
+    fi
+  done
+  shopt -u nullglob
+  return "$rc"
+}
+
 WORLD_SIZE=$((FFN_EP_SIZE + 1))
 EXTRA_ARGS=()
 if [[ "$MODE" == "decode-dbo-crosslayer" ]]; then
@@ -224,6 +294,7 @@ echo "side=$SIDE world=$WORLD_SIZE ep=$FFN_EP_SIZE backend=$FFN_EP_BACKEND mode=
 echo "master=$MASTER_ADDR:$MASTER_PORT hccl_if_base_port=$HCCL_IF_BASE_PORT hccl_if_ip=${HCCL_IF_IP:-<unset>}"
 echo "batch=$BATCH seq=$SEQ tokens=$TOKENS timeout_sec=$TIMEOUT_SEC debug_max_layers=${DEBUG_MAX_LAYERS:-<none>}"
 echo "resource_monitor=$RESOURCE_MONITOR interval=$RESOURCE_MONITOR_INTERVAL"
+echo "msprof=$MSPROF op=$MSPROF_OP analyze=$MSPROF_ANALYZE ranks=$MSPROF_RANKS storage_limit_mb=${MSPROF_STORAGE_LIMIT_MB:-<none>} output_root=$MSPROF_OUTPUT_ROOT"
 echo "attention kernel=$ATTN_KERNEL precopy=$ATTN_PRECOPY_LAYER_INPUTS fused_rmsnorm=$ATTN_FUSED_RMSNORM fused_rope=$ATTN_FUSED_ROPE stream_overlap=$ATTN_STREAM_OVERLAP"
 echo "out_dir=$OUT_DIR timing_suffix=$TIMING_SUFFIX model=$MODEL_NAME"
 if [[ "$SIDE" == "host2" ]]; then
@@ -239,12 +310,12 @@ if [[ "$SIDE" == "host1" ]]; then
   export ASCEND_RT_VISIBLE_DEVICES="${ASCEND_RT_VISIBLE_DEVICES:-$ASCEND_VISIBLE_DEVICES}"
   LOG="$OUT_DIR/h1_rank0.log"
   rc=0
-  timeout "$TIMEOUT_SEC" python3 -u -m src.main \
+  run_rank "rank0" 0 "$LOG" \
     "${COMMON_ARGS[@]}" \
     --role attention \
     --rank 0 \
-    --local-rank 0 \
-    >"$LOG" 2>&1 || rc=$?
+    --local-rank 0 || rc=$?
+  analyze_msprof_outputs || rc=1
   copy_timing_files
   echo "host1_attention_rc=$rc log=$LOG"
   tail -n 80 "$LOG" || true
@@ -265,12 +336,11 @@ for rank in $(seq 1 "$FFN_EP_SIZE"); do
   (
     export ASCEND_VISIBLE_DEVICES="$dev"
     export ASCEND_RT_VISIBLE_DEVICES="$dev"
-    timeout "$TIMEOUT_SEC" python3 -u -m src.main \
+    run_rank "rank${rank}" "$rank" "$LOG" \
       "${COMMON_ARGS[@]}" \
       --role ffn \
       --rank "$rank" \
-      --local-rank 0 \
-      >"$LOG" 2>&1
+      --local-rank 0
   ) &
   PIDS+=("$!")
   RANK_PIDS+=("$!")
@@ -284,6 +354,7 @@ for pid in "${RANK_PIDS[@]}"; do
 done
 
 copy_timing_files
+analyze_msprof_outputs || rc=1
 echo "host2_ffn_rc=$rc"
 tail -n 60 "$OUT_DIR/h2_rank1.log" || true
 tail -n 40 "$OUT_DIR/h2_rank${FFN_EP_SIZE}.log" || true

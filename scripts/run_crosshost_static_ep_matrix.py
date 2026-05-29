@@ -310,6 +310,12 @@ def build_side_script(
     attn_stream_overlap: bool,
     resource_monitor: bool,
     resource_monitor_interval: int,
+    msprof: bool,
+    msprof_output_root: str,
+    msprof_op: bool,
+    msprof_analyze: bool,
+    msprof_ranks: str,
+    msprof_storage_limit_mb: str,
 ) -> str:
     if side == "host1":
         side_args = [
@@ -360,6 +366,18 @@ def build_side_script(
     if resource_monitor:
         args.append("--resource-monitor")
         args.append(f"--resource-monitor-interval {resource_monitor_interval}")
+    if msprof:
+        args.append("--msprof")
+        if msprof_output_root:
+            args.append(f"--msprof-output-root {quote(msprof_output_root)}")
+    if msprof_op:
+        args.append("--msprof-op")
+    if msprof_analyze:
+        args.append("--msprof-analyze")
+    if msprof_ranks:
+        args.append(f"--msprof-ranks {quote(msprof_ranks)}")
+    if msprof_storage_limit_mb:
+        args.append(f"--msprof-storage-limit-mb {quote(msprof_storage_limit_mb)}")
     if debug_max_layers is not None:
         args.append(f"--debug-max-layers {debug_max_layers}")
     return f"""#!/usr/bin/env bash
@@ -494,6 +512,12 @@ def run_one(
     attn_stream_overlap: bool,
     resource_monitor: bool,
     resource_monitor_interval: int,
+    msprof: bool,
+    msprof_output_root: str,
+    msprof_op: bool,
+    msprof_analyze: bool,
+    msprof_ranks: str,
+    msprof_storage_limit_mb: str,
     dry_run: bool,
 ) -> dict[str, str]:
     out_dir = f"{out_root}/{cfg.tag}"
@@ -530,6 +554,12 @@ def run_one(
             attn_stream_overlap=attn_stream_overlap,
             resource_monitor=resource_monitor,
             resource_monitor_interval=resource_monitor_interval,
+            msprof=msprof,
+            msprof_output_root=msprof_output_root,
+            msprof_op=msprof_op,
+            msprof_analyze=msprof_analyze,
+            msprof_ranks=msprof_ranks,
+            msprof_storage_limit_mb=msprof_storage_limit_mb,
         )
         h2_content = build_side_script(
             side="host2",
@@ -547,6 +577,12 @@ def run_one(
             attn_stream_overlap=attn_stream_overlap,
             resource_monitor=resource_monitor,
             resource_monitor_interval=resource_monitor_interval,
+            msprof=msprof,
+            msprof_output_root=msprof_output_root,
+            msprof_op=msprof_op,
+            msprof_analyze=msprof_analyze,
+            msprof_ranks=msprof_ranks,
+            msprof_storage_limit_mb=msprof_storage_limit_mb,
         )
         print(f"=== DRY RUN {cfg.tag} ===")
         print("--- Host2 script ---")
@@ -585,6 +621,12 @@ def run_one(
                     attn_stream_overlap=attn_stream_overlap,
                     resource_monitor=resource_monitor,
                     resource_monitor_interval=resource_monitor_interval,
+                    msprof=msprof,
+                    msprof_output_root=msprof_output_root,
+                    msprof_op=msprof_op,
+                    msprof_analyze=msprof_analyze,
+                    msprof_ranks=msprof_ranks,
+                    msprof_storage_limit_mb=msprof_storage_limit_mb,
                 ),
             )
             write_remote_script(
@@ -606,6 +648,12 @@ def run_one(
                     attn_stream_overlap=attn_stream_overlap,
                     resource_monitor=resource_monitor,
                     resource_monitor_interval=resource_monitor_interval,
+                    msprof=msprof,
+                    msprof_output_root=msprof_output_root,
+                    msprof_op=msprof_op,
+                    msprof_analyze=msprof_analyze,
+                    msprof_ranks=msprof_ranks,
+                    msprof_storage_limit_mb=msprof_storage_limit_mb,
                 ),
             )
             remote_detached(host2, h2_script)
@@ -764,6 +812,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-monitor", action="store_true", default=True)
     parser.add_argument("--no-resource-monitor", action="store_false", dest="resource_monitor")
     parser.add_argument("--resource-monitor-interval", type=int, default=1)
+    parser.add_argument("--msprof", action="store_true", help="Wrap cross-host ranks with msprof.")
+    parser.add_argument("--msprof-output-root", default="", help="Remote msprof output root. Defaults to each run out-dir/msprof.")
+    parser.add_argument("--msprof-op", action="store_true", help="Use msprof op mode.")
+    parser.add_argument("--msprof-analyze", action="store_true", help="Run msprof communication analysis after each side finishes.")
+    parser.add_argument("--msprof-ranks", default="all", help="Comma-separated global ranks to profile, or 'all'.")
+    parser.add_argument("--msprof-storage-limit-mb", default="", help="Optional msprof --storage-limit value in MB per profiled rank.")
     parser.add_argument("--adaptive-oom", action="store_true", default=True)
     parser.add_argument("--no-adaptive-oom", action="store_false", dest="adaptive_oom")
     parser.add_argument("--resume", action="store_true", default=True)
@@ -907,6 +961,12 @@ def main() -> int:
                                 attn_stream_overlap=args.attn_stream_overlap,
                                 resource_monitor=args.resource_monitor,
                                 resource_monitor_interval=args.resource_monitor_interval,
+                                msprof=args.msprof,
+                                msprof_output_root=args.msprof_output_root,
+                                msprof_op=args.msprof_op,
+                                msprof_analyze=args.msprof_analyze,
+                                msprof_ranks=args.msprof_ranks,
+                                msprof_storage_limit_mb=args.msprof_storage_limit_mb,
                                 dry_run=args.dry_run,
                             )
                         except RuntimeError as exc:

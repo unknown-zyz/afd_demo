@@ -123,6 +123,10 @@ def parse_args():
     parser.add_argument("--crosslayer", action="store_true",
                         help="Enable cross-layer micro-batch pipelining in decode DBO "
                              "(default: off; post next-layer irecvs before draining current-layer sends)")
+    parser.add_argument("--ep-overlap-early-recv", action="store_true",
+                        default=os.environ.get("AFD_EP_OVERLAP_EARLY_RECV", "0") == "1",
+                        help="In FFN EP overlap decode, post next-layer A2F irecv as soon as each "
+                             "micro-batch F2A send is enqueued. Experimental.")
     parser.add_argument("--comm-timing-mode", type=str, choices=["enqueue", "completion"],
                         default="enqueue",
                         help="Communication timing for send events: enqueue records isend return "
@@ -194,9 +198,14 @@ def parse_args():
     parser.add_argument('--ffn-ep-size', type=int, default=1,
                         help='Expert-parallel degree within the FFN role. 1 disables EP.')
     parser.add_argument('--ffn-ep-backend', type=str,
-                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap', 'all_to_all_single'],
+                        choices=[
+                            'broadcast_reduce_sync',
+                            'broadcast_reduce_overlap',
+                            'all_to_all_single',
+                            'sparse_p2p_overlap',
+                        ],
                         default='broadcast_reduce_sync',
-                        help='FFN EP backend. all_to_all_single uses token-aware torch.distributed all_to_all_single.')
+                        help='FFN EP backend. sparse_p2p_overlap uses coordinator-rooted sparse P2P.')
     parser.add_argument('--ffn-coordinator-rank', type=int, default=None,
                         help='Global FFN rank that communicates with Attention. Defaults to --ffn-node-rank.')
     parser.add_argument('--ep-expert-policy', type=str,
@@ -640,6 +649,7 @@ def run_generation_demo(args):
         timing_mode=args.timing_mode,
         comm_timing_mode=args.comm_timing_mode,
         decode_use_crosslayer=args.crosslayer,
+        ep_overlap_early_recv=args.ep_overlap_early_recv,
     )
     
     devmod.synchronize()

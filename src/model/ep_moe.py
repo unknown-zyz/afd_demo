@@ -158,6 +158,9 @@ class EPWorkItem:
     all2all_dispatch_handle: Optional[dict] = None
     all2all_combine_handle: Optional[dict] = None
     all2all_ffn_outputs: Optional[torch.Tensor] = None
+    sparse_dispatch_handle: Optional[dict] = None
+    sparse_combine_handle: Optional[dict] = None
+    sparse_ffn_outputs: Optional[torch.Tensor] = None
 
 
 class ShardedExperts(nn.Module):
@@ -359,9 +362,24 @@ class EPFFNLayer(nn.Module):
         self.top_k = top_k
         self.layer_idx = layer_idx
         self.layer_device = layer_device
+        self.dtype = sharded_experts.dtype
         self.ctx = ctx
         self.is_sparse_moe = True
+        self.register_buffer(
+            "_expert_to_ep_rank",
+            torch.tensor(
+                sharded_experts.plan.expert_to_rank_map,
+                dtype=torch.long,
+                device=layer_device,
+            ),
+            persistent=False,
+        )
         self._all2all_comm = None
+        self._sparse_p2p_enabled = (
+            self.ctx.config is not None
+            and self.ctx.config.ffn_ep_backend == "sparse_p2p_overlap"
+        )
+        self._sparse_p2p_seq = 0
         if self.ctx.config is not None and self.ctx.config.ffn_ep_backend == "all_to_all_single":
             from ..coordinator_arch.comm.fallback_a2a import FallbackMoECommunicator
 
@@ -390,6 +408,210 @@ class EPFFNLayer(nn.Module):
     @property
     def use_all_to_all(self) -> bool:
         return self._all2all_comm is not None
+
+    @property
+    def use_sparse_p2p(self) -> bool:
+        return self._sparse_p2p_enabled
+
+    @property
+    def use_assignment_dispatch(self) -> bool:
+        return self.use_all_to_all or self.use_sparse_p2p
+
+    def _next_sparse_tag_base(self) -> int:
+        tag_base = 200000 + self.layer_idx * 10000 + self._sparse_p2p_seq * 10
+        self._sparse_p2p_seq += 1
+        return tag_base
+
+    def _sparse_p2p_dispatch_async(
+        self,
+        hidden_2d: torch.Tensor,
+        selected_experts: torch.Tensor,
+        routing_weights: torch.Tensor,
+    ) -> dict:
+        """Single-source sparse EP dispatch using coordinator-rooted P2P.
+
+        This avoids HCCL alltoallv for the current static EP topology: only the
+        FFN coordinator has router inputs, so it sends each expert rank exactly
+        the assignment copies that rank owns.
+        """
+
+        group = self.ctx.ffn_ep_group
+        coordinator = self.ctx.ffn_coordinator_rank
+        tag_base = self._next_sparse_tag_base()
+        H = hidden_2d.shape[-1]
+
+        if not self.is_coordinator:
+            count_tensor = torch.empty(1, dtype=torch.long, device=self.layer_device)
+            count_work = dist.irecv(
+                count_tensor,
+                src=coordinator,
+                tag=tag_base,
+                group=group,
+            )
+            return {
+                "tag_base": tag_base,
+                "recv_hidden": None,
+                "recv_experts": None,
+                "recv_count_tensor": count_tensor,
+                "_count_work": count_work,
+                "_complete": False,
+                "_sparse_impl": "p2p",
+                "hidden_size": H,
+            }
+
+        N, H = hidden_2d.shape
+        K = selected_experts.shape[1]
+        topk_indices_flat = selected_experts.reshape(-1).to(torch.long)
+        topk_weights = routing_weights
+        dest_ep_ranks = self._expert_to_ep_rank[topk_indices_flat]
+
+        send_counts = [int((dest_ep_ranks == r).sum().item()) for r in range(self.ctx.ffn_ep_size)]
+        send_perm = torch.argsort(
+            dest_ep_ranks.to(torch.long) * self.sharded_experts.num_total_experts
+            + topk_indices_flat
+        )
+        token_indices = (
+            torch.arange(N, device=self.layer_device)
+            .unsqueeze(1)
+            .expand(N, K)
+            .reshape(-1)
+        )
+        send_hidden = hidden_2d.index_select(0, token_indices).index_select(0, send_perm).contiguous()
+        send_experts = topk_indices_flat.index_select(0, send_perm).contiguous()
+
+        works: list[dist.Work] = []
+        keepalive: list[torch.Tensor] = [send_hidden, send_experts]
+        recv_hidden = torch.empty(0, H, dtype=hidden_2d.dtype, device=self.layer_device)
+        recv_experts = torch.empty(0, dtype=torch.long, device=self.layer_device)
+        offset = 0
+        for ep_rank, count in enumerate(send_counts):
+            dst_global = self.ctx.ffn_ranks[ep_rank]
+            hidden_seg = send_hidden.narrow(0, offset, count).contiguous()
+            expert_seg = send_experts.narrow(0, offset, count).contiguous()
+            offset += count
+
+            if dst_global == self.ctx.rank:
+                recv_hidden = hidden_seg
+                recv_experts = expert_seg
+                continue
+
+            count_tensor = torch.tensor([count], dtype=torch.long, device=self.layer_device)
+            keepalive.append(count_tensor)
+            works.append(dist.isend(count_tensor, dst=dst_global, tag=tag_base, group=group))
+            if count > 0:
+                keepalive.extend([hidden_seg, expert_seg])
+                works.append(dist.isend(hidden_seg, dst=dst_global, tag=tag_base + 1, group=group))
+                works.append(dist.isend(expert_seg, dst=dst_global, tag=tag_base + 2, group=group))
+
+        return {
+            "tag_base": tag_base,
+            "recv_hidden": recv_hidden,
+            "recv_experts": recv_experts,
+            "send_counts": send_counts,
+            "send_perm": send_perm,
+            "topk_weights": topk_weights,
+            "original_shape": (N, K, H),
+            "_works": works,
+            "_keepalive": keepalive,
+            "_complete": False,
+            "_sparse_impl": "p2p",
+            "hidden_size": H,
+        }
+
+    def _sparse_p2p_wait_dispatch(self, handle: dict) -> dict:
+        if handle.get("_complete", False):
+            return handle
+
+        group = self.ctx.ffn_ep_group
+        coordinator = self.ctx.ffn_coordinator_rank
+        tag_base = handle["tag_base"]
+        H = handle["hidden_size"]
+
+        if not self.is_coordinator:
+            handle["_count_work"].wait()
+            count = int(handle["recv_count_tensor"].item())
+            recv_hidden = torch.empty(count, H, dtype=self.dtype, device=self.layer_device)
+            recv_experts = torch.empty(count, dtype=torch.long, device=self.layer_device)
+            works = []
+            if count > 0:
+                works.append(dist.irecv(recv_hidden, src=coordinator, tag=tag_base + 1, group=group))
+                works.append(dist.irecv(recv_experts, src=coordinator, tag=tag_base + 2, group=group))
+            for work in works:
+                work.wait()
+            handle["recv_hidden"] = recv_hidden
+            handle["recv_experts"] = recv_experts
+            handle["recv_count"] = count
+        else:
+            for work in handle.get("_works", []):
+                work.wait()
+
+        handle["_complete"] = True
+        return handle
+
+    def _sparse_p2p_combine_async(
+        self,
+        ffn_outputs: torch.Tensor,
+        dispatch_handle: dict,
+    ) -> dict:
+        dispatch_handle = self._sparse_p2p_wait_dispatch(dispatch_handle)
+        group = self.ctx.ffn_ep_group
+        coordinator = self.ctx.ffn_coordinator_rank
+        tag = dispatch_handle["tag_base"] + 3
+
+        if not self.is_coordinator:
+            works = []
+            send_tensor = ffn_outputs.contiguous()
+            if ffn_outputs.shape[0] > 0:
+                works.append(dist.isend(send_tensor, dst=coordinator, tag=tag, group=group))
+            return {
+                "_works": works,
+                "_keepalive": [send_tensor],
+                "_complete": False,
+                "_sparse_impl": "p2p",
+            }
+
+        N, K, H = dispatch_handle["original_shape"]
+        gathered_by_rank: list[torch.Tensor] = []
+        works: list[dist.Work] = []
+        for ep_rank, count in enumerate(dispatch_handle["send_counts"]):
+            src_global = self.ctx.ffn_ranks[ep_rank]
+            if src_global == self.ctx.rank:
+                gathered_by_rank.append(ffn_outputs)
+                continue
+            recv = torch.empty(count, H, dtype=ffn_outputs.dtype, device=self.layer_device)
+            gathered_by_rank.append(recv)
+            if count > 0:
+                works.append(dist.irecv(recv, src=src_global, tag=tag, group=group))
+
+        return {
+            "gathered_by_rank": gathered_by_rank,
+            "dispatch_handle": dispatch_handle,
+            "_works": works,
+            "_complete": False,
+            "_sparse_impl": "p2p",
+        }
+
+    def _sparse_p2p_wait_combine(self, handle: dict) -> Optional[torch.Tensor]:
+        if handle.get("_complete", False):
+            return handle.get("combined")
+
+        for work in handle.get("_works", []):
+            work.wait()
+
+        if not self.is_coordinator:
+            handle["_complete"] = True
+            return None
+
+        dispatch_handle = handle["dispatch_handle"]
+        N, K, H = dispatch_handle["original_shape"]
+        gathered_hidden = torch.cat(handle["gathered_by_rank"], dim=0)
+        inverse_perm = torch.argsort(dispatch_handle["send_perm"])
+        hidden_restored = gathered_hidden.index_select(0, inverse_perm).reshape(N, K, H)
+        weights = dispatch_handle["topk_weights"].unsqueeze(-1).to(hidden_restored.dtype)
+        combined = (hidden_restored * weights).sum(dim=1)
+        handle["combined"] = combined
+        handle["_complete"] = True
+        return combined
 
     def _empty_all2all_inputs(
         self,
@@ -461,7 +683,7 @@ class EPFFNLayer(nn.Module):
             routing_weights = routing_weights.contiguous()
         else:
             residual_out = None
-            if self.use_all_to_all:
+            if self.use_assignment_dispatch:
                 hidden_2d, selected_experts, routing_weights = self._empty_all2all_inputs(
                     hidden_dim,
                     hidden_states.dtype,
@@ -486,6 +708,31 @@ class EPFFNLayer(nn.Module):
 
     def dispatch_async(self, item: EPWorkItem) -> None:
         """Enqueue coordinator-to-expert EP broadcast for one micro-batch (fused)."""
+        if self.use_sparse_p2p:
+            item.dispatch_start_s = time.perf_counter()
+            item.sparse_dispatch_handle = self._sparse_p2p_dispatch_async(
+                item.hidden_2d,
+                item.selected_experts,
+                item.routing_weights,
+            )
+            item.dispatch_enqueue_done_s = time.perf_counter()
+            item.timing.ep_dispatch_enqueue_s = item.dispatch_enqueue_done_s - item.dispatch_start_s
+            item.timing.ep_dispatch_start_s = item.dispatch_start_s
+            item.timing.ep_dispatch_enqueue_done_s = item.dispatch_enqueue_done_s
+            if self.is_coordinator and item.sparse_dispatch_handle is not None:
+                item.timing.ep_dispatch_bytes = (
+                    item.sparse_dispatch_handle["recv_hidden"].numel()
+                    * item.sparse_dispatch_handle["recv_hidden"].element_size()
+                )
+                for count in item.sparse_dispatch_handle.get("send_counts", []):
+                    item.timing.ep_dispatch_bytes += count * (
+                        item.hidden_dim * item.hidden_2d.element_size()
+                        + item.selected_experts.element_size()
+                    )
+            else:
+                item.timing.ep_dispatch_bytes = 0
+            return
+
         if self.use_all_to_all:
             item.dispatch_start_s = time.perf_counter()
             assert self._all2all_comm is not None
@@ -540,7 +787,11 @@ class EPFFNLayer(nn.Module):
     def finish_dispatch(self, item: EPWorkItem) -> None:
         """Wait until dispatch inputs are ready for local expert compute."""
         wait_start = time.perf_counter()
-        if self.use_all_to_all:
+        if self.use_sparse_p2p:
+            if item.sparse_dispatch_handle is None:
+                raise RuntimeError("sparse_p2p finish_dispatch called before dispatch_async")
+            item.sparse_dispatch_handle = self._sparse_p2p_wait_dispatch(item.sparse_dispatch_handle)
+        elif self.use_all_to_all:
             assert self._all2all_comm is not None
             if item.all2all_dispatch_handle is None:
                 raise RuntimeError("all_to_all finish_dispatch called before dispatch_async")
@@ -559,7 +810,14 @@ class EPFFNLayer(nn.Module):
     def compute_local(self, item: EPWorkItem) -> None:
         """Run this rank's local expert shard for a dispatched micro-batch."""
         local_start = time.perf_counter()
-        if self.use_all_to_all:
+        if self.use_sparse_p2p:
+            if item.sparse_dispatch_handle is None:
+                raise RuntimeError("sparse_p2p compute_local called before finish_dispatch")
+            partial, active, assignments = self.sharded_experts.forward_dispatched(
+                item.sparse_dispatch_handle["recv_hidden"],
+                item.sparse_dispatch_handle["recv_experts"],
+            )
+        elif self.use_all_to_all:
             if item.all2all_dispatch_handle is None:
                 raise RuntimeError("all_to_all compute_local called before finish_dispatch")
             partial, active, assignments = self.sharded_experts.forward_dispatched(
@@ -586,6 +844,20 @@ class EPFFNLayer(nn.Module):
         """Enqueue partial-output reduce for one micro-batch."""
         if item.partial is None:
             raise RuntimeError("EP reduce_async called before compute_local")
+        if self.use_sparse_p2p:
+            if item.sparse_dispatch_handle is None:
+                raise RuntimeError("sparse_p2p reduce_async called before dispatch")
+            item.reduce_start_s = time.perf_counter()
+            item.sparse_combine_handle = self._sparse_p2p_combine_async(
+                item.partial,
+                item.sparse_dispatch_handle,
+            )
+            item.reduce_enqueue_done_s = time.perf_counter()
+            item.timing.ep_reduce_enqueue_s = item.reduce_enqueue_done_s - item.reduce_start_s
+            item.timing.ep_reduce_start_s = item.reduce_start_s
+            item.timing.ep_reduce_enqueue_done_s = item.reduce_enqueue_done_s
+            item.timing.ep_reduce_bytes = item.partial.numel() * item.partial.element_size()
+            return
         if self.use_all_to_all:
             if item.all2all_dispatch_handle is None:
                 raise RuntimeError("all_to_all reduce_async called before dispatch")
@@ -619,7 +891,13 @@ class EPFFNLayer(nn.Module):
         """Wait for partial-output reduce, tracking how much delay was hidden."""
         wait_start = time.perf_counter()
         item.timing.ep_overlap_hidden_s = max(0.0, wait_start - item.reduce_enqueue_done_s)
-        if self.use_all_to_all:
+        if self.use_sparse_p2p:
+            if item.sparse_combine_handle is None:
+                raise RuntimeError("sparse_p2p finish_reduce called before reduce_async")
+            item.sparse_ffn_outputs = self._sparse_p2p_wait_combine(
+                item.sparse_combine_handle
+            )
+        elif self.use_all_to_all:
             if item.all2all_combine_handle is None:
                 raise RuntimeError("all_to_all finish_reduce called before reduce_async")
             assert self._all2all_comm is not None
@@ -645,10 +923,11 @@ class EPFFNLayer(nn.Module):
             item.timing.ep_finish_output_start_s = output_start
             item.timing.ep_finish_output_end_s = output_end
             return item.hidden_states
-        if self.use_all_to_all:
-            if item.all2all_ffn_outputs is None or item.residual_out is None:
-                raise RuntimeError("all_to_all coordinator output requires combine output and residual")
-            output = item.all2all_ffn_outputs.reshape(item.batch_size, item.seq_len, item.hidden_dim)
+        if self.use_assignment_dispatch:
+            ffn_outputs = item.all2all_ffn_outputs if self.use_all_to_all else item.sparse_ffn_outputs
+            if ffn_outputs is None or item.residual_out is None:
+                raise RuntimeError("assignment-dispatch coordinator output requires combine output and residual")
+            output = ffn_outputs.reshape(item.batch_size, item.seq_len, item.hidden_dim)
             output = item.residual_out + output
             if output.device != item.output_device:
                 output = output.to(item.output_device, non_blocking=True)
@@ -707,7 +986,7 @@ class EPFFNLayer(nn.Module):
             routing_weights = routing_weights.contiguous()
         else:
             residual_out = None
-            if self.use_all_to_all:
+            if self.use_assignment_dispatch:
                 hidden_2d, selected_experts, routing_weights = self._empty_all2all_inputs(
                     hidden_dim,
                     hidden_states.dtype,
@@ -717,7 +996,7 @@ class EPFFNLayer(nn.Module):
                 selected_experts = torch.empty(tokens, self.top_k, device=self.layer_device, dtype=torch.int64)
                 routing_weights = torch.empty(tokens, self.top_k, device=self.layer_device, dtype=hidden_states.dtype)
 
-        if self.use_all_to_all:
+        if self.use_assignment_dispatch:
             item = EPWorkItem(
                 hidden_states=hidden_states,
                 output_device=output_device,
