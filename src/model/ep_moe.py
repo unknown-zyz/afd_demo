@@ -435,7 +435,7 @@ class EPFFNLayer(nn.Module):
         the assignment copies that rank owns.
         """
 
-        group = self.ctx.ffn_ep_group
+        p2p_group = dist.group.WORLD
         coordinator = self.ctx.ffn_coordinator_rank
         tag_base = self._next_sparse_tag_base()
         H = hidden_2d.shape[-1]
@@ -446,7 +446,7 @@ class EPFFNLayer(nn.Module):
                 count_tensor,
                 src=coordinator,
                 tag=tag_base,
-                group=group,
+                group=p2p_group,
             )
             return {
                 "tag_base": tag_base,
@@ -497,11 +497,11 @@ class EPFFNLayer(nn.Module):
 
             count_tensor = torch.tensor([count], dtype=torch.long, device=self.layer_device)
             keepalive.append(count_tensor)
-            works.append(dist.isend(count_tensor, dst=dst_global, tag=tag_base, group=group))
+            works.append(dist.isend(count_tensor, dst=dst_global, tag=tag_base, group=p2p_group))
             if count > 0:
                 keepalive.extend([hidden_seg, expert_seg])
-                works.append(dist.isend(hidden_seg, dst=dst_global, tag=tag_base + 1, group=group))
-                works.append(dist.isend(expert_seg, dst=dst_global, tag=tag_base + 2, group=group))
+                works.append(dist.isend(hidden_seg, dst=dst_global, tag=tag_base + 1, group=p2p_group))
+                works.append(dist.isend(expert_seg, dst=dst_global, tag=tag_base + 2, group=p2p_group))
 
         return {
             "tag_base": tag_base,
@@ -522,7 +522,7 @@ class EPFFNLayer(nn.Module):
         if handle.get("_complete", False):
             return handle
 
-        group = self.ctx.ffn_ep_group
+        p2p_group = dist.group.WORLD
         coordinator = self.ctx.ffn_coordinator_rank
         tag_base = handle["tag_base"]
         H = handle["hidden_size"]
@@ -534,8 +534,8 @@ class EPFFNLayer(nn.Module):
             recv_experts = torch.empty(count, dtype=torch.long, device=self.layer_device)
             works = []
             if count > 0:
-                works.append(dist.irecv(recv_hidden, src=coordinator, tag=tag_base + 1, group=group))
-                works.append(dist.irecv(recv_experts, src=coordinator, tag=tag_base + 2, group=group))
+                works.append(dist.irecv(recv_hidden, src=coordinator, tag=tag_base + 1, group=p2p_group))
+                works.append(dist.irecv(recv_experts, src=coordinator, tag=tag_base + 2, group=p2p_group))
             for work in works:
                 work.wait()
             handle["recv_hidden"] = recv_hidden
@@ -554,7 +554,7 @@ class EPFFNLayer(nn.Module):
         dispatch_handle: dict,
     ) -> dict:
         dispatch_handle = self._sparse_p2p_wait_dispatch(dispatch_handle)
-        group = self.ctx.ffn_ep_group
+        p2p_group = dist.group.WORLD
         coordinator = self.ctx.ffn_coordinator_rank
         tag = dispatch_handle["tag_base"] + 3
 
@@ -562,7 +562,7 @@ class EPFFNLayer(nn.Module):
             works = []
             send_tensor = ffn_outputs.contiguous()
             if ffn_outputs.shape[0] > 0:
-                works.append(dist.isend(send_tensor, dst=coordinator, tag=tag, group=group))
+                works.append(dist.isend(send_tensor, dst=coordinator, tag=tag, group=p2p_group))
             return {
                 "_works": works,
                 "_keepalive": [send_tensor],
@@ -581,7 +581,7 @@ class EPFFNLayer(nn.Module):
             recv = torch.empty(count, H, dtype=ffn_outputs.dtype, device=self.layer_device)
             gathered_by_rank.append(recv)
             if count > 0:
-                works.append(dist.irecv(recv, src=src_global, tag=tag, group=group))
+                works.append(dist.irecv(recv, src=src_global, tag=tag, group=p2p_group))
 
         return {
             "gathered_by_rank": gathered_by_rank,
