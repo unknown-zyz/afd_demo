@@ -13,6 +13,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+_SPARSE_P2P_TAG_BASE = 2000
+_SPARSE_P2P_TAG_LAYER_STRIDE = 1024
+_SPARSE_P2P_TAG_SEQ_STRIDE = 128
+_SPARSE_P2P_TAG_SEQ_SLOTS = 8
+_SPARSE_P2P_TAG_PEER_STRIDE = 4
+
+
 @dataclass(frozen=True)
 class ExpertShardPlan:
     """Static owner mapping for routed experts."""
@@ -365,10 +372,11 @@ class EPFFNLayer(nn.Module):
         self.dtype = sharded_experts.dtype
         self.ctx = ctx
         self.is_sparse_moe = True
+        expert_to_rank_map = sharded_experts.plan.expert_to_rank_map
         self.register_buffer(
             "_expert_to_ep_rank",
             torch.tensor(
-                sharded_experts.plan.expert_to_rank_map,
+                expert_to_rank_map,
                 dtype=torch.long,
                 device=layer_device,
             ),
@@ -418,15 +426,25 @@ class EPFFNLayer(nn.Module):
         return self.use_all_to_all or self.use_sparse_p2p
 
     def _next_sparse_tag_base(self) -> int:
-        tag_base = 200000 + self.layer_idx * 10000 + self._sparse_p2p_seq * 10
+        seq_slot = self._sparse_p2p_seq % _SPARSE_P2P_TAG_SEQ_SLOTS
+        tag_base = (
+            _SPARSE_P2P_TAG_BASE
+            + self.layer_idx * _SPARSE_P2P_TAG_LAYER_STRIDE
+            + seq_slot * _SPARSE_P2P_TAG_SEQ_STRIDE
+        )
         self._sparse_p2p_seq += 1
         return tag_base
+
+    def _sparse_peer_tag(self, tag_base: int, ep_rank: int, slot: int) -> int:
+        return tag_base + ep_rank * _SPARSE_P2P_TAG_PEER_STRIDE + slot
 
     def _sparse_p2p_dispatch_async(
         self,
         hidden_2d: torch.Tensor,
         selected_experts: torch.Tensor,
         routing_weights: torch.Tensor,
+        *,
+        expected_max_count: Optional[int] = None,
     ) -> dict:
         """Single-source sparse EP dispatch using coordinator-rooted P2P.
 
@@ -435,21 +453,23 @@ class EPFFNLayer(nn.Module):
         the assignment copies that rank owns.
         """
 
-        p2p_group = dist.group.WORLD
+        p2p_group = self.ctx.ffn_ep_group
         coordinator = self.ctx.ffn_coordinator_rank
         tag_base = self._next_sparse_tag_base()
         H = hidden_2d.shape[-1]
 
         if not self.is_coordinator:
+            ep_rank = self.ctx.ffn_ep_rank
             count_tensor = torch.empty(1, dtype=torch.long, device=self.layer_device)
             count_work = dist.irecv(
                 count_tensor,
                 src=coordinator,
-                tag=tag_base,
+                tag=self._sparse_peer_tag(tag_base, ep_rank, 0),
                 group=p2p_group,
             )
             return {
                 "tag_base": tag_base,
+                "ep_rank": ep_rank,
                 "recv_hidden": None,
                 "recv_experts": None,
                 "recv_count_tensor": count_tensor,
@@ -457,6 +477,7 @@ class EPFFNLayer(nn.Module):
                 "_complete": False,
                 "_sparse_impl": "p2p",
                 "hidden_size": H,
+                "expected_max_count": expected_max_count,
             }
 
         N, H = hidden_2d.shape
@@ -485,23 +506,44 @@ class EPFFNLayer(nn.Module):
         recv_experts = torch.empty(0, dtype=torch.long, device=self.layer_device)
         offset = 0
         for ep_rank, count in enumerate(send_counts):
-            dst_global = self.ctx.ffn_ranks[ep_rank]
+            dst_rank = self.ctx.ffn_ranks[ep_rank]
             hidden_seg = send_hidden.narrow(0, offset, count).contiguous()
             expert_seg = send_experts.narrow(0, offset, count).contiguous()
             offset += count
 
-            if dst_global == self.ctx.rank:
+            if dst_rank == self.ctx.rank:
                 recv_hidden = hidden_seg
                 recv_experts = expert_seg
                 continue
 
             count_tensor = torch.tensor([count], dtype=torch.long, device=self.layer_device)
             keepalive.append(count_tensor)
-            works.append(dist.isend(count_tensor, dst=dst_global, tag=tag_base, group=p2p_group))
+            works.append(
+                dist.isend(
+                    count_tensor,
+                    dst=dst_rank,
+                    tag=self._sparse_peer_tag(tag_base, ep_rank, 0),
+                    group=p2p_group,
+                )
+            )
             if count > 0:
                 keepalive.extend([hidden_seg, expert_seg])
-                works.append(dist.isend(hidden_seg, dst=dst_global, tag=tag_base + 1, group=p2p_group))
-                works.append(dist.isend(expert_seg, dst=dst_global, tag=tag_base + 2, group=p2p_group))
+                works.append(
+                    dist.isend(
+                        hidden_seg,
+                        dst=dst_rank,
+                        tag=self._sparse_peer_tag(tag_base, ep_rank, 1),
+                        group=p2p_group,
+                    )
+                )
+                works.append(
+                    dist.isend(
+                        expert_seg,
+                        dst=dst_rank,
+                        tag=self._sparse_peer_tag(tag_base, ep_rank, 2),
+                        group=p2p_group,
+                    )
+                )
 
         return {
             "tag_base": tag_base,
@@ -516,26 +558,53 @@ class EPFFNLayer(nn.Module):
             "_complete": False,
             "_sparse_impl": "p2p",
             "hidden_size": H,
+            "expected_max_count": expected_max_count,
         }
 
     def _sparse_p2p_wait_dispatch(self, handle: dict) -> dict:
         if handle.get("_complete", False):
             return handle
 
-        p2p_group = dist.group.WORLD
+        p2p_group = self.ctx.ffn_ep_group
         coordinator = self.ctx.ffn_coordinator_rank
         tag_base = handle["tag_base"]
         H = handle["hidden_size"]
 
         if not self.is_coordinator:
+            ep_rank = handle["ep_rank"]
             handle["_count_work"].wait()
             count = int(handle["recv_count_tensor"].item())
+            expected_max_count = handle["expected_max_count"]
+            if expected_max_count is not None:
+                expected_max_count = int(expected_max_count)
+            if count < 0 or (expected_max_count is not None and count > expected_max_count):
+                raise RuntimeError(
+                    "sparse_p2p_overlap received invalid assignment count "
+                    f"{count} on global rank {self.ctx.rank} "
+                    f"(ep_rank={ep_rank}, layer={self.layer_idx}, "
+                    f"max_expected={expected_max_count}). This indicates a P2P "
+                    "tag/protocol mismatch."
+                )
             recv_hidden = torch.empty(count, H, dtype=self.dtype, device=self.layer_device)
             recv_experts = torch.empty(count, dtype=torch.long, device=self.layer_device)
             works = []
             if count > 0:
-                works.append(dist.irecv(recv_hidden, src=coordinator, tag=tag_base + 1, group=p2p_group))
-                works.append(dist.irecv(recv_experts, src=coordinator, tag=tag_base + 2, group=p2p_group))
+                works.append(
+                    dist.irecv(
+                        recv_hidden,
+                        src=coordinator,
+                        tag=self._sparse_peer_tag(tag_base, ep_rank, 1),
+                        group=p2p_group,
+                    )
+                )
+                works.append(
+                    dist.irecv(
+                        recv_experts,
+                        src=coordinator,
+                        tag=self._sparse_peer_tag(tag_base, ep_rank, 2),
+                        group=p2p_group,
+                    )
+                )
             for work in works:
                 work.wait()
             handle["recv_hidden"] = recv_hidden
@@ -554,15 +623,22 @@ class EPFFNLayer(nn.Module):
         dispatch_handle: dict,
     ) -> dict:
         dispatch_handle = self._sparse_p2p_wait_dispatch(dispatch_handle)
-        p2p_group = dist.group.WORLD
+        p2p_group = self.ctx.ffn_ep_group
         coordinator = self.ctx.ffn_coordinator_rank
-        tag = dispatch_handle["tag_base"] + 3
+        tag_base = dispatch_handle["tag_base"]
 
         if not self.is_coordinator:
             works = []
             send_tensor = ffn_outputs.contiguous()
             if ffn_outputs.shape[0] > 0:
-                works.append(dist.isend(send_tensor, dst=coordinator, tag=tag, group=p2p_group))
+                works.append(
+                    dist.isend(
+                        send_tensor,
+                        dst=coordinator,
+                        tag=self._sparse_peer_tag(tag_base, self.ctx.ffn_ep_rank, 3),
+                        group=p2p_group,
+                    )
+                )
             return {
                 "_works": works,
                 "_keepalive": [send_tensor],
@@ -574,14 +650,21 @@ class EPFFNLayer(nn.Module):
         gathered_by_rank: list[torch.Tensor] = []
         works: list[dist.Work] = []
         for ep_rank, count in enumerate(dispatch_handle["send_counts"]):
-            src_global = self.ctx.ffn_ranks[ep_rank]
-            if src_global == self.ctx.rank:
+            src_rank = self.ctx.ffn_ranks[ep_rank]
+            if src_rank == self.ctx.rank:
                 gathered_by_rank.append(ffn_outputs)
                 continue
             recv = torch.empty(count, H, dtype=ffn_outputs.dtype, device=self.layer_device)
             gathered_by_rank.append(recv)
             if count > 0:
-                works.append(dist.irecv(recv, src=src_global, tag=tag, group=p2p_group))
+                works.append(
+                    dist.irecv(
+                        recv,
+                        src=src_rank,
+                        tag=self._sparse_peer_tag(tag_base, ep_rank, 3),
+                        group=p2p_group,
+                    )
+                )
 
         return {
             "gathered_by_rank": gathered_by_rank,
@@ -714,6 +797,7 @@ class EPFFNLayer(nn.Module):
                 item.hidden_2d,
                 item.selected_experts,
                 item.routing_weights,
+                expected_max_count=item.batch_size * item.seq_len * self.top_k,
             )
             item.dispatch_enqueue_done_s = time.perf_counter()
             item.timing.ep_dispatch_enqueue_s = item.dispatch_enqueue_done_s - item.dispatch_start_s

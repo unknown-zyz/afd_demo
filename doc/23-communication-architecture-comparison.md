@@ -8,7 +8,7 @@
 
 ## 结论摘要
 
-当前真实端到端 decode DBO 路径仍建议默认使用 `broadcast_reduce_overlap`。它不是理论最优通信模式，但在现有 Ascend 910C/HCCL 环境里是最稳定、实测最快的 EPFFN 路径。
+当前真实端到端 decode DBO 路径仍建议默认使用 `broadcast_reduce_overlap`。它不是理论最优通信模式，但在现有 Ascend 910C/HCCL 环境里是最稳定、实测最快的 EPFFN 路径。Host1 单机 `1A8F` 小配置复测也保持该结论：`b2/s32/t3` 下 broadcast/reduce crosslayer TPOT `280.855ms`，`all_to_all_single` TPOT `483.774ms`，同拓扑 serial TPOT `160.657ms`。
 
 `all_to_all_single` 已经接入真实 `EPFFNLayer`，并在跨机 `1A16F / EP16` 上跑通 smoke 与代表配置；但当前 HCCL all-to-all dispatch 延迟高于 full broadcast，端到端 TPOT 反而更慢。因此它应保留为实验 backend，而不是默认 backend。
 
@@ -22,6 +22,7 @@ DeepEP 与 `torch_npu.npu_moe_distribute_dispatch_v2/combine_v2` 理论上更接
 | `broadcast_reduce_sync` | `--ffn-ep-backend broadcast_reduce_sync` | full hidden/router broadcast + dense partial reduce | 实现简单，collective 顺序清晰 | 功能路径；overlap 少 | 仅作正确性/对照 |
 | `broadcast_reduce_overlap` | `--ffn-ep-backend broadcast_reduce_overlap` | full hidden/router broadcast + dense partial reduce，调度侧 overlap | 当前最成熟；能部分隐藏 FFN/通信 | EP16 sweep 最佳 DBO speedup 仍只有 `0.916x`，但比 all-to-all 快 | 当前默认推荐 |
 | 真实 EPFFN `all_to_all_single` | `--ffn-ep-backend all_to_all_single` | token-expert assignment all-to-all + all-to-all combine | 理论上利用 MoE 稀疏性，避免 full broadcast/dense reduce | EP16 可跑通；`b32/s256` TPOT `664.915ms`，慢于 broadcast/reduce | 保留实验；先 profile/优化 HCCL dispatch |
+| Coordinator sparse P2P | `--ffn-ep-backend sparse_p2p_overlap` | coordinator 单源 P2P count/hidden/expert/output | 理论上避免 all-to-allv 固定开销与 dense reduce | CPU/Gloo reference 通过；Host1 NPU EP7 smoke 出现 HCCL P2P payload/tag 错配 | 继续视为 blocked，不作为性能路径 |
 | Coordinator fallback A2A | `src/coordinator_arch/comm/fallback_a2a.py` | routing-table 驱动的 PyTorch `all_to_all_single` | 动态路由/EPLB 的通用 fallback | 单元/RT bench 可用；已复用到真实 EPFFN backend | 作为 coordinator 正确性基线 |
 | DeepEP normal/low_latency | `--use-deepep`, coordinator comm | 专用 MoE dispatch/combine | 理论上减少 PyTorch collective overhead，更适合 MoE | 安装/导入有记录，但端到端仍 experimental | 中长期候选，不作默认 |
 | Official torch_npu MoE v2 | `npu_moe_distribute_dispatch_v2/combine_v2` probe | CANN MoE distribute ops | 理论上最贴近 Ascend 官方优化路径，可使用 `fullmesh_v2` | CANN 8.5.1 + torch_npu 2.9 隔离环境 probe 有进展；真实 Qwen combine_v2 曾 timeout | 继续隔离验证，暂不接生产 |
@@ -137,6 +138,9 @@ EP16 sweep 的关键结论是：大 batch 下 local FFN 已接近 Attention，�
 | 配置 | Backend | TPOT | Dispatch | Local experts | Combine/Reduce | 结论 |
 |---|---|---:|---:|---:|---:|---|
 | EP16 `b2/s32/t3`, debug 2 layers | `all_to_all_single` metadata | `483.923ms` | N/A | N/A | N/A | HCCL smoke 通过。 |
+| Host1 EP8 `b2/s32/t3`, debug 2 layers | same-topology serial | `160.657ms` | N/A | N/A | N/A | 小配置 serial 仍明显更快。 |
+| Host1 EP8 `b2/s32/t3`, debug 2 layers | `broadcast_reduce_overlap + crosslayer + early_recv` | `280.855ms` | N/A | N/A | N/A | 功能通过；仍慢于 serial。 |
+| Host1 EP8 `b2/s32/t3`, debug 2 layers | `all_to_all_single + crosslayer + early_recv` | `483.774ms` | N/A | N/A | N/A | 功能通过；慢于 broadcast/reduce。 |
 | EP16 `b16/s128/t20` | `all_to_all_single` metadata | `596.726ms` | `4.972ms` | `0.946ms` | `1.154ms` | 慢于 broadcast/reduce `315.297ms`。 |
 | EP16 `b32/s256/t20` | `broadcast_reduce_overlap` | `384.361ms` | `1.943ms` | `1.467ms` | `0.917ms` | 当前真实路径较优。 |
 | EP16 `b32/s256/t20` | `all_to_all_single` 初版 | `636.266ms` | `4.370ms` | `1.055ms` | `1.052ms` | sparse 语义跑通但 dispatch 偏慢。 |
@@ -145,6 +149,21 @@ EP16 sweep 的关键结论是：大 batch 下 local FFN 已接近 Attention，�
 | EP16 `b256/s1024/t20` | `all_to_all_single` no-weight | `1325.661ms` | `4.025ms` | `1.345ms` | `1.200ms` | local expert 低，但 TPOT 慢于 broadcast/reduce `1137.203ms`。 |
 
 结论：当前 all-to-all 的理论 payload 优势没有转化为端到端收益，主要因为 HCCL `all_to_all_single` dispatch 固定成本、变长 split sizes、count exchange、排序/恢复等开销超过了 broadcast/reduce 的简单 collective 成本。
+
+## Coordinator sparse P2P overlap
+
+`sparse_p2p_overlap` 的目标是避免 EP 全体 all-to-all：真实 source 只有 FFN coordinator，所以 coordinator 可以按 expert ownership 把 assignment 直接发给对应 EP rank，expert rank 只返回 packed assignment outputs。
+
+当前验证结果：
+
+| 项 | 结果 |
+|---|---|
+| CPU/Gloo reference | `tests/test_ep_moe_reference.py` 通过，assignment combine 与 reference output 一致。 |
+| Host1 NPU EP7 smoke | `b2/s32/t3` 未通过；不同 expert rank 收到非本地 expert id，另有 count tensor 读出异常大值。 |
+| 已尝试修复 | P2P group 从 `WORLD` 改为 `ctx.ffn_ep_group`，peer rank 使用全局 rank；P2P tag 改为低位、按 layer/seq/peer/slot 分段；增加 count 上限校验，避免协议错配时按异常 count 分配大 tensor。 |
+| 当前判断 | HCCL NPU P2P 在多 peer、多 payload、同源 coordinator 模式下仍有 tag/payload 匹配风险，短期不适合作为性能主线。 |
+
+因此，短期不要把 `sparse_p2p_overlap` 纳入矩阵性能实验；它只保留为实验 backend 和后续 HCCL P2P 最小复现入口。
 
 ## Coordinator fallback communicator
 
@@ -210,7 +229,7 @@ Ascend 官方 MoE distribute ops 是理论上最值得继续投入的方向之�
 | 时间尺度 | 推荐动作 | 原因 |
 |---|---|---|
 | 当前默认 | 保持 `broadcast_reduce_overlap` | 实测最快、稳定、可解释，适合作为后续所有通信优化 baseline。 |
-| 短期优化 | 对 `all_to_all_single` 跑 `msprof`，并试 padded/equal-split all-to-all | 当前瓶颈明确在 HCCL all-to-all dispatch，需要先降低变长 all-to-all 固定成本。 |
+| 短期优化 | 继续优化 `broadcast_reduce_overlap` 调度，并只对 `all_to_all_single` 做 targeted profile | 当前 NPU 结果显示 broadcast/reduce 仍快于 all-to-all；sparse P2P 还没过 NPU smoke。 |
 | 中期路线 | 继续完善 coordinator fallback + routing table | 为 EPLB、动态专家副本和可插拔 communicator 打基础。 |
 | 中长期路线 | official MoE v2 / DeepEP | 理论性能最好，但必须先解决真实 Qwen combine/RT bench 稳定性。 |
 
