@@ -16,7 +16,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 TAG_RE = re.compile(
     r"xhost_static_(?P<mode>serial|decode-dbo(?:-crosslayer)?)_ep(?P<ep>\d+)_"
-    r"(?P<backend>broadcast_reduce_(?:sync|overlap))(?P<mb>_mb\d+)?"
+    r"(?P<backend>broadcast_reduce_(?:sync|overlap)|all_to_all_single)(?P<mb>_mb\d+)?"
     r"_b(?P<batch>\d+)_s(?P<seq>\d+)_t(?P<tokens>\d+)"
 )
 

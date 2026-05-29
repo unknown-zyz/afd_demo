@@ -31,6 +31,9 @@ class FallbackMoECommunicator:
         num_experts: int,
         max_tokens_per_rank: int,
         device: torch.device,
+        dispatch_weights: bool = True,
+        dispatch_experts: bool = True,
+        metadata_src_rank: int = 0,
     ):
         """
         Initialize the fallback MoE communicator.
@@ -49,6 +52,9 @@ class FallbackMoECommunicator:
         self.num_experts = num_experts
         self.max_tokens_per_rank = max_tokens_per_rank
         self.device = device
+        self.dispatch_weights = dispatch_weights
+        self.dispatch_experts = dispatch_experts
+        self.metadata_src_rank = metadata_src_rank
         
         # Routing table state
         self.expert_to_rank: Optional[torch.Tensor] = None
@@ -116,6 +122,7 @@ class FallbackMoECommunicator:
             Dictionary containing:
                 - recv_hidden: Received token embeddings [M, H]
                 - recv_weights: Received token weights [M]
+                - recv_experts: Received expert IDs [M]
                 - send_counts: List of token counts sent to each rank
                 - recv_counts: List of token counts received from each rank
                 - send_perm: Permutation indices for reconstruction
@@ -144,9 +151,11 @@ class FallbackMoECommunicator:
         if K == 0:
             return {
                 "recv_hidden": torch.zeros(0, H, device=self.device),
-                "recv_weights": torch.zeros(0, device=self.device),
+                "recv_weights": torch.zeros(0, device=self.device) if self.dispatch_weights else None,
                 "send_counts": [0] * self.world_size,
                 "recv_counts": [0] * self.world_size,
+                "recv_experts": torch.zeros(0, dtype=torch.long, device=self.device),
+                "send_experts": torch.zeros(0, dtype=torch.long, device=self.device),
                 "send_perm": torch.zeros(0, dtype=torch.long, device=self.device),
                 "original_shape": (N, K, H),
                 "topk_weights": topk_weights,
@@ -169,7 +178,16 @@ class FallbackMoECommunicator:
         
         # Create send buffer and permutation
         NK = N * K
-        send_perm = torch.argsort(dest_ranks)  # Sort by destination rank
+        if self.dispatch_experts:
+            send_perm = torch.argsort(dest_ranks)  # Sort by destination rank
+        else:
+            # Single-source EPFFN mode: sort by destination and expert. The
+            # receiver reconstructs expert IDs from a tiny counts vector instead
+            # of paying for a second all_to_all_single.
+            send_perm = torch.argsort(
+                dest_ranks.to(torch.long) * self.num_experts
+                + topk_indices_flat.to(torch.long)
+            )
         
         # Gather hidden states for each (n, k) pair
         token_indices = torch.arange(N, device=self.device).unsqueeze(1).expand(N, K).reshape(-1)
@@ -179,6 +197,25 @@ class FallbackMoECommunicator:
         send_hidden = hidden_states_expanded[send_perm]  # [N*K, H]
         send_weights = topk_weights_flat[send_perm]  # [N*K]
         
+        send_experts = topk_indices_flat[send_perm].to(torch.long).contiguous()
+        expert_counts_tensor = None
+        expert_counts_work = None
+        if not self.dispatch_experts:
+            expert_keys = (
+                dest_ranks.to(torch.long) * self.num_experts
+                + topk_indices_flat.to(torch.long)
+            )
+            expert_counts_tensor = torch.bincount(
+                expert_keys,
+                minlength=self.world_size * self.num_experts,
+            ).to(torch.long)
+            expert_counts_work = dist.broadcast(
+                expert_counts_tensor,
+                src=self.metadata_src_rank,
+                group=self.ep_group,
+                async_op=True,
+            )
+
         # Step 1: Exchange counts
         send_counts_tensor = torch.tensor(
             send_counts, dtype=torch.long, device=self.device
@@ -210,31 +247,59 @@ class FallbackMoECommunicator:
             async_op=True,
         )
         
-        # Step 3: All-to-all weights
-        recv_weights = torch.empty(
-            total_recv, dtype=topk_weights.dtype, device=self.device
-        )
-        
-        weights_work = dist.all_to_all_single(
-            recv_weights,
-            send_weights,
-            output_split_sizes=recv_counts,
-            input_split_sizes=send_counts,
-            group=self.ep_group,
-            async_op=True,
-        )
+        # Step 3: All-to-all weights and expert IDs. Expert IDs are required by
+        # the real EPFFN path so each rank can run the correct local expert.
+        recv_weights = None
+        weights_work = None
+        if self.dispatch_weights:
+            recv_weights = torch.empty(
+                total_recv, dtype=topk_weights.dtype, device=self.device
+            )
+
+            weights_work = dist.all_to_all_single(
+                recv_weights,
+                send_weights,
+                output_split_sizes=recv_counts,
+                input_split_sizes=send_counts,
+                group=self.ep_group,
+                async_op=True,
+            )
+
+        recv_experts = None
+        experts_work = None
+        if self.dispatch_experts:
+            recv_experts = torch.empty(
+                total_recv, dtype=torch.long, device=self.device
+            )
+
+            experts_work = dist.all_to_all_single(
+                recv_experts,
+                send_experts,
+                output_split_sizes=recv_counts,
+                input_split_sizes=send_counts,
+                group=self.ep_group,
+                async_op=True,
+            )
 
         return {
             "recv_hidden": recv_hidden,
             "recv_weights": recv_weights,
+            "recv_experts": recv_experts,
             "send_counts": send_counts,
             "recv_counts": recv_counts,
             "send_perm": send_perm,
+            "send_experts": send_experts,
             "original_shape": (N, K, H),
             "topk_weights": topk_weights,
-            "_works": [hidden_work, weights_work],
+            "_works": [
+                work
+                for work in (expert_counts_work, hidden_work, weights_work, experts_work)
+                if work is not None
+            ],
             "_send_hidden": send_hidden,
             "_send_weights": send_weights,
+            "_send_experts": send_experts,
+            "_expert_counts_tensor": expert_counts_tensor,
             "_send_counts_tensor": send_counts_tensor,
             "_recv_counts_tensor": recv_counts_tensor,
             "_complete": False,
@@ -246,6 +311,19 @@ class FallbackMoECommunicator:
         if not dispatch_handle.get("_complete", False):
             for work in dispatch_handle.get("_works", []):
                 work.wait()
+            if dispatch_handle.get("recv_experts") is None:
+                expert_counts_tensor = dispatch_handle.get("_expert_counts_tensor")
+                if expert_counts_tensor is None:
+                    raise RuntimeError("Missing expert-count metadata for dispatch")
+                counts = expert_counts_tensor.view(self.world_size, self.num_experts)[self.rank]
+                expert_ids = torch.arange(self.num_experts, device=self.device, dtype=torch.long)
+                recv_experts = torch.repeat_interleave(expert_ids, counts)
+                total_recv = sum(dispatch_handle["recv_counts"])
+                if recv_experts.numel() != total_recv:
+                    raise RuntimeError(
+                        f"Reconstructed {recv_experts.numel()} expert IDs but received {total_recv} hidden states"
+                    )
+                dispatch_handle["recv_experts"] = recv_experts
             dispatch_handle["_complete"] = True
             N, K, _H = dispatch_handle["original_shape"]
             logger.debug(

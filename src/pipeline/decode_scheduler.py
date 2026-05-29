@@ -149,7 +149,7 @@ class DecodeDBOScheduler:
         return (
             self.ctx.ffn_ep_enabled
             and self.ctx.config is not None
-            and self.ctx.config.ffn_ep_backend == "broadcast_reduce_overlap"
+            and self.ctx.config.ffn_ep_backend in {"broadcast_reduce_overlap", "all_to_all_single"}
             and num_mb >= 2
         )
 

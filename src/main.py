@@ -194,9 +194,9 @@ def parse_args():
     parser.add_argument('--ffn-ep-size', type=int, default=1,
                         help='Expert-parallel degree within the FFN role. 1 disables EP.')
     parser.add_argument('--ffn-ep-backend', type=str,
-                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap'],
+                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap', 'all_to_all_single'],
                         default='broadcast_reduce_sync',
-                        help='FFN EP backend. Overlap mode is experimental.')
+                        help='FFN EP backend. all_to_all_single uses token-aware torch.distributed all_to_all_single.')
     parser.add_argument('--ffn-coordinator-rank', type=int, default=None,
                         help='Global FFN rank that communicates with Attention. Defaults to --ffn-node-rank.')
     parser.add_argument('--ep-expert-policy', type=str,

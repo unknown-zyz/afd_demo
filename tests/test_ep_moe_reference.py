@@ -26,6 +26,19 @@ def reference_forward(experts, hidden_2d, selected_experts, routing_weights):
     return final
 
 
+def reference_dispatched(experts, recv_hidden, recv_experts):
+    out = torch.empty_like(recv_hidden)
+    for pos, expert_id in enumerate(recv_experts.tolist()):
+        x = recv_hidden[pos:pos + 1]
+        gate_up = torch.nn.functional.linear(x, experts.gate_up_proj[expert_id])
+        gate, up = gate_up.chunk(2, dim=-1)
+        out[pos:pos + 1] = torch.nn.functional.linear(
+            experts.act_fn(gate) * up,
+            experts.down_proj[expert_id],
+        )
+    return out
+
+
 def test_sharded_experts_sum_matches_reference():
     experts = TinyExperts()
     generator = torch.Generator().manual_seed(456)
@@ -56,4 +69,20 @@ def test_sharded_experts_sum_matches_reference():
 
     actual = torch.stack(partials).sum(dim=0)
     expected = reference_forward(experts, hidden_2d, selected_experts, routing_weights)
+    assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+def test_sharded_experts_dispatched_matches_reference():
+    experts = TinyExperts()
+    generator = torch.Generator().manual_seed(789)
+    recv_hidden = torch.randn(6, 4, generator=generator)
+    recv_experts = torch.tensor([0, 3, 0, 3, 0, 3], dtype=torch.long)
+
+    plan = ExpertShardPlan(experts.num_experts, 3, 0, "round_robin")
+    shard = ShardedExperts(experts, plan, device=torch.device("cpu"), dtype=torch.float32)
+    actual, active, assignments = shard.forward_dispatched(recv_hidden, recv_experts)
+    expected = reference_dispatched(experts, recv_hidden, recv_experts)
+
+    assert active == 2
+    assert assignments == recv_hidden.shape[0]
     assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-5)
