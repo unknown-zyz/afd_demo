@@ -22,6 +22,8 @@ NPU/HCCL 脚本已合入 `main`：
 | `run_npu_coordinator_single_host.sh` | 单机 coordinator smoke：先起 gRPC coordinator，再走真实 `src.main` decode/prefill 路径。默认 1A1F，也可传 `--preset npu-ep7` 做 1A7F/EP7 one-shot routing 验证。 |
 | `run_crosshost_coord_1a7f_smoke.sh` | 跨机 1A7F coordinator 小配置 smoke 的单侧启动器：Host2 先起 FFN ranks，Host1 再起 coordinator + attention rank。 |
 | `run_crosshost_coord_1a7f_matrix.py` | 跨机 1A7F coordinator decode-dbo 矩阵 orchestrator：本地控制 Host1/Host2 容器内 detached side 脚本，逐配置分配端口、轮询日志、记录 Host2 空间和 summary。 |
+| `run_crosshost_static_ep_smoke.sh` | 跨机 static EP 单侧启动器，支持 Host1 Attention + Host2 FFN EP、serial/decode-dbo/crosslayer、`broadcast_reduce_overlap`、`all_to_all_single` 和可选 msprof。 |
+| `run_crosshost_static_ep_matrix.py` | 跨机 static EP 矩阵编排器，支持同拓扑 serial baseline、资源采样、OOM 记录、pipeline/report 生成和按 rank 采集 msprof。 |
 
 ## 报告与验证
 
@@ -35,6 +37,11 @@ NPU/HCCL 脚本已合入 `main`：
 | `report_decode_mfu.py` | 从 attention timing JSON + model config 估算 decode achieved TFLOPS / MFU；适合跨机 1A7F 结果补充“计算利用率”口径。 |
 | `audit_experiment_baselines.py` | 检查每条 DBO 结果是否有 mode-matched serial baseline。 |
 | `bench_comm_transfer.py` | 两 rank 通信 microbenchmark，用独立 P2P 测试校准 DBO completion 图。 |
+| `bench_attention_layer_npu.py` | Attention 单层 NPU benchmark，支持 prefill/decode、core/full-layer、48 层聚合和 precopy/fusion 对比。 |
+| `analyze_attention_scope_alignment.py` | 对齐单层 Attention benchmark 与真实 decode-DBO pipeline timing，输出一致性和 scaling 汇总。 |
+| `bench_moe_dispatch_npu.py` | NPU MoE dispatch/combine microbenchmark，对比 broadcast/reduce 与官方 MoE distribute probe 场景。 |
+| `probe_moe_distribute_npu.py` | 探测当前 torch_npu/CANN 环境暴露的 MoE distribute API、schema 和最小 smoke。 |
+| `summarize_crosshost_ep_timing.py` | 聚合跨机 static EP timing，输出 Attention/FFN/dispatch/reduce/recv-wait 等按层指标。 |
 | `capture_serial_split.py` | 重新采集 serial prefill-only 时间，并把 `prefill_ms` / `decode_tpot_ms` 合并进 cache。 |
 
 ## 跨机调试
@@ -163,3 +170,43 @@ ASCEND_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
 它包含真实数据传输，但不是纯硬件传输时间；和 DBO `comm_timing_mode=completion`
 图对比时，差值通常来自 pipeline 调度、对端 `irecv` 时机、backend queueing 或
 profiling callback/观察开销。
+
+## 跨机 static EP / msprof 示例
+
+跨机 static EP 实验用于分析 Host1 Attention + Host2 FFN EP 的 FFN/通信瓶颈。正式运行前先 dry-run 或小配置 smoke，并为每轮使用新的 `MASTER_PORT` / `HCCL_IF_BASE_PORT`。
+
+```bash
+python scripts/run_crosshost_static_ep_matrix.py \
+  --host1-workdir /workspace/afd_demo_all2all \
+  --host2-workdir /workspace/afd_demo_all2all \
+  --out-root crosshost_static_ep16_sweep \
+  --ep-sizes 16 \
+  --backends broadcast_reduce_overlap \
+  --modes serial,decode-dbo,decode-dbo-crosslayer \
+  --configs 32:256 \
+  --tokens 20 \
+  --attn-kernel npu-official \
+  --attn-precopy-layer-inputs \
+  --attn-fused-rmsnorm \
+  --attn-fused-rope
+```
+
+只对少量代表配置开启 msprof，避免 Host2 `/workspace` 被 raw profile 写满：
+
+```bash
+python scripts/run_crosshost_static_ep_matrix.py \
+  --host1-workdir /workspace/afd_demo_all2all \
+  --host2-workdir /workspace/afd_demo_all2all \
+  --out-root crosshost_static_ep16_msprof_comm_debug \
+  --ep-sizes 16 \
+  --backends broadcast_reduce_overlap,all_to_all_single \
+  --modes decode-dbo \
+  --configs 32:256 \
+  --tokens 3 \
+  --debug-max-layers 2 \
+  --msprof \
+  --msprof-ranks 0,1,16 \
+  --msprof-storage-limit-mb 200
+```
+
+msprof 结论与带宽口径见 [`doc/24-msprof-ep-communication-analysis.md`](../doc/24-msprof-ep-communication-analysis.md)。
