@@ -35,6 +35,7 @@ class DistributedConfig:
     ffn_coordinator_rank: Optional[int] = None
     ffn_ep_backend: str = "broadcast_reduce_sync"
     ep_expert_policy: str = "round_robin"
+    reserved_npus: str = ""
 
 
 class DistributedContext:
@@ -160,6 +161,7 @@ class DistributedContext:
             ),
             ffn_ep_backend=os.environ.get("FFN_EP_BACKEND", "broadcast_reduce_sync"),
             ep_expert_policy=os.environ.get("EP_EXPERT_POLICY", "round_robin"),
+            reserved_npus=os.environ.get("AFD_RESERVED_NPUS", ""),
         )
     
     @property
@@ -180,6 +182,23 @@ class DistributedContext:
     def local_rank(self) -> int:
         assert self.config is not None
         return self.config.local_rank
+
+    @property
+    def reserved_npus(self) -> list[int]:
+        """Return physical NPU IDs reserved outside initial distributed groups."""
+        assert self.config is not None
+        value = (self.config.reserved_npus or "").strip()
+        if not value:
+            return []
+        return [int(part) for part in value.split(",") if part.strip()]
+
+    @property
+    def active_npus(self) -> list[int]:
+        """Return physical NPU IDs participating in the initial static topology."""
+        value = os.environ.get("AFD_ACTIVE_NPUS", "").strip()
+        if not value:
+            return []
+        return [int(part) for part in value.split(",") if part.strip()]
     
     @property
     def device(self) -> torch.device:

@@ -304,7 +304,7 @@ class AttentionWorker:
         # Step 5: Dispatch micro-batches
         handles = []
         for mb in mbs:
-            h = self.comm.dispatch(mb.hidden, mb.topk_indices, mb.topk_weights)
+            h = self.comm.dispatch_async(mb.hidden, mb.topk_indices, mb.topk_weights)
             handles.append(h)
             # Pipeline opportunity: kick off next MB's attention here in real impl
         
@@ -313,7 +313,8 @@ class AttentionWorker:
         for h, mb in zip(handles, mbs):
             # In skeleton: pretend FFN returned identity-shaped output
             ffn_out = self._await_ffn(h)
-            combined = self.comm.combine(ffn_out, h)
+            combined_h = self.comm.combine_async(ffn_out, h)
+            combined = self.comm.wait_combine(combined_h)
             outputs.append(combined)
         
         # Step 7: Merge micro-batches back to original order
@@ -374,6 +375,7 @@ class AttentionWorker:
             FFN outputs
         """
         # Identity FFN: output = input
+        handle = self.comm.wait_dispatch(handle)
         return handle["recv_hidden"]
     
     def shutdown(self):

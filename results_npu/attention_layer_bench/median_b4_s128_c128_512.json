@@ -1,0 +1,253 @@
+{
+  "model_name": "/models/Qwen3-30B-A3B",
+  "device": "npu:0",
+  "dtype": "torch.float16",
+  "layer_idx": 0,
+  "batch": 4,
+  "seq": 128,
+  "warmup": 5,
+  "iters": 20,
+  "repeats": 3,
+  "results": [
+    {
+      "case": "hf",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.6908357026986778,
+      "latency_samples_ms": [
+        0.7736668456345797,
+        0.6908357026986778,
+        0.6815330474637449
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 40.26171875,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 88.265625
+      },
+      "optimization": {
+        "attn_kernel": "hf",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      }
+    },
+    {
+      "case": "official",
+      "phase": "prefill_full_layer",
+      "latency_ms": 1.1044540558941662,
+      "latency_samples_ms": [
+        1.0869199526496232,
+        1.1688490980304778,
+        1.1044540558941662
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 42.2646484375,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 89.2841796875
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 3.041006038984051e-06,
+      "max_rel_diff": 13.41104507446289,
+      "mean_rel_diff": 0.00467868335545063
+    },
+    {
+      "case": "official_fused_rmsnorm",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.9010763955302536,
+      "latency_samples_ms": [
+        0.9204710484482348,
+        0.9010763955302536,
+        0.8999224053695798
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 42.2646484375,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 91.28466796875
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.000244140625,
+      "mean_abs_diff": 4.7316966629296076e-06,
+      "max_rel_diff": 19.01388168334961,
+      "mean_rel_diff": 0.007270302623510361
+    },
+    {
+      "case": "official_fused_rope",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.8845772594213486,
+      "latency_samples_ms": [
+        0.8845772594213486,
+        0.8781292010098696,
+        0.9853375959210098
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 42.2646484375,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 91.28466796875
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 3.311382670290186e-06,
+      "max_rel_diff": 13.699999809265137,
+      "mean_rel_diff": 0.005095489323139191
+    },
+    {
+      "case": "official_fused_both",
+      "phase": "prefill_full_layer",
+      "latency_ms": 0.8306187926791608,
+      "latency_samples_ms": [
+        0.8307993528433144,
+        0.8306187926791608,
+        0.8293162914924324
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 42.2646484375,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 91.2841796875
+      },
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "max_abs_diff": 0.000244140625,
+      "mean_abs_diff": 4.85633927382878e-06,
+      "max_rel_diff": 15.497207641601562,
+      "mean_rel_diff": 0.007458865642547607
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "latency_ms": 0.04033684963360429,
+      "latency_samples_ms": [
+        0.04046780522912741,
+        0.04033684963360429,
+        0.04002479836344719
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 72.56298828125,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 90.28466796875
+      }
+    },
+    {
+      "case": "official_ifa",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "latency_ms": 0.02844275441020727,
+      "latency_samples_ms": [
+        0.02954225055873394,
+        0.02844275441020727,
+        0.02837169449776411
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 72.5947265625,
+        "reserved_mib": 114.0,
+        "peak_allocated_mib": 89.330078125
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "community_v2",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "ok": false,
+      "error": "flash-attention-npu is not importable"
+    },
+    {
+      "case": "community_v3",
+      "phase": "decode_core",
+      "cache_len": 128,
+      "ok": false,
+      "error": "flash-attention-npu is not importable"
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "latency_ms": 0.05143689922988415,
+      "latency_samples_ms": [
+        0.05216444842517376,
+        0.05143689922988415,
+        0.05121889989823103
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 186.05322265625,
+        "reserved_mib": 248.0,
+        "peak_allocated_mib": 206.90771484375
+      }
+    },
+    {
+      "case": "official_ifa",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "latency_ms": 0.02892919583246112,
+      "latency_samples_ms": [
+        0.02894324716180563,
+        0.02892919583246112,
+        0.02839774824678898
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 186.05322265625,
+        "reserved_mib": 248.0,
+        "peak_allocated_mib": 203.6640625
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0
+    },
+    {
+      "case": "community_v2",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "ok": false,
+      "error": "flash-attention-npu is not importable"
+    },
+    {
+      "case": "community_v3",
+      "phase": "decode_core",
+      "cache_len": 512,
+      "ok": false,
+      "error": "flash-attention-npu is not importable"
+    }
+  ]
+}

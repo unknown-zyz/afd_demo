@@ -18,6 +18,9 @@
 #   --tokens N      max_new_tokens for decode  (default: 20)
 #   --visible-devs list  ASCEND_VISIBLE_DEVICES
 #                        (default: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)
+#   --reserved-npus list|N
+#                        Reserve physical NPU ids, or reserve N devices from
+#                        the tail of --visible-devs, for EPLB replicas.
 #   --attn-devs list     Optional per-attention-rank visible devices
 #   --ffn-devs list      Optional per-FFN-rank visible devices
 #   --preset name        Optional run_npu.sh preset, e.g. npu-ep7
@@ -47,6 +50,11 @@
 #                       Decode-step polling interval for poll mode (default: 16)
 #   --routing-rpc-timeout-s SEC
 #                       Per-RPC timeout for routing fetch/poll (default: 0.05)
+#   --msprof           Wrap each rank with msprof collection
+#   --msprof-output path
+#                       Profile output root (default: ${output_root}/msprof)
+#   --msprof-op        Use msprof op mode for operator-level profiling
+#   --msprof-analyze   Run msprof-analyze after each profiled run
 #   --no-timing     Disable detailed timing/report output for overhead checks
 #   --no-cache      Force rerun of serial even if cached
 #   --append        Append to existing summary instead of replacing it
@@ -62,6 +70,7 @@ TOKENS=20
 ATTN_DEVS="${ATTN_DEVS:-}"
 FFN_DEVS="${FFN_DEVS:-}"
 VISIBLE_DEVS="${VISIBLE_DEVS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
+RESERVED_NPUS="${AFD_RESERVED_NPUS:-}"
 RUN_PRESET=""
 FFN_EP_BACKEND="broadcast_reduce_sync"
 EP_EXPERT_POLICY="round_robin"
@@ -88,6 +97,10 @@ ROUTING_UPDATE_MODE="oneshot"
 ROUTING_POLL_INTERVAL_STEPS=16
 ROUTING_RPC_TIMEOUT_S=0.05
 COORD_STARTUP_SEC=2
+MSPROF=false
+MSPROF_OUTPUT=""
+MSPROF_OP=false
+MSPROF_ANALYZE=false
 CURRENT_COORD_PID=""
 
 cleanup_coord() {
@@ -108,6 +121,7 @@ while [ $# -gt 0 ]; do
         --attn-devs) ATTN_DEVS="$2"; shift 2;;
         --ffn-devs) FFN_DEVS="$2"; shift 2;;
         --visible-devs) VISIBLE_DEVS="$2"; shift 2;;
+        --reserved-npus) RESERVED_NPUS="$2"; shift 2;;
         --preset) RUN_PRESET="$2"; shift 2;;
         --ffn-ep-backend) FFN_EP_BACKEND="$2"; shift 2;;
         --ep-expert-policy) EP_EXPERT_POLICY="$2"; shift 2;;
@@ -129,6 +143,10 @@ while [ $# -gt 0 ]; do
         --routing-poll-interval-steps) ROUTING_POLL_INTERVAL_STEPS="$2"; shift 2;;
         --routing-rpc-timeout-s) ROUTING_RPC_TIMEOUT_S="$2"; shift 2;;
         --coord-startup-sec) COORD_STARTUP_SEC="$2"; shift 2;;
+        --msprof) MSPROF=true; shift;;
+        --msprof-output) MSPROF_OUTPUT="$2"; shift 2;;
+        --msprof-op) MSPROF=true; MSPROF_OP=true; shift;;
+        --msprof-analyze) MSPROF_ANALYZE=true; shift;;
         --no-timing) TIMING_ENABLED=false; shift;;
         --no-cache) NO_CACHE=true; shift;;
         --append) APPEND=true; shift;;
@@ -177,6 +195,9 @@ mkdir -p "$SERIAL_CACHE_ROOT"
 mkdir -p results/prefill_dbo  # run_npu.sh writes intermediate timing here; we move out
 if [ -z "$COORD_LOG_DIR" ]; then
     COORD_LOG_DIR="$ROOT_OUT/coordinator_logs"
+fi
+if [ -z "$MSPROF_OUTPUT" ]; then
+    MSPROF_OUTPUT="$ROOT_OUT/msprof"
 fi
 
 : "${MODEL_NAME:=/models/Qwen3-30B-A3B}"
@@ -285,6 +306,20 @@ run_one() {
     if [ -n "$PREFILL_WARMUP_ROUNDS" ]; then
         extra="$extra --prefill-warmup-rounds $PREFILL_WARMUP_ROUNDS"
     fi
+    local reserve_arg=""
+    if [ -n "$RESERVED_NPUS" ]; then
+        reserve_arg="--reserved-npus $RESERVED_NPUS"
+    fi
+    local msprof_arg=""
+    if [ "$MSPROF" = true ]; then
+        msprof_arg="--msprof --msprof-output $MSPROF_OUTPUT"
+    fi
+    if [ "$MSPROF_OP" = true ]; then
+        msprof_arg="$msprof_arg --msprof-op"
+    fi
+    if [ "$MSPROF_ANALYZE" = true ]; then
+        msprof_arg="$msprof_arg --msprof-analyze"
+    fi
     local coord_bind_effective=""
     local coord_log=""
     if [ "$ROUTING_BACKEND" = "coordinator" ]; then
@@ -306,9 +341,9 @@ run_one() {
     echo "════════════════════════════════════════════════════════════"
     if [ "$DRY_RUN" = true ]; then
         if [ -n "$RUN_PRESET" ]; then
-            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --preset $RUN_PRESET --ffn-ep-backend $FFN_EP_BACKEND --ep-expert-policy $EP_EXPERT_POLICY --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
+            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --preset $RUN_PRESET --ffn-ep-backend $FFN_EP_BACKEND --ep-expert-policy $EP_EXPERT_POLICY $reserve_arg $msprof_arg --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         else
-            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
+            echo "[dry-run] ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=<random> bash scripts/run_npu.sh --attn-size 1 --ffn-size 1 --ffn-tp-size 1 $reserve_arg $msprof_arg --batch $batch --seq $seq --tokens $tokens --model-name $MODEL_NAME --comm-timing-mode $COMM_TIMING_MODE $([ "$TIMING_ENABLED" = false ] && echo --no-timing) $extra"
         fi
         return 0
     fi
@@ -347,8 +382,24 @@ run_one() {
     else
         run_args+=(--attn-size 1 --ffn-size 1 --ffn-tp-size 1)
     fi
+    local reserve_flags=()
+    if [ -n "$RESERVED_NPUS" ]; then
+        reserve_flags+=(--reserved-npus "$RESERVED_NPUS")
+    fi
+    local msprof_flags=()
+    if [ "$MSPROF" = true ]; then
+        msprof_flags+=(--msprof --msprof-output "$MSPROF_OUTPUT")
+    fi
+    if [ "$MSPROF_OP" = true ]; then
+        msprof_flags+=(--msprof-op)
+    fi
+    if [ "$MSPROF_ANALYZE" = true ]; then
+        msprof_flags+=(--msprof-analyze)
+    fi
     ASCEND_VISIBLE_DEVICES=$VISIBLE_DEVS ATTN_DEVICES=$ATTN_DEVS FFN_DEVICES=$FFN_DEVS MASTER_PORT=$port bash scripts/run_npu.sh \
         "${run_args[@]}" \
+        "${reserve_flags[@]}" \
+        "${msprof_flags[@]}" \
         --batch "$batch" --seq "$seq" --tokens "$tokens" \
         --num-micro-batches "$NUM_MICRO_BATCHES" \
         --model-name "$MODEL_NAME" \

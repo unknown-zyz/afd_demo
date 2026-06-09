@@ -20,6 +20,7 @@ from transformers.utils import logging as hf_logging
 
 from .distributed import init_distributed, get_distributed_context, DistributedConfig
 from .model import DisaggregatedQwenModel
+from .model.attention_worker import AttentionOptimizationConfig
 from .pipeline import SimplePipelineScheduler, AsyncPipelineScheduler
 from .utils import device as devmod
 from .utils.profiler import get_profiler, print_memory_stats
@@ -122,10 +123,36 @@ def parse_args():
     parser.add_argument("--crosslayer", action="store_true",
                         help="Enable cross-layer micro-batch pipelining in decode DBO "
                              "(default: off; post next-layer irecvs before draining current-layer sends)")
+    parser.add_argument("--ep-overlap-early-recv", action="store_true",
+                        default=os.environ.get("AFD_EP_OVERLAP_EARLY_RECV", "0") == "1",
+                        help="In FFN EP overlap decode, post next-layer A2F irecv as soon as each "
+                             "micro-batch F2A send is enqueued. Experimental.")
     parser.add_argument("--comm-timing-mode", type=str, choices=["enqueue", "completion"],
                         default="enqueue",
                         help="Communication timing for send events: enqueue records isend return "
                              "overhead; completion records effective Work completion latency.")
+
+    # Attention optimization A/B controls. Positive and stable optimizations should
+    # become defaults rather than long-term user-facing switches.
+    parser.add_argument("--attn-kernel", type=str,
+                        choices=["hf", "npu-official", "flash-attn-npu"],
+                        default=os.environ.get("AFD_ATTN_KERNEL", "hf"),
+                        help="Attention kernel backend for benchmarking. hf is the current default.")
+    parser.add_argument("--attn-precopy-layer-inputs", action="store_true",
+                        default=os.environ.get("AFD_ATTN_PRECOPY_LAYER_INPUTS", "0") == "1",
+                        help="Precopy mask/position/RoPE tensors to each Attention layer device.")
+    parser.add_argument("--attn-tp-size", type=int,
+                        default=int(os.environ.get("AFD_ATTN_TP_SIZE", "1")),
+                        help="Attention tensor-parallel degree (currently a planning/metadata field).")
+    parser.add_argument("--attn-fused-rmsnorm", action="store_true",
+                        default=os.environ.get("AFD_ATTN_FUSED_RMSNORM", "0") == "1",
+                        help="Enable NPU fused RMSNorm when implemented and available.")
+    parser.add_argument("--attn-fused-rope", action="store_true",
+                        default=os.environ.get("AFD_ATTN_FUSED_ROPE", "0") == "1",
+                        help="Enable NPU fused RoPE when implemented and available.")
+    parser.add_argument("--attn-stream-overlap", action="store_true",
+                        default=os.environ.get("AFD_ATTN_STREAM_OVERLAP", "0") == "1",
+                        help="Use backend stream abstraction for Attention/communication overlap experiments.")
     
     # Generation options (enabled by default)
     parser.add_argument("--no-generate", action="store_true",
@@ -171,9 +198,14 @@ def parse_args():
     parser.add_argument('--ffn-ep-size', type=int, default=1,
                         help='Expert-parallel degree within the FFN role. 1 disables EP.')
     parser.add_argument('--ffn-ep-backend', type=str,
-                        choices=['broadcast_reduce_sync', 'broadcast_reduce_overlap'],
+                        choices=[
+                            'broadcast_reduce_sync',
+                            'broadcast_reduce_overlap',
+                            'all_to_all_single',
+                            'sparse_p2p_overlap',
+                        ],
                         default='broadcast_reduce_sync',
-                        help='FFN EP backend. Overlap mode is experimental.')
+                        help='FFN EP backend. sparse_p2p_overlap uses coordinator-rooted sparse P2P.')
     parser.add_argument('--ffn-coordinator-rank', type=int, default=None,
                         help='Global FFN rank that communicates with Attention. Defaults to --ffn-node-rank.')
     parser.add_argument('--ep-expert-policy', type=str,
@@ -196,6 +228,10 @@ def parse_args():
                         help='Decode-step interval for --routing-update-mode=poll.')
     parser.add_argument('--routing-rpc-timeout-s', type=float, default=0.05,
                         help='Per-RPC timeout for safe-point routing polls.')
+    parser.add_argument('--reserved-npus', type=str, default=os.environ.get("AFD_RESERVED_NPUS", ""),
+                        help='Comma-separated physical NPU ids, or a count, reserved for EPLB '
+                             'expert replicas. Reserved NPUs are excluded by launch scripts '
+                             'from initial DP/TP/EP groups.')
 
     return parser.parse_args()
 
@@ -292,6 +328,18 @@ def build_distributed_config(args) -> DistributedConfig:
         ffn_coordinator_rank=args.ffn_coordinator_rank,
         ffn_ep_backend=args.ffn_ep_backend,
         ep_expert_policy=args.ep_expert_policy,
+        reserved_npus=args.reserved_npus,
+    )
+
+
+def build_attention_optimization_config(args) -> AttentionOptimizationConfig:
+    return AttentionOptimizationConfig(
+        attn_kernel=args.attn_kernel,
+        precopy_layer_inputs=args.attn_precopy_layer_inputs,
+        attn_tp_size=args.attn_tp_size,
+        fused_rmsnorm=args.attn_fused_rmsnorm,
+        fused_rope=args.attn_fused_rope,
+        stream_overlap=args.attn_stream_overlap,
     )
 
 
@@ -307,6 +355,7 @@ def run_inference_demo(args):
     
     device = ctx.device
     dtype = get_dtype(args.dtype)
+    attention_optimization_config = build_attention_optimization_config(args)
     
     # Log initialization (concise)
     logger.info(f"[{ctx.role.upper()}] rank={ctx.rank}, device={device}, dtype={dtype}")
@@ -323,6 +372,7 @@ def run_inference_demo(args):
         routing_update_mode=args.routing_update_mode,
         routing_poll_interval_steps=args.routing_poll_interval_steps,
         routing_rpc_timeout_s=args.routing_rpc_timeout_s,
+        attention_optimization_config=attention_optimization_config,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
@@ -383,7 +433,8 @@ def run_inference_demo(args):
     if use_dbo:
         scheduler = AsyncPipelineScheduler(
             model=model, num_micro_batches=args.num_micro_batches,
-            use_cuda_streams=True, enable_timing=args.timing,
+            use_cuda_streams=attention_optimization_config.stream_overlap,
+            enable_timing=args.timing,
             timing_mode=args.timing_mode,
             comm_timing_mode=args.comm_timing_mode,
         )
@@ -430,6 +481,7 @@ def run_inference_demo(args):
             timing_data.routing_backend = model.routing_backend
             timing_data.routing_table_version = model.routing_table_version
             timing_data.routing_update_mode = model.routing_update_mode
+            timing_data.attention_optimizations = model.attention_optimization_metadata()
             role_name = timing_role_name(ctx)
             # Build timing file name with configuration info
             if args.timing_suffix:
@@ -456,6 +508,7 @@ def run_inference_demo(args):
             "routing_backend": model.routing_backend,
             "routing_table_version": model.routing_table_version,
             "routing_update_mode": model.routing_update_mode,
+            "attention_optimizations": model.attention_optimization_metadata(),
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -503,6 +556,7 @@ def run_generation_demo(args):
     
     device = ctx.device
     dtype = get_dtype(args.dtype)
+    attention_optimization_config = build_attention_optimization_config(args)
     
     logger.info(f"[{ctx.role.upper()}] rank={ctx.rank}, device={device}, dtype={dtype}")
     logger.info(f"Generation mode: max_new_tokens={args.max_new_tokens}, temp={args.temperature}")
@@ -518,6 +572,7 @@ def run_generation_demo(args):
         routing_update_mode=args.routing_update_mode,
         routing_poll_interval_steps=args.routing_poll_interval_steps,
         routing_rpc_timeout_s=args.routing_rpc_timeout_s,
+        attention_optimization_config=attention_optimization_config,
     )
     logger.info(
         f"[{ctx.role.upper()}] model_type={model.model_type}, moe={model.is_moe}, "
@@ -594,6 +649,7 @@ def run_generation_demo(args):
         timing_mode=args.timing_mode,
         comm_timing_mode=args.comm_timing_mode,
         decode_use_crosslayer=args.crosslayer,
+        ep_overlap_early_recv=args.ep_overlap_early_recv,
     )
     
     devmod.synchronize()
@@ -646,6 +702,7 @@ def run_generation_demo(args):
         model._last_decode_timing.routing_update_mode = generation_metrics.get("routing_update_mode")
         model._last_decode_timing.routing_poll_count = generation_metrics.get("routing_poll_count")
         model._last_decode_timing.routing_poll_ms = generation_metrics.get("routing_poll_ms")
+        model._last_decode_timing.attention_optimizations = model.attention_optimization_metadata()
         if generation_metrics.get("decode_step_times_ms"):
             model._last_decode_timing.decode_step_times_ms = list(generation_metrics["decode_step_times_ms"])
         model._last_decode_timing.prefill_seq_len = prefill_seq_len
@@ -678,6 +735,7 @@ def run_generation_demo(args):
             "routing_update_mode": generation_metrics.get("routing_update_mode"),
             "routing_poll_count": generation_metrics.get("routing_poll_count"),
             "routing_poll_ms": generation_metrics.get("routing_poll_ms"),
+            "attention_optimizations": model.attention_optimization_metadata(),
         }
         role_name = timing_role_name(ctx)
         if args.timing_suffix:
@@ -711,6 +769,8 @@ def main():
     args = parse_args()
     if args.routing_backend == "coordinator" and not args.coord_addr:
         raise ValueError("--coord-addr is required when --routing-backend=coordinator")
+    if args.attn_tp_size < 1:
+        raise ValueError("--attn-tp-size must be >= 1")
     # Force greedy decoding when correctness check is requested for deterministic
     # serial-vs-DBO token comparison.
     if args.correctness_check and not args.greedy:

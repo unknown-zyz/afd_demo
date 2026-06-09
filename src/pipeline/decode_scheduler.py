@@ -11,6 +11,7 @@ batch slice of the KV cache, then the updated slices are merged back.
 """
 
 import logging
+import os
 import time
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ import torch
 import torch.distributed as dist
 
 from ..distributed import get_distributed_context
+from ..utils import device as devmod
 from ..utils.timing import TimingTracker, PipelineTiming, EventType
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,8 @@ class DecodeDBOScheduler:
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         use_crosslayer: bool = False,
+        ep_overlap_early_recv: bool = False,
+        use_stream_overlap: bool = False,
     ):
         self.model = model
         self.ctx = get_distributed_context()
@@ -100,6 +104,8 @@ class DecodeDBOScheduler:
         self.comm_timing_mode = comm_timing_mode
         self.stats = DecodeDBOStats()
         self._timing_data: Optional[PipelineTiming] = None
+        self.use_stream_overlap = use_stream_overlap
+        self.compute_stream = devmod.Stream() if use_stream_overlap and devmod.is_available() else None
         # Track timing on 0-based step 1: skip step 0 warmup/cold-start effects.
         self._timing_step = 1
         self._current_step = 0
@@ -112,11 +118,16 @@ class DecodeDBOScheduler:
         #   - True: post next-layer irecvs before draining current-layer sends,
         #     enabling cross-layer micro-batch pipeline.
         self.use_crosslayer = use_crosslayer
+        self.ep_overlap_early_recv = (
+            ep_overlap_early_recv
+            or os.environ.get("AFD_EP_OVERLAP_EARLY_RECV", "0") == "1"
+        )
         # Eagerly init directional groups (collective: both nodes must reach here)
         _ = self.ctx.a2f_group
         logger.debug(
             f"DecodeDBOScheduler initialized: num_mb={num_micro_batches}, "
-            f"use_crosslayer={use_crosslayer}, comm_timing={comm_timing_mode}"
+            f"use_crosslayer={use_crosslayer}, stream_overlap={use_stream_overlap}, "
+            f"comm_timing={comm_timing_mode}, ep_overlap_early_recv={self.ep_overlap_early_recv}"
         )
 
     def _get_tag(self, layer_idx: int, mb_idx: int, direction: str) -> int:
@@ -131,11 +142,24 @@ class DecodeDBOScheduler:
         remainder = batch_size % num_mb
         return [base + (1 if i < remainder else 0) for i in range(num_mb)]
 
+    def _compute_on_stream(self, fn):
+        """Run accelerator compute on the optional compute stream."""
+        if self.compute_stream is None:
+            return fn()
+        with devmod.stream_context(self.compute_stream):
+            result = fn()
+        self.compute_stream.synchronize()
+        return result
+
     def _use_ep_overlap(self, num_mb: int) -> bool:
         return (
             self.ctx.ffn_ep_enabled
             and self.ctx.config is not None
-            and self.ctx.config.ffn_ep_backend == "broadcast_reduce_overlap"
+            and self.ctx.config.ffn_ep_backend in {
+                "broadcast_reduce_overlap",
+                "all_to_all_single",
+                "sparse_p2p_overlap",
+            }
             and num_mb >= 2
         )
 
@@ -377,6 +401,7 @@ class DecodeDBOScheduler:
             self._timing_data.timed_decode_step_note = (
                 "step 0 skipped to avoid warmup/cold-start timing"
             )
+            self._timing_data.attention_optimizations = self.model.attention_optimization_metadata()
 
         self.stats.total_time = time.perf_counter() - start_time
         self.stats.num_layers = self.model.num_layers
@@ -433,6 +458,21 @@ class DecodeDBOScheduler:
         cur_pos = kv_cache.get_seq_length()
         total_len = cur_pos + 1
         attention_mask = self.model._make_causal_mask(batch_size, 1, total_len)
+        mb_layer_input_caches = []
+        for mb_idx, mb_size in enumerate(mb_sizes):
+            start = mb_offsets[mb_idx]
+            end = start + mb_size
+            mb_pos_emb = None
+            if position_embeddings is not None:
+                cos, sin = position_embeddings
+                mb_pos_emb = (cos[start:end], sin[start:end])
+            mb_layer_input_caches.append(
+                self.model.attention_worker.prepare_layer_input_cache(
+                    attention_mask=attention_mask[start:end],
+                    position_ids=position_ids[start:end],
+                    position_embeddings=mb_pos_emb,
+                )
+            )
 
         # ── Layer 0: warmup — compute and send all MBs ──
         # FIFO invariant: both a2f_group and f2a_group see operations in
@@ -469,14 +509,20 @@ class DecodeDBOScheduler:
                 cos, sin = position_embeddings
                 mb_pos_emb = (cos[start:end], sin[start:end])
 
-            attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
-                layer_idx=layer_idx,
-                hidden_states=mb_hidden,
-                attention_mask=mb_mask,
-                position_ids=mb_pos_ids,
-                position_embeddings=mb_pos_emb,
-                use_cache=True,
-                past_key_value=kv_cache,
+            attn_output, residual, _ = self._compute_on_stream(
+                lambda layer_idx=layer_idx, mb_hidden=mb_hidden, mb_mask=mb_mask,
+                       mb_pos_ids=mb_pos_ids, mb_pos_emb=mb_pos_emb, mb_idx=mb_idx: (
+                    self.model.attention_worker.forward_attention_layer(
+                        layer_idx=layer_idx,
+                        hidden_states=mb_hidden,
+                        attention_mask=mb_mask,
+                        position_ids=mb_pos_ids,
+                        position_embeddings=mb_pos_emb,
+                        use_cache=True,
+                        past_key_value=kv_cache,
+                        layer_input_cache=mb_layer_input_caches[mb_idx],
+                    )
+                )
             )
 
             mb_updated_keys.append(cache_layer.keys)
@@ -576,14 +622,20 @@ class DecodeDBOScheduler:
                     cos, sin = position_embeddings
                     mb_pos_emb = (cos[start:end], sin[start:end])
 
-                attn_output, residual, _ = self.model.attention_worker.forward_attention_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=mb_hidden,
-                    attention_mask=mb_mask,
-                    position_ids=mb_pos_ids,
-                    position_embeddings=mb_pos_emb,
-                    use_cache=True,
-                    past_key_value=kv_cache,
+                attn_output, residual, _ = self._compute_on_stream(
+                    lambda layer_idx=layer_idx, mb_hidden=mb_hidden, mb_mask=mb_mask,
+                           mb_pos_ids=mb_pos_ids, mb_pos_emb=mb_pos_emb, mb_idx=mb_idx: (
+                        self.model.attention_worker.forward_attention_layer(
+                            layer_idx=layer_idx,
+                            hidden_states=mb_hidden,
+                            attention_mask=mb_mask,
+                            position_ids=mb_pos_ids,
+                            position_embeddings=mb_pos_emb,
+                            use_cache=True,
+                            past_key_value=kv_cache,
+                            layer_input_cache=mb_layer_input_caches[mb_idx],
+                        )
+                    )
                 )
 
                 mb_updated_keys.append(cache_layer.keys)
@@ -715,10 +767,14 @@ class DecodeDBOScheduler:
                 if tracker:
                     tracker.mark_start(EventType.FFN_COMPUTE, layer_idx, mb_idx)
                 compute_start = time.perf_counter()
-                ffn_result = self.model.ffn_worker.forward_ffn_layer(
-                    layer_idx=layer_idx,
-                    hidden_states=a2f_recv_tensors[mb_idx],
-                    return_timing=bool(tracker and self.model.supports_moe_timing),
+                ffn_result = self._compute_on_stream(
+                    lambda layer_idx=layer_idx, hidden_states=a2f_recv_tensors[mb_idx]: (
+                        self.model.ffn_worker.forward_ffn_layer(
+                            layer_idx=layer_idx,
+                            hidden_states=hidden_states,
+                            return_timing=bool(tracker and self.model.supports_moe_timing),
+                        )
+                    )
                 )
                 if isinstance(ffn_result, tuple):
                     output, stage_timing = ffn_result
@@ -858,6 +914,7 @@ class DecodeDBOScheduler:
             send_handles: List[dist.Work] = []
             next_a2f_handles: List[Optional[dist.Work]] = [None] * num_mb
             next_a2f_tensors: List[Optional[torch.Tensor]] = [None] * num_mb
+            next_a2f_posted = [False] * num_mb
 
             for mb_idx, mb_size in enumerate(mb_sizes):
                 if is_coordinator:
@@ -888,6 +945,22 @@ class DecodeDBOScheduler:
 
             previous: Optional[Tuple[int, Any]] = None
 
+            def _post_next_layer_irecv(done_mb_idx: int) -> None:
+                if not is_coordinator or layer_idx + 1 >= num_layers:
+                    return
+                if next_a2f_posted[done_mb_idx]:
+                    return
+                next_tag = self._get_tag(layer_idx + 1, done_mb_idx, "a2f")
+                recv_tensor = torch.empty(
+                    mb_sizes[done_mb_idx], 1, self.model.hidden_size,
+                    dtype=self.model.dtype, device=self.model.device,
+                )
+                next_a2f_handles[done_mb_idx] = dist.irecv(
+                    recv_tensor, src=peer, tag=next_tag, group=a2f_group,
+                )
+                next_a2f_tensors[done_mb_idx] = recv_tensor
+                next_a2f_posted[done_mb_idx] = True
+
             def _finish_and_send(done_mb_idx: int, done_item) -> None:
                 layer.finish_reduce(done_item)
                 output = layer.finish_output(done_item)
@@ -900,6 +973,8 @@ class DecodeDBOScheduler:
                     if tracker:
                         tracker.record_send(handle, layer_idx, done_mb_idx, send_start, output)
                     send_handles.append(handle)
+                    if self.use_crosslayer and self.ep_overlap_early_recv:
+                        _post_next_layer_irecv(done_mb_idx)
 
             for mb_idx, item in enumerate(items):
                 layer.finish_dispatch(item)
@@ -918,15 +993,7 @@ class DecodeDBOScheduler:
                 def _post_next_layer_irecvs():
                     if layer_idx + 1 < num_layers:
                         for mb_idx, mb_size in enumerate(mb_sizes):
-                            next_tag = self._get_tag(layer_idx + 1, mb_idx, "a2f")
-                            recv_tensor = torch.empty(
-                                mb_size, 1, self.model.hidden_size,
-                                dtype=self.model.dtype, device=self.model.device,
-                            )
-                            next_a2f_handles[mb_idx] = dist.irecv(
-                                recv_tensor, src=peer, tag=next_tag, group=a2f_group,
-                            )
-                            next_a2f_tensors[mb_idx] = recv_tensor
+                            _post_next_layer_irecv(mb_idx)
 
                 if self.use_crosslayer:
                     _post_next_layer_irecvs()

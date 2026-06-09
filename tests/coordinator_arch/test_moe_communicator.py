@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch, call
 
 import pytest
+import torch
 
 # Mock torch before any imports that need it
 if "torch" not in sys.modules:
@@ -393,6 +394,60 @@ class TestFactory(unittest.TestCase):
             self.assertEqual(
                 type(comm).__name__, "FallbackMoECommunicator"
             )
+
+
+class TestFallbackAsyncCommunicator(unittest.TestCase):
+    """Test async fallback communicator handles with mocked collectives."""
+
+    def test_dispatch_combine_async_wait(self):
+        from src.coordinator_arch.comm.fallback_a2a import FallbackMoECommunicator
+
+        class FakeWork:
+            def __init__(self):
+                self.waited = False
+
+            def wait(self):
+                self.waited = True
+
+        works = []
+
+        def fake_all_to_all_single(output, input, *args, async_op=False, **kwargs):
+            output.copy_(input)
+            if async_op:
+                work = FakeWork()
+                works.append(work)
+                return work
+            return None
+
+        with patch("torch.distributed.get_world_size", return_value=1), \
+             patch("torch.distributed.get_rank", return_value=0), \
+             patch("torch.distributed.all_to_all_single", side_effect=fake_all_to_all_single):
+            comm = FallbackMoECommunicator(
+                ep_group=MagicMock(),
+                hidden_size=2,
+                num_experts=2,
+                max_tokens_per_rank=8,
+                device=torch.device("cpu"),
+            )
+            comm.update_routing_table(
+                {"version": 1, "expert_to_rank": [0, 0], "mode": "normal"}
+            )
+
+            hidden = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+            topk_indices = torch.tensor([[0], [1]])
+            topk_weights = torch.ones(2, 1)
+
+            dispatch_h = comm.dispatch_async(hidden, topk_indices, topk_weights)
+            self.assertFalse(dispatch_h["_complete"])
+            ready_h = comm.wait_dispatch(dispatch_h)
+            self.assertTrue(ready_h["_complete"])
+            self.assertTrue(all(work.waited for work in works[:2]))
+            self.assertTrue(torch.equal(ready_h["recv_hidden"], hidden))
+
+            combine_h = comm.combine_async(ready_h["recv_hidden"], ready_h)
+            combined = comm.wait_combine(combine_h)
+            self.assertTrue(combine_h["_complete"])
+            self.assertTrue(torch.equal(combined, hidden))
 
 
 if __name__ == "__main__":

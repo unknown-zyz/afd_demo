@@ -16,7 +16,7 @@ import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoConfig
 from transformers.cache_utils import DynamicCache
 
-from .attention_worker import AttentionWorker
+from .attention_worker import AttentionOptimizationConfig, AttentionWorker
 from .ffn_worker import FFNWorker
 from ..distributed import get_distributed_context
 from ..distributed.communicator import AFDCommunicator
@@ -65,6 +65,7 @@ class DisaggregatedQwenModel(nn.Module):
         config: Any,
         device: torch.device,
         dtype: torch.dtype = torch.bfloat16,
+        attention_optimization_config: Optional[AttentionOptimizationConfig] = None,
     ):
         """
         Initialize disaggregated model.
@@ -79,6 +80,9 @@ class DisaggregatedQwenModel(nn.Module):
         self.device = device
         self.dtype = dtype
         self.ctx = get_distributed_context()
+        self.attention_optimization_config = (
+            attention_optimization_config or AttentionOptimizationConfig.from_env()
+        )
         
         self.hidden_size = config.hidden_size
         self.num_layers = config.num_hidden_layers
@@ -107,6 +111,12 @@ class DisaggregatedQwenModel(nn.Module):
         self.routing_rpc_timeout_s: float = 0.05
         self.routing_poll_count: int = 0
         self.routing_poll_ms: float = 0.0
+
+    def attention_optimization_metadata(self) -> Dict[str, Any]:
+        metadata = self.attention_optimization_config.to_dict()
+        metadata["reserved_npus"] = self.ctx.reserved_npus
+        metadata["active_npus"] = self.ctx.active_npus
+        return metadata
 
     def _ensure_supported_coordinator_topology(self) -> None:
         attn_world = len(self.ctx.attn_ranks)
@@ -300,7 +310,12 @@ class DisaggregatedQwenModel(nn.Module):
         self.supports_moe_timing = self.has_router
 
         if self.ctx.is_attention_node:
-            self.attention_worker = AttentionWorker(model, self.device, self.dtype)
+            self.attention_worker = AttentionWorker(
+                model,
+                self.device,
+                self.dtype,
+                optimization_config=self.attention_optimization_config,
+            )
         else:
             self.ffn_worker = FFNWorker(
                 model,
@@ -358,6 +373,7 @@ class DisaggregatedQwenModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        layer_input_cache: Optional[Any] = None,
     ) -> torch.Tensor:
         """
         Forward pass for a single layer (synchronous communication).
@@ -389,6 +405,7 @@ class DisaggregatedQwenModel(nn.Module):
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 position_embeddings=position_embeddings,
+                layer_input_cache=layer_input_cache,
             )
             
             # Send pre-combined hidden states to FFN node (1×H instead of 2×H)
@@ -482,6 +499,11 @@ class DisaggregatedQwenModel(nn.Module):
                 attention_mask = torch.ones(
                     batch_size, seq_len, device=self.device
                 )
+            layer_input_cache = self.attention_worker.prepare_layer_input_cache(
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                position_embeddings=position_embeddings,
+            )
         else:
             # FFN node - create dummy tensors
             hidden_states = torch.zeros(
@@ -490,6 +512,7 @@ class DisaggregatedQwenModel(nn.Module):
             )
             position_ids = None
             position_embeddings = None
+            layer_input_cache = None
         
         # Run through all layers
         for layer_idx in range(self.num_layers):
@@ -499,6 +522,7 @@ class DisaggregatedQwenModel(nn.Module):
                 attention_mask=attention_mask,
                 position_ids=position_ids if self.ctx.is_attention_node else None,
                 position_embeddings=position_embeddings if self.ctx.is_attention_node else None,
+                layer_input_cache=layer_input_cache if self.ctx.is_attention_node else None,
             )
         
         # Final logits (attention node only).
@@ -535,6 +559,7 @@ class DisaggregatedQwenModel(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = True,
+        layer_input_cache: Optional[Any] = None,
     ) -> torch.Tensor:
         """
         Forward pass for a single layer with KV cache support.
@@ -558,6 +583,7 @@ class DisaggregatedQwenModel(nn.Module):
                 position_embeddings=position_embeddings,
                 use_cache=use_cache,
                 past_key_value=self.kv_cache,  # Pass full cache, layer extracts its own
+                layer_input_cache=layer_input_cache,
             )
             
             # Update cache with new KV
@@ -645,6 +671,11 @@ class DisaggregatedQwenModel(nn.Module):
             
             # Convert to 4D causal mask
             causal_mask = self._make_causal_mask(batch_size, seq_len, seq_len)
+            layer_input_cache = self.attention_worker.prepare_layer_input_cache(
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                position_embeddings=position_embeddings,
+            )
         else:
             hidden_states = torch.zeros(
                 batch_size, seq_len, self.hidden_size,
@@ -653,6 +684,7 @@ class DisaggregatedQwenModel(nn.Module):
             position_ids = None
             position_embeddings = None
             causal_mask = None
+            layer_input_cache = None
         
         # Run through layers
         for layer_idx in range(self.num_layers):
@@ -663,6 +695,7 @@ class DisaggregatedQwenModel(nn.Module):
                 position_ids=position_ids,
                 position_embeddings=position_embeddings,
                 use_cache=True,
+                layer_input_cache=layer_input_cache,
             )
         
         # Return logits (prefill: last-token only, see forward_prefill comment).
@@ -709,6 +742,11 @@ class DisaggregatedQwenModel(nn.Module):
             # Attention mask: attend to all previous + current
             total_len = cur_pos + 1
             attention_mask = self._make_causal_mask(batch_size, 1, total_len)
+            layer_input_cache = self.attention_worker.prepare_layer_input_cache(
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                position_embeddings=position_embeddings,
+            )
         else:
             hidden_states = torch.zeros(
                 batch_size, 1, self.hidden_size,
@@ -717,6 +755,7 @@ class DisaggregatedQwenModel(nn.Module):
             position_ids = None
             position_embeddings = None
             attention_mask = None
+            layer_input_cache = None
         
         # Run through layers
         for layer_idx in range(self.num_layers):
@@ -727,6 +766,7 @@ class DisaggregatedQwenModel(nn.Module):
                 position_ids=position_ids,
                 position_embeddings=position_embeddings,
                 use_cache=True,
+                layer_input_cache=layer_input_cache,
             )
         
         # Return logits
@@ -782,6 +822,7 @@ class DisaggregatedQwenModel(nn.Module):
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
+        ep_overlap_early_recv: bool = False,
     ) -> torch.Tensor:
         """
         Generate text autoregressively with optional Decode DBO.
@@ -802,6 +843,7 @@ class DisaggregatedQwenModel(nn.Module):
             comm_timing_mode: "enqueue" for isend return overhead or
                 "completion" for effective Work completion latency
             decode_use_crosslayer: Enable cross-layer micro-batch pipelining in decode DBO
+            ep_overlap_early_recv: Post next-layer A2F irecv per MB in FFN EP overlap decode.
         
         Returns:
             Generated token IDs [batch_size, seq_len + num_generated]
@@ -813,6 +855,7 @@ class DisaggregatedQwenModel(nn.Module):
                 num_decode_micro_batches, enable_timing, timing_mode,
                 comm_timing_mode,
                 decode_use_crosslayer,
+                ep_overlap_early_recv,
             )
         
         # Initialize KV cache if needed
@@ -862,6 +905,8 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                ep_overlap_early_recv=ep_overlap_early_recv,
+                use_stream_overlap=self.attention_optimization_config.stream_overlap,
             )
             logger.info(f"Using Decode DBO with {num_decode_micro_batches} micro-batches")
 
@@ -928,6 +973,7 @@ class DisaggregatedQwenModel(nn.Module):
             "routing_update_mode": self.routing_update_mode,
             "routing_poll_count": self.routing_poll_count,
             "routing_poll_ms": self.routing_poll_ms,
+            "attention_optimizations": self.attention_optimization_metadata(),
             **tbt,
         }
 
@@ -945,6 +991,7 @@ class DisaggregatedQwenModel(nn.Module):
                 self._last_decode_timing.tbt_p50_ms = tbt["tbt_p50_ms"]
                 self._last_decode_timing.tbt_p99_ms = tbt["tbt_p99_ms"]
                 self._last_decode_timing.decode_step_times_ms = list(decode_step_times_ms)
+                self._last_decode_timing.attention_optimizations = self.attention_optimization_metadata()
         
         return generated_ids
     
@@ -958,6 +1005,7 @@ class DisaggregatedQwenModel(nn.Module):
         timing_mode: str = "cuda_events",
         comm_timing_mode: str = "enqueue",
         decode_use_crosslayer: bool = False,
+        ep_overlap_early_recv: bool = False,
     ) -> torch.Tensor:
         """
         FFN node participation in generation.
@@ -987,6 +1035,8 @@ class DisaggregatedQwenModel(nn.Module):
                 timing_mode=timing_mode,
                 comm_timing_mode=comm_timing_mode,
                 use_crosslayer=decode_use_crosslayer,
+                ep_overlap_early_recv=ep_overlap_early_recv,
+                use_stream_overlap=self.attention_optimization_config.stream_overlap,
             )
         
         # Decode loop: max_new_tokens - 1 iterations
@@ -1034,6 +1084,7 @@ class DisaggregatedQwenModel(nn.Module):
             "routing_update_mode": self.routing_update_mode,
             "routing_poll_count": self.routing_poll_count,
             "routing_poll_ms": self.routing_poll_ms,
+            "attention_optimizations": self.attention_optimization_metadata(),
             **tbt,
         }
 
@@ -1050,6 +1101,7 @@ class DisaggregatedQwenModel(nn.Module):
                 self._last_decode_timing.tbt_p50_ms = tbt["tbt_p50_ms"]
                 self._last_decode_timing.tbt_p99_ms = tbt["tbt_p99_ms"]
                 self._last_decode_timing.decode_step_times_ms = list(decode_step_times_ms)
+                self._last_decode_timing.attention_optimizations = self.attention_optimization_metadata()
         
         # FFN node doesn't return meaningful output
         return input_ids
@@ -1067,6 +1119,7 @@ class DisaggregatedQwenModel(nn.Module):
         routing_update_mode: str = "oneshot",
         routing_poll_interval_steps: int = 16,
         routing_rpc_timeout_s: float = 0.05,
+        attention_optimization_config: Optional[AttentionOptimizationConfig] = None,
     ) -> "DisaggregatedQwenModel":
         """
         Create a disaggregated model from pretrained weights.
@@ -1085,7 +1138,12 @@ class DisaggregatedQwenModel(nn.Module):
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
         
         # Create model
-        model = cls(config, device, dtype)
+        model = cls(
+            config,
+            device,
+            dtype,
+            attention_optimization_config=attention_optimization_config,
+        )
 
         model.setup_routing_backend(
             routing_backend=routing_backend,

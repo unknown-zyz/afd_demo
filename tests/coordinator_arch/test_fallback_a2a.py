@@ -152,6 +152,7 @@ def _test_fallback_a2a_worker(
         # Verify dispatch results
         recv_hidden = dispatch_handle["recv_hidden"]
         recv_weights = dispatch_handle["recv_weights"]
+        recv_experts = dispatch_handle["recv_experts"]
         
         # Expected token counts per rank based on routing:
         # Token 0: [0,1] -> rank 0 gets 2 tokens
@@ -160,10 +161,9 @@ def _test_fallback_a2a_worker(
         # Token 3: [0,3] -> rank 0 gets 1, rank 1 gets 1
         # Total: rank 0 expects 4 tokens (2+1+0+1), rank 1 expects 4 tokens (0+1+2+1)
         
-        if rank == 0:
-            expected_recv = 4
-        else:
-            expected_recv = 4
+        # Every rank contributes the same routing pattern in this test, so each
+        # destination receives the per-rank local count from every source rank.
+        expected_recv = 4 * world_size
         
         assert recv_hidden.shape[0] == expected_recv, (
             f"Rank {rank}: Expected {expected_recv} tokens, got {recv_hidden.shape[0]}"
@@ -174,6 +174,14 @@ def _test_fallback_a2a_worker(
         assert recv_weights.shape[0] == expected_recv, (
             f"Rank {rank}: Weight count mismatch"
         )
+        assert recv_experts.shape[0] == expected_recv, (
+            f"Rank {rank}: Expert ID count mismatch"
+        )
+        assert recv_experts.dtype == torch.long
+        if rank == 0:
+            assert set(recv_experts.cpu().tolist()) <= {0, 1}
+        else:
+            assert set(recv_experts.cpu().tolist()) <= {2, 3}
         
         # Simulate FFN: identity function (just return input)
         ffn_outputs = recv_hidden.clone()
@@ -223,6 +231,51 @@ def _test_fallback_a2a_worker(
         assert torch.allclose(empty_output, torch.zeros(N, H, device=device)), (
             "K=0 should produce zeros"
         )
+
+        # Coordinator-only source path used by EPFFN all_to_all_single: only rank
+        # 0 owns source tokens, weights are not dispatched, and destination ranks
+        # reconstruct expert IDs from broadcast counts.
+        sparse_comm = FallbackMoECommunicator(
+            ep_group=dist.group.WORLD,
+            hidden_size=H,
+            num_experts=num_experts,
+            max_tokens_per_rank=10,
+            device=device,
+            dispatch_weights=False,
+            dispatch_experts=False,
+            metadata_src_rank=0,
+        )
+        sparse_comm.update_routing_table(routing_table)
+        if rank == 0:
+            source_hidden = hidden_states
+            source_indices = topk_indices
+            source_weights = topk_weights
+        else:
+            source_hidden = torch.empty(0, H, device=device)
+            source_indices = torch.empty(0, K, dtype=torch.long, device=device)
+            source_weights = torch.empty(0, K, device=device)
+
+        sparse_handle = sparse_comm.dispatch(
+            source_hidden,
+            source_indices,
+            source_weights,
+        )
+        sparse_recv_experts = sparse_handle["recv_experts"]
+        assert sparse_recv_experts.shape[0] == 4
+        if rank == 0:
+            assert sparse_recv_experts.cpu().tolist() == [0, 0, 1, 1]
+        else:
+            assert sparse_recv_experts.cpu().tolist() == [2, 2, 3, 3]
+        sparse_output = sparse_comm.combine(
+            sparse_handle["recv_hidden"].clone(),
+            sparse_handle,
+        )
+        if rank == 0:
+            assert torch.allclose(sparse_output, expected_output, atol=1e-5), (
+                "Coordinator-only sparse combine mismatch"
+            )
+        else:
+            assert sparse_output.shape == (0, H)
         
         # All tests passed for this rank
         if result_queue is not None:

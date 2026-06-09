@@ -21,6 +21,8 @@ Disaggregation, AFD）和 **Dual Batch Overlap**（DBO）流水调度的实验�
 | Decode DBO | 支持 | `DecodeDBOScheduler` |
 | Decode cross-layer pipeline | 实验性支持 | `--crosslayer` |
 | NPU EP overlap | 实验性支持 | `--ffn-ep-backend broadcast_reduce_overlap` |
+| Coordinator / 可插拔 MoE 通信 | 实验性支持 | `src/coordinator_arch/`、`--ffn-ep-backend all_to_all_single` |
+| NPU profiling / msprof | 支持 | `--msprof`、`doc/24-msprof-ep-communication-analysis.md` |
 | KV cache / 自回归生成 | 支持 | HuggingFace `DynamicCache` |
 | TTFT/TPOT 报告与 pipeline Gantt 图 | 支持 | `scripts/gen_experiment_report.py`、`scripts/visualize_dbo_pipeline.py` |
 | Ascend 910C 运行 | 支持 | `scripts/run_npu.sh`、`scripts/run_experiment_matrix_npu.sh` |
@@ -110,6 +112,8 @@ batch，并把 OOM 明确写入 summary CSV。
 | `results/decode-dbo-crosslayer/` / `results_npu/decode-dbo-crosslayer/` | Decode cross-layer timing、报告、PNG。 |
 | `results_npu/ep4_broadcast_reduce_sync/` | NPU EP4 + `broadcast_reduce_sync` 同步版负结果，保留用于复盘探索过程。 |
 | `results_npu/ep_overlap/` | NPU EP overlap 修复结果，包含 EP4/EP7 对比和首个 decode 正收益配置。 |
+| `results_npu/crosshost_static_ep/` | Host1 Attention + Host2 FFN EP8/12/16 跨机 static EP 代表实验。 |
+| `crosshost_static_ep16_sweep/` | EP16 同拓扑 serial/DBO sweep、speedup、OOM、资源采样和报告。 |
 | `*/experiment_matrix_summary.csv` | 矩阵状态：`ok`、`cached`、`OOM`、`FAIL`。 |
 | `*/baseline_audit.csv` | 每条 DBO 结果是否存在 mode-matched serial baseline。 |
 
@@ -172,6 +176,7 @@ timing 或 fallback 口径当成了准确 TPOT。当前结论以
 | 文档 | 内容 |
 |---|---|
 | [`doc/README.md`](doc/README.md) | 文档目录与推荐阅读顺序。 |
+| [`doc/25-ea-disaggregated-moe-system-design.pdf`](doc/25-ea-disaggregated-moe-system-design.pdf) | 中文系统设计文档，面向 E/A 分离 MoE 推理协同调度与通信时延掩盖。 |
 | [`doc/01-architecture.md`](doc/01-architecture.md) | 架构、scheduler、KV cache、backend abstraction。 |
 | [`doc/02-usage.md`](doc/02-usage.md) | Serial / prefill / decode / matrix 命令手册。 |
 | [`doc/03-api-reference.md`](doc/03-api-reference.md) | 当前代码与脚本 API 参考。 |
@@ -180,3 +185,7 @@ timing 或 fallback 口径当成了准确 TPOT。当前结论以
 | [`doc/06-npu-910c-adaptation.md`](doc/06-npu-910c-adaptation.md) | Ascend 910C / HCCL 适配说明。 |
 | [`doc/07-npu-vs-gpu-experiment-analysis.md`](doc/07-npu-vs-gpu-experiment-analysis.md) | GPU/NPU 指标解释与旧 5x 误判原因。 |
 | [`doc/08-gpu-npu-experiment-summary.md`](doc/08-gpu-npu-experiment-summary.md) | 最新 GPU/NPU 覆盖率、speedup 和 OOM 边界。 |
+| [`doc/23-communication-architecture-comparison.md`](doc/23-communication-architecture-comparison.md) | 项目内 EP/MoE 通信架构对比与选择建议。 |
+| [`doc/24-msprof-ep-communication-analysis.md`](doc/24-msprof-ep-communication-analysis.md) | EP16 broadcast/reduce 与 all-to-all 的 msprof 和带宽分析。 |
+| [`scripts/README.md`](scripts/README.md) | 脚本索引。 |
+| [`src/README.md`](src/README.md) | 代码目录、模块职责与主调用链。 |

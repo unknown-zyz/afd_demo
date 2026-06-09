@@ -119,6 +119,7 @@ class PipelineTiming:
     routing_update_mode: str | None = None
     routing_poll_count: int | None = None
     routing_poll_ms: float | None = None
+    attention_optimizations: Dict[str, Any] = field(default_factory=dict)
     timed_decode_step: int | None = None
     timed_decode_step_base: str | None = None
     timed_decode_step_note: str | None = None
@@ -231,6 +232,8 @@ class PipelineTiming:
             data["routing_poll_count"] = self.routing_poll_count
         if self.routing_poll_ms is not None:
             data["routing_poll_ms"] = self.routing_poll_ms
+        if self.attention_optimizations:
+            data["attention_optimizations"] = dict(self.attention_optimizations)
         if self.timed_decode_step is not None:
             data["timed_decode_step"] = self.timed_decode_step
         if self.timed_decode_step_base is not None:

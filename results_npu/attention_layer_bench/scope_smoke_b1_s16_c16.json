@@ -1,0 +1,852 @@
+{
+  "model_name": "/models/Qwen3-30B-A3B",
+  "device": "npu:0",
+  "input_device": "npu:0",
+  "dtype": "torch.bfloat16",
+  "num_layers": 48,
+  "layer_indices": [
+    0
+  ],
+  "community_layer_indices": [],
+  "batches": [
+    1
+  ],
+  "prefill_seqs": [
+    16
+  ],
+  "decode_cache_lens": [
+    16
+  ],
+  "include_prefill_core": true,
+  "include_decode_full_layer": true,
+  "warmup": 1,
+  "iters": 2,
+  "repeats": 1,
+  "complete": true,
+  "results": [
+    {
+      "case": "hf",
+      "phase": "prefill_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "precopy_inputs": false,
+      "optimization": {
+        "attn_kernel": "hf",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 1.05371349491179,
+      "latency_samples_ms": [
+        1.05371349491179
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.14453125,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 57.103515625
+      },
+      "delta_ms_vs_hf": 0.0,
+      "speedup_vs_hf": 1.0
+    },
+    {
+      "case": "official",
+      "phase": "prefill_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "precopy_inputs": false,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 1.2213949812576175,
+      "latency_samples_ms": [
+        1.2213949812576175
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.20751953125,
+        "reserved_mib": 78.0,
+        "peak_allocated_mib": 56.6796875
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0,
+      "delta_ms_vs_hf": 0.16768148634582758,
+      "speedup_vs_hf": 0.8627131362753978
+    },
+    {
+      "case": "official_fused_rmsnorm",
+      "phase": "prefill_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "precopy_inputs": false,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 1.1468990705907345,
+      "latency_samples_ms": [
+        1.1468990705907345
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.20751953125,
+        "reserved_mib": 96.0,
+        "peak_allocated_mib": 56.74267578125
+      },
+      "max_abs_diff": 0.0009765625,
+      "mean_abs_diff": 2.9023849492659792e-05,
+      "max_rel_diff": 60.33293914794922,
+      "mean_rel_diff": 0.03356137126684189,
+      "delta_ms_vs_hf": 0.09318557567894459,
+      "speedup_vs_hf": 0.9187499771615061
+    },
+    {
+      "case": "official_fused_rope",
+      "phase": "prefill_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "precopy_inputs": false,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 1.1299790348857641,
+      "latency_samples_ms": [
+        1.1299790348857641
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.20751953125,
+        "reserved_mib": 96.0,
+        "peak_allocated_mib": 56.74267578125
+      },
+      "max_abs_diff": 0.0009765625,
+      "mean_abs_diff": 1.0503753401280846e-05,
+      "max_rel_diff": 28.85714340209961,
+      "mean_rel_diff": 0.01349164079874754,
+      "delta_ms_vs_hf": 0.07626553997397423,
+      "speedup_vs_hf": 0.9325071194956424
+    },
+    {
+      "case": "official_fused_both",
+      "phase": "prefill_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "precopy_inputs": false,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 1.0448535904288292,
+      "latency_samples_ms": [
+        1.0448535904288292
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.20751953125,
+        "reserved_mib": 96.0,
+        "peak_allocated_mib": 56.74267578125
+      },
+      "max_abs_diff": 0.0009765625,
+      "mean_abs_diff": 3.0416395020438358e-05,
+      "max_rel_diff": 61.28661346435547,
+      "mean_rel_diff": 0.03526482358574867,
+      "delta_ms_vs_hf": -0.008859904482960701,
+      "speedup_vs_hf": 1.0084795655239356
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "prefill_core",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "latency_ms": 0.1485410612076521,
+      "latency_samples_ms": [
+        0.1485410612076521
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.31005859375,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 58.0322265625
+      },
+      "delta_ms_vs_hf": 0.0,
+      "speedup_vs_hf": 1.0
+    },
+    {
+      "case": "official_pfa",
+      "phase": "prefill_core",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "latency_ms": 0.2269520191475749,
+      "latency_samples_ms": [
+        0.2269520191475749
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.435546875,
+        "reserved_mib": 96.0,
+        "peak_allocated_mib": 57.6865234375
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0,
+      "delta_ms_vs_hf": 0.07841095793992281,
+      "speedup_vs_hf": 0.6545042505705301
+    },
+    {
+      "case": "hf",
+      "phase": "decode_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "optimization": {
+        "attn_kernel": "hf",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 0.9148374665528536,
+      "latency_samples_ms": [
+        0.9148374665528536
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.2978515625,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 52.396484375
+      },
+      "delta_ms_vs_hf": 0.0,
+      "speedup_vs_hf": 1.0
+    },
+    {
+      "case": "official",
+      "phase": "decode_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 0.9553930722177029,
+      "latency_samples_ms": [
+        0.9553930722177029
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.30224609375,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 52.85009765625
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0,
+      "delta_ms_vs_hf": 0.04055560566484928,
+      "speedup_vs_hf": 0.9575508690148761
+    },
+    {
+      "case": "official_fused_rmsnorm",
+      "phase": "decode_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": false,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 0.8510369807481766,
+      "latency_samples_ms": [
+        0.8510369807481766
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.23974609375,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 52.7919921875
+      },
+      "max_abs_diff": 0.00048828125,
+      "mean_abs_diff": 4.571666067931801e-05,
+      "max_rel_diff": 19.184614181518555,
+      "mean_rel_diff": 0.06808599829673767,
+      "delta_ms_vs_hf": -0.06380048580467701,
+      "speedup_vs_hf": 1.0749679358805158
+    },
+    {
+      "case": "official_fused_rope",
+      "phase": "decode_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": false,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 0.8413414470851421,
+      "latency_samples_ms": [
+        0.8413414470851421
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.318359375,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 52.87060546875
+      },
+      "max_abs_diff": 0.0001220703125,
+      "mean_abs_diff": 1.0678813850972801e-05,
+      "max_rel_diff": 5.027397155761719,
+      "mean_rel_diff": 0.014867805875837803,
+      "delta_ms_vs_hf": -0.07349601946771145,
+      "speedup_vs_hf": 1.0873557575492578
+    },
+    {
+      "case": "official_fused_both",
+      "phase": "decode_full_layer",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "optimization": {
+        "attn_kernel": "npu-official",
+        "attn_precopy_layer_inputs": false,
+        "attn_tp_size": 1,
+        "attn_fused_rmsnorm": true,
+        "attn_fused_rope": true,
+        "attn_stream_overlap": false
+      },
+      "latency_ms": 0.7690161000937223,
+      "latency_samples_ms": [
+        0.7690161000937223
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 36.255859375,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 52.80810546875
+      },
+      "max_abs_diff": 0.000732421875,
+      "mean_abs_diff": 5.051496555097401e-05,
+      "max_rel_diff": 19.30769157409668,
+      "mean_rel_diff": 0.07569324970245361,
+      "delta_ms_vs_hf": -0.14582136645913124,
+      "speedup_vs_hf": 1.189620693820792
+    },
+    {
+      "case": "hf_sdpa",
+      "phase": "decode_core",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "latency_ms": 0.09929540101438761,
+      "latency_samples_ms": [
+        0.09929540101438761
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.181640625,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 53.2294921875
+      },
+      "delta_ms_vs_hf": 0.0,
+      "speedup_vs_hf": 1.0
+    },
+    {
+      "case": "official_ifa",
+      "phase": "decode_core",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "latency_ms": 0.07819104939699173,
+      "latency_samples_ms": [
+        0.07819104939699173
+      ],
+      "ok": true,
+      "memory": {
+        "allocated_mib": 37.18994140625,
+        "reserved_mib": 76.0,
+        "peak_allocated_mib": 53.69091796875
+      },
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0,
+      "delta_ms_vs_hf": -0.021104351617395878,
+      "speedup_vs_hf": 1.2699075121788534
+    },
+    {
+      "case": "community_v2",
+      "phase": "decode_core",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "ok": false,
+      "error": "flash-attention-npu is not importable"
+    },
+    {
+      "case": "community_v3",
+      "phase": "decode_core",
+      "layer_idx": 0,
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "ok": false,
+      "error": "flash-attention-npu is not importable"
+    }
+  ],
+  "aggregate_results": [
+    {
+      "phase": "decode_core",
+      "case": "community_v2",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 0,
+      "fail_count": 1,
+      "layers": [
+        0
+      ]
+    },
+    {
+      "phase": "decode_core",
+      "case": "community_v3",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 0,
+      "fail_count": 1,
+      "layers": [
+        0
+      ]
+    },
+    {
+      "phase": "decode_core",
+      "case": "hf_sdpa",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.09929540101438761,
+      "latency_mean_ms": 0.09929540101438761,
+      "latency_min_ms": 0.09929540101438761,
+      "latency_max_ms": 0.09929540101438761,
+      "latency_std_ms": 0.0,
+      "delta_ms_vs_hf_median": 0.0,
+      "delta_ms_vs_hf_max": 0.0,
+      "speedup_vs_hf_median": 1.0,
+      "speedup_vs_hf_max": 1.0,
+      "aggregate_delta_ms_vs_hf": 0.0,
+      "aggregate_speedup_vs_hf": 1.0
+    },
+    {
+      "phase": "decode_core",
+      "case": "official_ifa",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.07819104939699173,
+      "latency_mean_ms": 0.07819104939699173,
+      "latency_min_ms": 0.07819104939699173,
+      "latency_max_ms": 0.07819104939699173,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0,
+      "max_abs_diff_max": 0.0,
+      "mean_abs_diff_median": 0.0,
+      "mean_abs_diff_max": 0.0,
+      "delta_ms_vs_hf_median": -0.021104351617395878,
+      "delta_ms_vs_hf_max": -0.021104351617395878,
+      "speedup_vs_hf_median": 1.2699075121788534,
+      "speedup_vs_hf_max": 1.2699075121788534,
+      "aggregate_delta_ms_vs_hf": -0.021104351617395878,
+      "aggregate_speedup_vs_hf": 1.2699075121788534
+    },
+    {
+      "phase": "decode_full_layer",
+      "case": "hf",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.9148374665528536,
+      "latency_mean_ms": 0.9148374665528536,
+      "latency_min_ms": 0.9148374665528536,
+      "latency_max_ms": 0.9148374665528536,
+      "latency_std_ms": 0.0,
+      "delta_ms_vs_hf_median": 0.0,
+      "delta_ms_vs_hf_max": 0.0,
+      "speedup_vs_hf_median": 1.0,
+      "speedup_vs_hf_max": 1.0,
+      "aggregate_delta_ms_vs_hf": 0.0,
+      "aggregate_speedup_vs_hf": 1.0
+    },
+    {
+      "phase": "decode_full_layer",
+      "case": "official",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.9553930722177029,
+      "latency_mean_ms": 0.9553930722177029,
+      "latency_min_ms": 0.9553930722177029,
+      "latency_max_ms": 0.9553930722177029,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0,
+      "max_abs_diff_max": 0.0,
+      "mean_abs_diff_median": 0.0,
+      "mean_abs_diff_max": 0.0,
+      "delta_ms_vs_hf_median": 0.04055560566484928,
+      "delta_ms_vs_hf_max": 0.04055560566484928,
+      "speedup_vs_hf_median": 0.9575508690148761,
+      "speedup_vs_hf_max": 0.9575508690148761,
+      "aggregate_delta_ms_vs_hf": 0.04055560566484928,
+      "aggregate_speedup_vs_hf": 0.9575508690148761
+    },
+    {
+      "phase": "decode_full_layer",
+      "case": "official_fused_both",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.7690161000937223,
+      "latency_mean_ms": 0.7690161000937223,
+      "latency_min_ms": 0.7690161000937223,
+      "latency_max_ms": 0.7690161000937223,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.000732421875,
+      "max_abs_diff_max": 0.000732421875,
+      "mean_abs_diff_median": 5.051496555097401e-05,
+      "mean_abs_diff_max": 5.051496555097401e-05,
+      "delta_ms_vs_hf_median": -0.14582136645913124,
+      "delta_ms_vs_hf_max": -0.14582136645913124,
+      "speedup_vs_hf_median": 1.189620693820792,
+      "speedup_vs_hf_max": 1.189620693820792,
+      "aggregate_delta_ms_vs_hf": -0.14582136645913124,
+      "aggregate_speedup_vs_hf": 1.189620693820792
+    },
+    {
+      "phase": "decode_full_layer",
+      "case": "official_fused_rmsnorm",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.8510369807481766,
+      "latency_mean_ms": 0.8510369807481766,
+      "latency_min_ms": 0.8510369807481766,
+      "latency_max_ms": 0.8510369807481766,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.00048828125,
+      "max_abs_diff_max": 0.00048828125,
+      "mean_abs_diff_median": 4.571666067931801e-05,
+      "mean_abs_diff_max": 4.571666067931801e-05,
+      "delta_ms_vs_hf_median": -0.06380048580467701,
+      "delta_ms_vs_hf_max": -0.06380048580467701,
+      "speedup_vs_hf_median": 1.0749679358805158,
+      "speedup_vs_hf_max": 1.0749679358805158,
+      "aggregate_delta_ms_vs_hf": -0.06380048580467701,
+      "aggregate_speedup_vs_hf": 1.0749679358805158
+    },
+    {
+      "phase": "decode_full_layer",
+      "case": "official_fused_rope",
+      "batch": 1,
+      "seq": 1,
+      "cache_len": 16,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.8413414470851421,
+      "latency_mean_ms": 0.8413414470851421,
+      "latency_min_ms": 0.8413414470851421,
+      "latency_max_ms": 0.8413414470851421,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0001220703125,
+      "max_abs_diff_max": 0.0001220703125,
+      "mean_abs_diff_median": 1.0678813850972801e-05,
+      "mean_abs_diff_max": 1.0678813850972801e-05,
+      "delta_ms_vs_hf_median": -0.07349601946771145,
+      "delta_ms_vs_hf_max": -0.07349601946771145,
+      "speedup_vs_hf_median": 1.0873557575492578,
+      "speedup_vs_hf_max": 1.0873557575492578,
+      "aggregate_delta_ms_vs_hf": -0.07349601946771145,
+      "aggregate_speedup_vs_hf": 1.0873557575492578
+    },
+    {
+      "phase": "prefill_core",
+      "case": "hf_sdpa",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.1485410612076521,
+      "latency_mean_ms": 0.1485410612076521,
+      "latency_min_ms": 0.1485410612076521,
+      "latency_max_ms": 0.1485410612076521,
+      "latency_std_ms": 0.0,
+      "delta_ms_vs_hf_median": 0.0,
+      "delta_ms_vs_hf_max": 0.0,
+      "speedup_vs_hf_median": 1.0,
+      "speedup_vs_hf_max": 1.0,
+      "aggregate_delta_ms_vs_hf": 0.0,
+      "aggregate_speedup_vs_hf": 1.0
+    },
+    {
+      "phase": "prefill_core",
+      "case": "official_pfa",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 0.2269520191475749,
+      "latency_mean_ms": 0.2269520191475749,
+      "latency_min_ms": 0.2269520191475749,
+      "latency_max_ms": 0.2269520191475749,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0,
+      "max_abs_diff_max": 0.0,
+      "mean_abs_diff_median": 0.0,
+      "mean_abs_diff_max": 0.0,
+      "delta_ms_vs_hf_median": 0.07841095793992281,
+      "delta_ms_vs_hf_max": 0.07841095793992281,
+      "speedup_vs_hf_median": 0.6545042505705301,
+      "speedup_vs_hf_max": 0.6545042505705301,
+      "aggregate_delta_ms_vs_hf": 0.07841095793992281,
+      "aggregate_speedup_vs_hf": 0.6545042505705301
+    },
+    {
+      "phase": "prefill_full_layer",
+      "case": "hf",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 1.05371349491179,
+      "latency_mean_ms": 1.05371349491179,
+      "latency_min_ms": 1.05371349491179,
+      "latency_max_ms": 1.05371349491179,
+      "latency_std_ms": 0.0,
+      "delta_ms_vs_hf_median": 0.0,
+      "delta_ms_vs_hf_max": 0.0,
+      "speedup_vs_hf_median": 1.0,
+      "speedup_vs_hf_max": 1.0,
+      "aggregate_delta_ms_vs_hf": 0.0,
+      "aggregate_speedup_vs_hf": 1.0
+    },
+    {
+      "phase": "prefill_full_layer",
+      "case": "official",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 1.2213949812576175,
+      "latency_mean_ms": 1.2213949812576175,
+      "latency_min_ms": 1.2213949812576175,
+      "latency_max_ms": 1.2213949812576175,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0,
+      "max_abs_diff_max": 0.0,
+      "mean_abs_diff_median": 0.0,
+      "mean_abs_diff_max": 0.0,
+      "delta_ms_vs_hf_median": 0.16768148634582758,
+      "delta_ms_vs_hf_max": 0.16768148634582758,
+      "speedup_vs_hf_median": 0.8627131362753978,
+      "speedup_vs_hf_max": 0.8627131362753978,
+      "aggregate_delta_ms_vs_hf": 0.16768148634582758,
+      "aggregate_speedup_vs_hf": 0.8627131362753978
+    },
+    {
+      "phase": "prefill_full_layer",
+      "case": "official_fused_both",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 1.0448535904288292,
+      "latency_mean_ms": 1.0448535904288292,
+      "latency_min_ms": 1.0448535904288292,
+      "latency_max_ms": 1.0448535904288292,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0009765625,
+      "max_abs_diff_max": 0.0009765625,
+      "mean_abs_diff_median": 3.0416395020438358e-05,
+      "mean_abs_diff_max": 3.0416395020438358e-05,
+      "delta_ms_vs_hf_median": -0.008859904482960701,
+      "delta_ms_vs_hf_max": -0.008859904482960701,
+      "speedup_vs_hf_median": 1.0084795655239356,
+      "speedup_vs_hf_max": 1.0084795655239356,
+      "aggregate_delta_ms_vs_hf": -0.008859904482960701,
+      "aggregate_speedup_vs_hf": 1.0084795655239356
+    },
+    {
+      "phase": "prefill_full_layer",
+      "case": "official_fused_rmsnorm",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 1.1468990705907345,
+      "latency_mean_ms": 1.1468990705907345,
+      "latency_min_ms": 1.1468990705907345,
+      "latency_max_ms": 1.1468990705907345,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0009765625,
+      "max_abs_diff_max": 0.0009765625,
+      "mean_abs_diff_median": 2.9023849492659792e-05,
+      "mean_abs_diff_max": 2.9023849492659792e-05,
+      "delta_ms_vs_hf_median": 0.09318557567894459,
+      "delta_ms_vs_hf_max": 0.09318557567894459,
+      "speedup_vs_hf_median": 0.9187499771615061,
+      "speedup_vs_hf_max": 0.9187499771615061,
+      "aggregate_delta_ms_vs_hf": 0.09318557567894459,
+      "aggregate_speedup_vs_hf": 0.9187499771615061
+    },
+    {
+      "phase": "prefill_full_layer",
+      "case": "official_fused_rope",
+      "batch": 1,
+      "seq": 16,
+      "cache_len": null,
+      "layer_count_requested": 1,
+      "ok_count": 1,
+      "fail_count": 0,
+      "layers": [
+        0
+      ],
+      "latency_median_ms": 1.1299790348857641,
+      "latency_mean_ms": 1.1299790348857641,
+      "latency_min_ms": 1.1299790348857641,
+      "latency_max_ms": 1.1299790348857641,
+      "latency_std_ms": 0.0,
+      "max_abs_diff_median": 0.0009765625,
+      "max_abs_diff_max": 0.0009765625,
+      "mean_abs_diff_median": 1.0503753401280846e-05,
+      "mean_abs_diff_max": 1.0503753401280846e-05,
+      "delta_ms_vs_hf_median": 0.07626553997397423,
+      "delta_ms_vs_hf_max": 0.07626553997397423,
+      "speedup_vs_hf_median": 0.9325071194956424,
+      "speedup_vs_hf_max": 0.9325071194956424,
+      "aggregate_delta_ms_vs_hf": 0.07626553997397423,
+      "aggregate_speedup_vs_hf": 0.9325071194956424
+    }
+  ]
+}
