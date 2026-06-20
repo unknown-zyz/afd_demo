@@ -2,7 +2,7 @@
 
 > 状态：**Phase β0**（骨架已落地；`src.main` 已支持真实 Qwen3 路径的 coordinator one-shot routing，Host1 单机 1A1F 与 1A7F/EP7 smoke 已通过）
 > 关联代码：`src/coordinator_arch/`
-> 关联文档：`doc/01-architecture.md`（旧静态 A↔F）、`doc/deepep_ascend_install_report.md`
+> 关联文档：`doc/01-architecture.md`（旧静态 A↔F）、`doc/13-deepep-install-test-error-guide.md`
 
 ## 1. 背景与动机
 
@@ -362,5 +362,5 @@ buffer。`MoECommunicator.set_mode(mode)`：
 - `src/coordinator_arch/batching/{continuous_batcher,ffn_queue}.py`
 - `src/coordinator_arch/workers/{attention_worker,ffn_worker}.py`
 - `src/coordinator_arch/coordinator_client.py` — gRPC client（Phase α 为 stub）
-- `doc/deepep_ascend_install_report.md` — DeepEP-Ascend 安装与 API
+- `doc/13-deepep-install-test-error-guide.md` — DeepEP-Ascend 安装、测试与报错排查
 - `results_npu/cross_host_bench/README.md` — 跨机 HCCL 验证

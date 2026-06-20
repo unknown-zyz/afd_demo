@@ -30,10 +30,15 @@ helper、legacy fallback 和实验残留不应作为新功能依赖。
 
 | 接口 | 含义 |
 |---|---|
-| `get_device()` | 返回当前 accelerator device。 |
-| `get_backend()` | 返回分布式 backend：NCCL、HCCL 或 Gloo。 |
-| `is_npu_available()` | 检查 Ascend NPU 是否可用。 |
-| `initialize_device()` | 初始化 CUDA / NPU / CPU 环境。 |
+| `init_backend(backend="auto")` | 选择计算后端（`cuda`/`npu`/`cpu`/`auto`），必须在 `init_process_group` 和 `.to(device)` 前调用。 |
+| `DEVICE_TYPE` | 当前设备类型：`"cuda"`、`"npu"` 或 `"cpu"`。 |
+| `DIST_BACKEND` | 当前分布式 backend：`"nccl"`、`"hccl"` 或 `"gloo"`。 |
+| `device_module()` | 返回 `torch.cuda` / `torch.npu` / `None`。 |
+| `synchronize(device=None)` | 同步当前设备。 |
+| `Event(enable_timing=True)` | 创建 CUDA/NPU Event（用于计时）。CPU 返回 `None`。 |
+| `empty_cache()` | 清理设备缓存。 |
+| `device_count()` | 返回可用设备数。 |
+| `apply_backend_envs()` | 设置后端相关的环境变量默认值。 |
 
 调用方不应直接假设只有 CUDA；新增代码应通过这些 helper 选择 device/backend。
 
@@ -98,8 +103,8 @@ Attention role 持有 KV cache；FFN role 不应依赖 cache。
 |---|---|
 | `scripts/run_single.sh` | GPU 单配置运行。 |
 | `scripts/run_experiment_matrix.sh` | GPU 矩阵实验。 |
-| `scripts/run_npu.sh` | NPU 单配置运行；位于 `npu` 分支。 |
-| `scripts/run_experiment_matrix_npu.sh` | NPU 矩阵实验；位于 `npu` 分支。 |
+| `scripts/run_npu.sh` | NPU 单配置运行。 |
+| `scripts/run_experiment_matrix_npu.sh` | NPU 矩阵实验。 |
 | `scripts/gen_experiment_report.py` | 生成 Markdown 报告。 |
 | `scripts/visualize_dbo_pipeline.py` | 生成单张 pipeline 图。 |
 | `scripts/plot_all_pipelines.py` | 批量生成 pipeline 图。 |

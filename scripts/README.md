@@ -61,9 +61,6 @@ NPU/HCCL 脚本已合入 `main`：
 
 以下脚本主要服务于已完成轮次或专题数据分析，当前主流程通常不需要直接调用，但为了复现历史结论仍保留：
 
-- `aggregate_full_matrix_v2.py`
-- `aggregate_mb4_v2.py`
-- `aggregate_mb4_vs_mb2.py`
 - `r8_throughput_and_compute.py`
 - `analyze_decode_l0_warmup.py`
 

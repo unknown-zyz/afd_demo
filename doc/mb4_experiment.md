@@ -64,7 +64,7 @@ NPU-910C，`results_npu_ep7_mb4/` 输出：
 
 ### 何时可能有收益
 
-- 计算时间远长于通信时间的场景（FFN/Attn ratio ≫ 1，且单 MB 仍能填满 AICore）。当前最甜区在 b∈[8, 64]，MB=2 已经做到接近 FFN/Attn ≈ 1.6~1.9（见 `doc/compute_time_vs_batch_s512.md`），通信掩盖空间已被吃掉。
+- 计算时间远长于通信时间的场景（FFN/Attn ratio ≫ 1，且单 MB 仍能填满 AICore）。当前最甜区在 b∈[8, 64]，MB=2 已经做到接近 FFN/Attn ≈ 1.6~1.9，通信掩盖空间已被吃掉。
 - 更大 batch（b≥1024）+ 长 seq + 弱通信链路；910C-EP7 当前不属于这种情形。
 - 计算 backend 改进（fused MoE / NPUGraph / 更高效 grouped_matmul）后，单 MB 计算更快，再分 MB 才有意义。
 

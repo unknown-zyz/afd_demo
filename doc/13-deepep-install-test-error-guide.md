@@ -29,7 +29,7 @@
 
 | 类型 | 文件 |
 |---|---|
-| 安装报告（旧） | `doc/deepep_ascend_install_report.md` |
+| 安装报告 | `doc/13-deepep-install-test-error-guide.md`（本文） |
 | normal 模式 RT bench | `scripts/cross_host_deepep_rt_bench.py` |
 | low_latency 模式 RT bench | `scripts/cross_host_deepep_lowlatency_rt_bench.py` |
 | fallback RT bench | `scripts/cross_host_fallback_rt_bench.py` |

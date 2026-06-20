@@ -555,7 +555,7 @@ HCCL_CONNECT_TIMEOUT=600 HCCL_EXEC_TIMEOUT=600 \
 python3 scripts/cross_host_fallback_rt_bench.py --iters 50 --warmup 10 --num-tokens 64 --hidden 4096
 ```
 
-DeepEP normal / low_latency 的命令模板与 `doc/15-cross-host-communication-diagnosis.md`
+DeepEP normal / low_latency 的命令模板与 `doc/13-deepep-install-test-error-guide.md`
 和 `doc/13-deepep-install-test-error-guide.md` 保持一致；如果只是验证当前生产可行路径，优先跑 fallback。
 
 ### 8.2.1 单机 coordinator smoke（真实 decode/prefill 路径）

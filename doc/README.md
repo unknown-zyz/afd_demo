@@ -21,12 +21,11 @@
 | 12 | [branch_consolidation.md](branch_consolidation.md) | 分支合入/删除建议与主线合并依据。 |
 | 13 | [experiment_archive.md](experiment_archive.md) | MB4、controller、dual-stream、MoE backend 等实验结论归档。 |
 | 14 | [10-npu-910c-container-deployment.md](10-npu-910c-container-deployment.md) | 910C 远程容器创建、环境部署、代码同步与冒烟流程。 |
-| 15 | [11-code-review-guide.md](11-code-review-guide.md) | 完整代码审阅向导：目录速览、三条路径、TBT 指标、脚本手册。 |
-| 16 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) | DeepEP 安装、测试、报错与 Fallback 路径说明。 |
-| 17 | [14-communication-modes.md](14-communication-modes.md) | Coordinator 通信方式、默认策略与切换方法。 |
-| 18 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) | Coordinator routing / 负载均衡现状、限制、实验顺序与后续计划。 |
-| 19 | [18-crosshost-coordinator-1a7f-architecture.md](18-crosshost-coordinator-1a7f-architecture.md) | 当前 cross-host 1A7F coordinator 架构、orchestrator、metrics flow 与失败分层。 |
-| 20 | [19-code-review-system-architecture.md](19-code-review-system-architecture.md) | 面向代码审查的系统架构、类交互、调用链、数据流和 Review 关注点。 |
+| 15 | [13-deepep-install-test-error-guide.md](13-deepep-install-test-error-guide.md) | DeepEP 安装、测试、报错与 Fallback 路径说明。 |
+| 16 | [14-communication-modes.md](14-communication-modes.md) | Coordinator 通信方式、默认策略与切换方法。 |
+| 17 | [16-routing-load-balancing-plan.md](16-routing-load-balancing-plan.md) | Coordinator routing / 负载均衡现状、限制、实验顺序与后续计划。 |
+| 18 | [18-crosshost-coordinator-1a7f-architecture.md](18-crosshost-coordinator-1a7f-architecture.md) | 当前 cross-host 1A7F coordinator 架构、orchestrator、metrics flow 与失败分层。 |
+| 19 | [19-code-review-system-architecture.md](19-code-review-system-architecture.md) | 面向代码审查的系统架构、类交互、调用链、数据流和 Review 关注点。 |
 
 根目录 [`README.md`](../README.md) 是项目入口；[`scripts/README.md`](../scripts/README.md)
 是脚本索引。

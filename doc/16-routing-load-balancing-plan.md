@@ -405,5 +405,5 @@ routing 与跨机 1A7F 不是两条独立线。
 
 - [12-coordinator-arch.md](12-coordinator-arch.md)：Coordinator 总体设计与控制/数据面背景
 - [14-communication-modes.md](14-communication-modes.md)：Fallback / DeepEP 通信方式说明
-- [15-cross-host-communication-diagnosis.md](15-cross-host-communication-diagnosis.md)：跨机 HCCL / fallback / TBE JIT 现状
+- [17-hccl-ej0003-and-tbe-jit-root-cause.md](17-hccl-ej0003-and-tbe-jit-root-cause.md)：跨机 HCCL / fallback / TBE JIT 根因分析
 - [`results_npu/coordinator_arch/singlehost_ep7/README.md`](../results_npu/coordinator_arch/singlehost_ep7/README.md)：单机 1A7F / EP7 one-shot 对照结果
