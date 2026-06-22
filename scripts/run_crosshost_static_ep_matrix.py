@@ -374,7 +374,7 @@ def build_side_script(
         args.append("--msprof-op")
     if msprof_analyze:
         args.append("--msprof-analyze")
-    if msprof_ranks:
+    if msprof and msprof_ranks:
         args.append(f"--msprof-ranks {quote(msprof_ranks)}")
     if msprof_storage_limit_mb:
         args.append(f"--msprof-storage-limit-mb {quote(msprof_storage_limit_mb)}")
